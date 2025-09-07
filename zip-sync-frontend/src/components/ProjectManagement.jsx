@@ -1,0 +1,248 @@
+import React, { useEffect, useState } from 'react';
+import { fetchProjects, createProject } from '../api';
+import { useAuth } from '../context/AuthContext';
+
+const ProjectManagement = () => {
+    const { user } = useAuth();
+    const [projects, setProjects] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [showCreateForm, setShowCreateForm] = useState(false);
+    const [creating, setCreating] = useState(false);
+
+    const [newProject, setNewProject] = useState({
+        name: '',
+        description: '',
+        assignedManagerId: null
+    });
+
+    useEffect(() => {
+        loadProjects();
+    }, []);
+
+    const loadProjects = async () => {
+        try {
+            setLoading(true);
+            const data = await fetchProjects();
+            setProjects(data);
+        } catch (err) {
+            setError(err.message || 'Failed to load projects');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleCreateProject = async (e) => {
+        e.preventDefault();
+        if (!newProject.name.trim()) return;
+
+        try {
+            setCreating(true);
+            await createProject(newProject);
+            setNewProject({ name: '', description: '', assignedManagerId: null });
+            setShowCreateForm(false);
+            await loadProjects();
+        } catch (err) {
+            setError(err.message || 'Failed to create project');
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    const canCreateProject = user?.role === 'admin' || user?.role === 'manager';
+
+    if (loading) {
+        return (
+            <div className="loading">
+                <div className="spinner"></div>
+                Loading projects...
+            </div>
+        );
+    }
+
+    return (
+        <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <div>
+                    <h1 style={{ fontSize: '28px', fontWeight: '600', color: '#2c3e50', marginBottom: '8px' }}>
+                        Project Management
+                    </h1>
+                    <p style={{ color: '#6c757d', fontSize: '16px' }}>
+                        Manage and organize your projects
+                    </p>
+                </div>
+                {canCreateProject && (
+                    <button 
+                        className="btn btn-primary"
+                        onClick={() => setShowCreateForm(true)}
+                    >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                        </svg>
+                        Create Project
+                    </button>
+                )}
+            </div>
+
+            {error && (
+                <div style={{ 
+                    background: '#f8d7da', 
+                    color: '#721c24', 
+                    padding: '12px 16px', 
+                    borderRadius: '8px', 
+                    marginBottom: '20px',
+                    border: '1px solid #f5c6cb'
+                }}>
+                    {error}
+                </div>
+            )}
+
+            {/* Create Project Form */}
+            {showCreateForm && (
+                <div className="card" style={{ marginBottom: '24px' }}>
+                    <div className="card-header">
+                        <h3 className="card-title">Create New Project</h3>
+                    </div>
+                    <div className="card-body">
+                        <form onSubmit={handleCreateProject}>
+                            <div className="form-group">
+                                <label className="form-label">Project Name *</label>
+                                <input
+                                    type="text"
+                                    className="form-input"
+                                    value={newProject.name}
+                                    onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
+                                    placeholder="Enter project name"
+                                    required
+                                />
+                            </div>
+                            
+                            <div className="form-group">
+                                <label className="form-label">Description</label>
+                                <textarea
+                                    className="form-textarea"
+                                    value={newProject.description}
+                                    onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
+                                    placeholder="Enter project description"
+                                    rows="3"
+                                />
+                            </div>
+
+                            {user?.role === 'admin' && (
+                                <div className="form-group">
+                                    <label className="form-label">Assign Manager</label>
+                                    <input
+                                        type="number"
+                                        className="form-input"
+                                        value={newProject.assignedManagerId}
+                                        onChange={(e) => setNewProject({ ...newProject, assignedManagerId: parseInt(e.target.value) })}
+                                        placeholder="Manager ID (optional)"
+                                    />
+                                </div>
+                            )}
+
+                            <div style={{ display: 'flex', gap: '12px' }}>
+                                <button 
+                                    type="submit" 
+                                    className="btn btn-primary"
+                                    disabled={creating || !newProject.name.trim()}
+                                >
+                                    {creating ? 'Creating...' : 'Create Project'}
+                                </button>
+                                <button 
+                                    type="button" 
+                                    className="btn btn-secondary"
+                                    onClick={() => setShowCreateForm(false)}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Projects List */}
+            <div className="card">
+                <div className="card-header">
+                    <h3 className="card-title">All Projects ({projects.length})</h3>
+                </div>
+                <div className="card-body">
+                    {projects.length === 0 ? (
+                        <div className="empty-state">
+                            <div className="empty-state-icon">
+                                <svg width="80" height="80" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z"/>
+                                </svg>
+                            </div>
+                            <h3>No Projects Found</h3>
+                            <p>Create your first project to get started.</p>
+                            {canCreateProject && (
+                                <button 
+                                    className="btn btn-primary"
+                                    onClick={() => setShowCreateForm(true)}
+                                >
+                                    Create Project
+                                </button>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="projects-grid">
+                            {projects.map((project) => (
+                                <div key={project.id} className="project-card">
+                                    <h4 className="project-title">{project.name}</h4>
+                                    <p className="project-description">
+                                        {project.description || 'No description provided'}
+                                    </p>
+                                    
+                                    <div className="project-meta">
+                                        <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
+                                        <span style={{ 
+                                            color: project.buildUrl ? '#28a745' : '#6c757d',
+                                            fontWeight: '500'
+                                        }}>
+                                            {project.buildUrl ? 'Live' : 'Draft'}
+                                        </span>
+                                    </div>
+
+                                    <div style={{ 
+                                        fontSize: '12px', 
+                                        color: '#6c757d', 
+                                        marginBottom: '16px',
+                                        padding: '8px',
+                                        background: '#f8f9fa',
+                                        borderRadius: '6px'
+                                    }}>
+                                        <div>ID: {project.id}</div>
+                                        <div>Manager ID: {project.assignedManagerId}</div>
+                                    </div>
+
+                                    <div className="project-actions">
+                                        {project.buildUrl && (
+                                            <a 
+                                                href={project.buildUrl} 
+                                                target="_blank" 
+                                                rel="noopener noreferrer"
+                                                className="btn btn-primary"
+                                            >
+                                                Live
+                                            </a>
+                                        )}
+                                        <button className="btn btn-outline">
+                                            Upload 
+                                        </button>
+                                        <button className="btn btn-outline">
+                                            Edit
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default ProjectManagement;

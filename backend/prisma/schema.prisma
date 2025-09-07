@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role
+  projectsCreated      Project[] @relation("CreatedProjects")
+  projectsManaged      Project[] @relation("ManagedProjects")
+  projectAccess        ProjectAccess[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Project {
+  id                Int      @id @default(autoincrement())
+  name              String
+  description       String?
+  createdById       Int
+  assignedManagerId Int
+  zipFilePath       String?
+  buildUrl          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  createdBy         User     @relation("CreatedProjects", fields: [createdById], references: [id])
+  assignedManager   User     @relation("ManagedProjects", fields: [assignedManagerId], references: [id])
+  projectAccess     ProjectAccess[]
+}
+
+model ProjectAccess {
+  id        Int      @id @default(autoincrement())
+  project   Project  @relation(fields: [projectId], references: [id])
+  projectId Int
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  createdAt DateTime @default(now())
+}
+
+enum Role {
+  admin
+  manager
+  client
+}

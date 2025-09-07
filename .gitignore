@@ -8,3 +8,7 @@
 /frontend/node_modules/
 /frontend/build/
 /frontend/.env
+
+/zip-sync-frontend/node_modules/
+/zip-sync-frontend/build/
+/zip-sync-frontend/.env
