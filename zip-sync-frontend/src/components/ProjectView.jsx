@@ -2,12 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { fetchProjects } from '../api';
 import { useAuth } from '../context/AuthContext';
 
-const ProjectView = () => {
+const ProjectView = ({ setActiveTab, setSelectedProjectForVersions }) => {
     const { user } = useAuth();
     const [projects, setProjects] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('all'); // all, live, draft
     const [searchTerm, setSearchTerm] = useState('');
+    // const [selectedProjectForVersions, setSelectedProjectForVersions] = useState(null);
 
     useEffect(() => {
         loadProjects();
@@ -29,13 +30,16 @@ const ProjectView = () => {
         const matchesSearch = project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                             (project.description && project.description.toLowerCase().includes(searchTerm.toLowerCase()));
         
-        if (filter === 'live') return matchesSearch && project.buildUrl;
-        if (filter === 'draft') return matchesSearch && !project.buildUrl;
+        const hasActiveVersion = project.versions && project.versions.length > 0 && project.versions[0].buildUrl;
+        
+        if (filter === 'live') return matchesSearch && hasActiveVersion;
+        if (filter === 'draft') return matchesSearch && !hasActiveVersion;
         return matchesSearch;
     });
 
     const getProjectStatus = (project) => {
-        if (project.buildUrl) {
+        const hasActiveVersion = project.versions && project.versions.length > 0 && project.versions[0].buildUrl;
+        if (hasActiveVersion) {
             return { text: 'Live', color: '#28a745', bg: '#d4edda' };
         }
         return { text: 'Draft', color: '#6c757d', bg: '#e9ecef' };
@@ -86,13 +90,13 @@ const ProjectView = () => {
                                 className={`btn ${filter === 'live' ? 'btn-primary' : 'btn-outline'}`}
                                 onClick={() => setFilter('live')}
                             >
-                                Live ({projects.filter(p => p.buildUrl).length})
+                                Live ({projects.filter(p => p.versions && p.versions.length > 0 && p.versions[0].buildUrl).length})
                             </button>
                             <button
                                 className={`btn ${filter === 'draft' ? 'btn-primary' : 'btn-outline'}`}
                                 onClick={() => setFilter('draft')}
                             >
-                                Draft ({projects.filter(p => !p.buildUrl).length})
+                                Draft ({projects.filter(p => !p.versions || p.versions.length === 0 || !p.versions[0].buildUrl).length})
                             </button>
                         </div>
                     </div>
@@ -150,12 +154,29 @@ const ProjectView = () => {
                                             {project.description || 'No description provided'}
                                         </p>
                                         
-                                        <div className="project-meta">
-                                            <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
-                                            <span>ID: {project.id}</span>
-                                        </div>
+                                    <div className="project-meta">
+                                        <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
+                                        <span>ID: {project.id}</span>
+                                    </div>
 
-                                        {project.buildUrl && (
+                                    {project.versions && project.versions.length > 0 && (
+                                        <div style={{ 
+                                            marginBottom: '16px',
+                                            padding: '8px',
+                                            background: '#f8f9fa',
+                                            borderRadius: '6px',
+                                            border: '1px solid #e9ecef'
+                                        }}>
+                                            <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>
+                                                Current Version: {project.versions[0].version}
+                                            </div>
+                                            <div style={{ fontSize: '12px', color: '#6c757d' }}>
+                                                Last Updated: {new Date(project.versions[0].createdAt).toLocaleDateString()}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                        {project.versions && project.versions.length > 0 && project.versions[0].buildUrl && (
                                             <div style={{ 
                                                 marginBottom: '16px',
                                                 padding: '8px',
@@ -172,15 +193,15 @@ const ProjectView = () => {
                                                     wordBreak: 'break-all',
                                                     fontFamily: 'monospace'
                                                 }}>
-                                                    {project.buildUrl}
+                                                    {project.versions[0].buildUrl}
                                                 </div>
                                             </div>
                                         )}
 
                                         <div className="project-actions">
-                                            {project.buildUrl && (
+                                            {project.versions && project.versions.length > 0 && project.versions[0].buildUrl && (
                                                 <a 
-                                                    href={project.buildUrl} 
+                                                    href={project.versions[0].buildUrl} 
                                                     target="_blank" 
                                                     rel="noopener noreferrer"
                                                     className="btn btn-primary"
@@ -192,14 +213,20 @@ const ProjectView = () => {
                                                 </a>
                                             )}
                                             
-                                            <button className="btn btn-outline">
+                                            <button 
+                                                className="btn btn-outline"
+                                                onClick={() => {
+                                                    setSelectedProjectForVersions(project);
+                                                    setActiveTab('versions');
+                                                }}
+                                            >
                                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
                                                     <path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z"/>
                                                 </svg>
                                                 Details
                                             </button>
                                             
-                                            {!project.buildUrl && (user?.role === 'admin' || user?.role === 'manager') && (
+                                            {(!project.versions || project.versions.length === 0) && (user?.role === 'admin' || user?.role === 'manager') && (
                                                 <button className="btn btn-outline">
                                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
                                                         <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
@@ -221,7 +248,7 @@ const ProjectView = () => {
                 <div className="card">
                     <div className="card-body" style={{ textAlign: 'center' }}>
                         <div style={{ fontSize: '24px', fontWeight: '700', color: '#28a745', marginBottom: '8px' }}>
-                            {projects.filter(p => p.buildUrl).length}
+                            {projects.filter(p => p.versions && p.versions.length > 0 && p.versions[0].buildUrl).length}
                         </div>
                         <div style={{ color: '#6c757d', fontSize: '14px' }}>Live Projects</div>
                     </div>
@@ -230,7 +257,7 @@ const ProjectView = () => {
                 <div className="card">
                     <div className="card-body" style={{ textAlign: 'center' }}>
                         <div style={{ fontSize: '24px', fontWeight: '700', color: '#6c757d', marginBottom: '8px' }}>
-                            {projects.filter(p => !p.buildUrl).length}
+                            {projects.filter(p => !p.versions || p.versions.length === 0 || !p.versions[0].buildUrl).length}
                         </div>
                         <div style={{ color: '#6c757d', fontSize: '14px' }}>Draft Projects</div>
                     </div>

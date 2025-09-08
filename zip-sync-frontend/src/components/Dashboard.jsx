@@ -5,11 +5,13 @@ import DashboardHome from './DashboardHome';
 import ProjectManagement from './ProjectManagement';
 import ProjectUpload from './ProjectUpload';
 import ProjectView from './ProjectView';
+import ProjectVersions from './ProjectVersions';
 
 const Dashboard = () => {
     const { user, logout } = useAuth();
     const [activeTab, setActiveTab] = useState('dashboard');
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [selectedProjectForVersions, setSelectedProjectForVersions] = useState(null);
 
     // Close sidebar on mobile when tab changes
     useEffect(() => {
@@ -33,15 +35,20 @@ const Dashboard = () => {
     const renderContent = () => {
         switch (activeTab) {
             case 'dashboard':
-                return <DashboardHome />;
+                return <DashboardHome setActiveTab={setActiveTab} />;
             case 'projects':
-                return <ProjectManagement />;
+                return <ProjectManagement setActiveTab={setActiveTab} />;
             case 'upload':
                 return <ProjectUpload />;
             case 'view':
-                return <ProjectView />;
+                return <ProjectView setActiveTab={setActiveTab} setSelectedProjectForVersions={setSelectedProjectForVersions} />;
+            case 'versions':
+                return <ProjectVersions 
+                    projectId={selectedProjectForVersions?.id || null} 
+                    projectName={selectedProjectForVersions?.name || "All Projects"} 
+                />;
             default:
-                return <DashboardHome />;
+                return <DashboardHome setActiveTab={setActiveTab} />;
         }
     };
 

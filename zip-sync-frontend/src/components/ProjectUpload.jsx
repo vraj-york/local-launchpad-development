@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { fetchProjects } from '../api';
+import { fetchProjects, uploadProjectBuild } from '../api';
 import { useAuth } from '../context/AuthContext';
 
 const ProjectUpload = () => {
@@ -9,6 +9,7 @@ const ProjectUpload = () => {
     const [uploading, setUploading] = useState(false);
     const [selectedProject, setSelectedProject] = useState('');
     const [uploadFile, setUploadFile] = useState(null);
+    const [version, setVersion] = useState('');
     const [uploadProgress, setUploadProgress] = useState(0);
     const [uploadStatus, setUploadStatus] = useState('');
 
@@ -56,9 +57,6 @@ const ProjectUpload = () => {
             setUploadStatus('Uploading and building project...');
             setUploadProgress(0);
 
-            const formData = new FormData();
-            formData.append('project', uploadFile);
-
             // Simulate progress
             const progressInterval = setInterval(() => {
                 setUploadProgress(prev => {
@@ -70,30 +68,19 @@ const ProjectUpload = () => {
                 });
             }, 500);
 
-            const response = await fetch(`http://localhost:5000/api/projects/${selectedProject}/upload`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
-                },
-                body: formData
-            });
+            const result = await uploadProjectBuild(selectedProject, uploadFile, version || null);
 
             clearInterval(progressInterval);
             setUploadProgress(100);
 
-            if (response.ok) {
-                const result = await response.json();
-                setUploadStatus(`✅ Upload successful! Build URL: ${result.buildUrl}`);
-                setUploadFile(null);
-                setSelectedProject('');
-                document.getElementById('file-input').value = '';
-                await loadProjects(); // Refresh projects
-            } else {
-                const error = await response.json();
-                setUploadStatus(`❌ Upload failed: ${error.error || 'Unknown error'}`);
-            }
+            setUploadStatus(`✅ Upload successful! Version: ${result.version.version} - Build URL: ${result.buildUrl}`);
+            setUploadFile(null);
+            setSelectedProject('');
+            setVersion('');
+            document.getElementById('file-input').value = '';
+            await loadProjects(); // Refresh projects
         } catch (err) {
-            setUploadStatus(`❌ Upload failed: ${err.message}`);
+            setUploadStatus(`❌ Upload failed: ${err.error || err.message}`);
         } finally {
             setUploading(false);
         }
@@ -160,6 +147,20 @@ const ProjectUpload = () => {
                                     </option>
                                 ))}
                             </select>
+                        </div>
+
+                        <div className="form-group">
+                            <label className="form-label">Version (Optional)</label>
+                            <input
+                                type="text"
+                                className="form-input"
+                                value={version}
+                                onChange={(e) => setVersion(e.target.value)}
+                                placeholder="e.g., 1.0.0, 1.1.0, 2.0.0"
+                            />
+                            <div style={{ fontSize: '12px', color: '#6c757d', marginTop: '4px' }}>
+                                Leave empty for auto-increment (e.g., 1.0.0 → 1.0.1)
+                            </div>
                         </div>
 
                         <div className="form-group">
@@ -242,6 +243,7 @@ const ProjectUpload = () => {
                                 onClick={() => {
                                     setSelectedProject('');
                                     setUploadFile(null);
+                                    setVersion('');
                                     setUploadStatus('');
                                     setUploadProgress(0);
                                     document.getElementById('file-input').value = '';

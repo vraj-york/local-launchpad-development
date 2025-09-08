@@ -1,11 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { registerUser } from '../api';
 
 const LoginPage = () => {
     const { user, login } = useAuth();
     const navigate = useNavigate();
-    const [credentials, setCredentials] = useState({ email: '', password: '' });
+    const [isLogin, setIsLogin] = useState(true);
+    const [credentials, setCredentials] = useState({ 
+        name: '', 
+        email: '', 
+        password: '', 
+        confirmPassword: '',
+        role: 'client'
+    });
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
@@ -20,12 +28,47 @@ const LoginPage = () => {
         setLoading(true);
         setError('');
 
-        const result = await login(credentials);
-        
-        if (result.success) {
-            navigate('/dashboard');
-        } else {
-            setError(result.error);
+        try {
+            if (isLogin) {
+                const result = await login({
+                    email: credentials.email,
+                    password: credentials.password
+                });
+                
+                if (result.success) {
+                    navigate('/dashboard');
+                } else {
+                    setError(result.error);
+                }
+            } else {
+                // Registration
+                if (credentials.password !== credentials.confirmPassword) {
+                    setError('Passwords do not match');
+                    setLoading(false);
+                    return;
+                }
+
+                await registerUser({
+                    name: credentials.name,
+                    email: credentials.email,
+                    password: credentials.password,
+                    role: credentials.role
+                });
+
+                // Auto-login after registration
+                const result = await login({
+                    email: credentials.email,
+                    password: credentials.password
+                });
+                
+                if (result.success) {
+                    navigate('/dashboard');
+                } else {
+                    setError('Registration successful, but login failed. Please try logging in.');
+                }
+            }
+        } catch (err) {
+            setError(err.error || 'An error occurred');
         }
         
         setLoading(false);
@@ -43,8 +86,50 @@ const LoginPage = () => {
             <div className="login-card">
                 <h1 className="login-title">Zip Sync</h1>
                 <p style={{ textAlign: 'center', color: '#6c757d', marginBottom: '30px' }}>
-                    Sign in to your account
+                    {isLogin ? 'Sign in to your account' : 'Create a new account'}
                 </p>
+
+                {/* Toggle between login and register */}
+                <div style={{ 
+                    display: 'flex', 
+                    marginBottom: '20px', 
+                    background: '#f8f9fa', 
+                    borderRadius: '8px',
+                    padding: '4px'
+                }}>
+                    <button
+                        type="button"
+                        onClick={() => setIsLogin(true)}
+                        style={{
+                            flex: 1,
+                            padding: '8px 16px',
+                            border: 'none',
+                            borderRadius: '6px',
+                            background: isLogin ? '#28a745' : 'transparent',
+                            color: isLogin ? 'white' : '#6c757d',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease'
+                        }}
+                    >
+                        Login
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setIsLogin(false)}
+                        style={{
+                            flex: 1,
+                            padding: '8px 16px',
+                            border: 'none',
+                            borderRadius: '6px',
+                            background: !isLogin ? '#28a745' : 'transparent',
+                            color: !isLogin ? 'white' : '#6c757d',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease'
+                        }}
+                    >
+                        Register
+                    </button>
+                </div>
                 
                 {error && (
                     <div style={{ 
@@ -60,6 +145,21 @@ const LoginPage = () => {
                 )}
 
                 <form onSubmit={handleSubmit}>
+                    {!isLogin && (
+                        <div className="form-group">
+                            <label className="form-label">Full Name</label>
+                            <input
+                                type="text"
+                                name="name"
+                                className="form-input"
+                                value={credentials.name}
+                                onChange={handleChange}
+                                placeholder="Enter your full name"
+                                required={!isLogin}
+                            />
+                        </div>
+                    )}
+
                     <div className="form-group">
                         <label className="form-label">Email</label>
                         <input
@@ -86,13 +186,45 @@ const LoginPage = () => {
                         />
                     </div>
 
+                    {!isLogin && (
+                        <>
+                            <div className="form-group">
+                                <label className="form-label">Confirm Password</label>
+                                <input
+                                    type="password"
+                                    name="confirmPassword"
+                                    className="form-input"
+                                    value={credentials.confirmPassword}
+                                    onChange={handleChange}
+                                    placeholder="Confirm your password"
+                                    required={!isLogin}
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Role</label>
+                                <select
+                                    name="role"
+                                    className="form-input"
+                                    value={credentials.role}
+                                    onChange={handleChange}
+                                    required={!isLogin}
+                                >
+                                    <option value="client">Client</option>
+                                    <option value="manager">Manager</option>
+                                    <option value="admin">Admin</option>
+                                </select>
+                            </div>
+                        </>
+                    )}
+
                     <button 
                         type="submit" 
                         className="btn btn-primary"
                         style={{ width: '100%', marginTop: '10px' }}
                         disabled={loading}
                     >
-                        {loading ? 'Signing in...' : 'Sign In'}
+                        {loading ? (isLogin ? 'Signing in...' : 'Creating account...') : (isLogin ? 'Sign In' : 'Create Account')}
                     </button>
                 </form>
 

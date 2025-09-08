@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { fetchProjects, createProject } from '../api';
 import { useAuth } from '../context/AuthContext';
 
-const ProjectManagement = () => {
+const ProjectManagement = ({ setActiveTab }) => {
     const { user } = useAuth();
+    console.log('ProjectManagement user:', user);
     const [projects, setProjects] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -13,7 +14,7 @@ const ProjectManagement = () => {
     const [newProject, setNewProject] = useState({
         name: '',
         description: '',
-        assignedManagerId: null
+        assignedManagerId: user.role === 'manager' ? user.id : null
     });
 
     useEffect(() => {
@@ -24,6 +25,7 @@ const ProjectManagement = () => {
         try {
             setLoading(true);
             const data = await fetchProjects();
+            console.log('ProjectManagement projects data:', data);
             setProjects(data);
         } catch (err) {
             setError(err.message || 'Failed to load projects');
@@ -39,7 +41,7 @@ const ProjectManagement = () => {
         try {
             setCreating(true);
             await createProject(newProject);
-            setNewProject({ name: '', description: '', assignedManagerId: null });
+            setNewProject({ name: '', description: '', assignedManagerId: user.role === 'manager' ? user.id : null });
             setShowCreateForm(false);
             await loadProjects();
         } catch (err) {
@@ -198,10 +200,10 @@ const ProjectManagement = () => {
                                     <div className="project-meta">
                                         <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
                                         <span style={{ 
-                                            color: project.buildUrl ? '#28a745' : '#6c757d',
+                                            color: (project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? '#28a745' : '#6c757d',
                                             fontWeight: '500'
                                         }}>
-                                            {project.buildUrl ? 'Live' : 'Draft'}
+                                            {(project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? 'Live' : 'Draft'}
                                         </span>
                                     </div>
 
@@ -215,12 +217,15 @@ const ProjectManagement = () => {
                                     }}>
                                         <div>ID: {project.id}</div>
                                         <div>Manager ID: {project.assignedManagerId}</div>
+                                        {project.versions && project.versions.length > 0 && (
+                                            <div>Current Version: {project.versions[0].version}</div>
+                                        )}
                                     </div>
 
                                     <div className="project-actions">
-                                        {project.buildUrl && (
+                                        {project.versions && project.versions.length > 0 && project.versions[0].buildUrl && (
                                             <a 
-                                                href={project.buildUrl} 
+                                                href={project.versions[0].buildUrl} 
                                                 target="_blank" 
                                                 rel="noopener noreferrer"
                                                 className="btn btn-primary"
@@ -228,7 +233,10 @@ const ProjectManagement = () => {
                                                 Live
                                             </a>
                                         )}
-                                        <button className="btn btn-outline">
+                                        <button 
+                                            className="btn btn-outline"
+                                            onClick={() => setActiveTab('upload')}
+                                        >
                                             Upload 
                                         </button>
                                         <button className="btn btn-outline">

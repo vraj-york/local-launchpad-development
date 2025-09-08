@@ -16,6 +16,7 @@ model User {
   projectsCreated      Project[] @relation("CreatedProjects")
   projectsManaged      Project[] @relation("ManagedProjects")
   projectAccess        ProjectAccess[]
+  versionsUploaded     ProjectVersion[] @relation("VersionUploader")
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 }
@@ -26,14 +27,13 @@ model Project {
   description       String?
   createdById       Int
   assignedManagerId Int
-  zipFilePath       String?
-  buildUrl          String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   createdBy         User     @relation("CreatedProjects", fields: [createdById], references: [id])
   assignedManager   User     @relation("ManagedProjects", fields: [assignedManagerId], references: [id])
   projectAccess     ProjectAccess[]
+  versions          ProjectVersion[]
 }
 
 model ProjectAccess {
@@ -43,6 +43,21 @@ model ProjectAccess {
   user      User     @relation(fields: [userId], references: [id])
   userId    Int
   createdAt DateTime @default(now())
+}
+
+model ProjectVersion {
+  id          Int      @id @default(autoincrement())
+  projectId   Int
+  version     String   // e.g., "1.0.0", "1.1.0", "2.0.0"
+  zipFilePath String
+  buildUrl    String
+  isActive    Boolean  @default(false) // Only one version can be active per project
+  uploadedBy  Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader    User     @relation("VersionUploader", fields: [uploadedBy], references: [id])
 }
 
 enum Role {

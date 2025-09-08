@@ -16,13 +16,37 @@ router.get("/", authenticateToken, async (req, res) => {
   const { id, role } = req.user;
   let projects;
   if (role === "admin") {
-    projects = await prisma.project.findMany();
+    projects = await prisma.project.findMany({
+      include: {
+        versions: {
+          where: { isActive: true },
+          select: { id: true, version: true, buildUrl: true, createdAt: true }
+        }
+      }
+    });
   } else if (role === "manager") {
-    projects = await prisma.project.findMany({ where: { assignedManagerId: id } });
+    projects = await prisma.project.findMany({ 
+      where: { assignedManagerId: id },
+      include: {
+        versions: {
+          where: { isActive: true },
+          select: { id: true, version: true, buildUrl: true, createdAt: true }
+        }
+      }
+    });
   } else {
     projects = await prisma.projectAccess.findMany({
       where: { userId: id },
-      include: { project: true },
+      include: { 
+        project: {
+          include: {
+            versions: {
+              where: { isActive: true },
+              select: { id: true, version: true, buildUrl: true, createdAt: true }
+            }
+          }
+        }
+      },
     });
     projects = projects.map(pa => pa.project);
   }
@@ -60,6 +84,7 @@ const upload = multer({
 router.post("/:id/upload", authenticateToken, upload.single("project"), async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
   const { role, id: userId } = req.user;
+  const { version } = req.body; // Get version from request body
 
   // Only admin or assigned manager can upload
   const project = await prisma.project.findUnique({ where: { id: projectId } });
@@ -73,6 +98,26 @@ router.post("/:id/upload", authenticateToken, upload.single("project"), async (r
   }
 
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+  // Generate version if not provided
+  let versionNumber = version;
+  if (!versionNumber) {
+    const existingVersions = await prisma.projectVersion.findMany({
+      where: { projectId },
+      orderBy: { createdAt: 'desc' },
+      take: 1
+    });
+    
+    if (existingVersions.length === 0) {
+      versionNumber = "1.0.0";
+    } else {
+      // Simple version increment - you can make this more sophisticated
+      const lastVersion = existingVersions[0].version;
+      const parts = lastVersion.split('.');
+      const patch = parseInt(parts[2]) + 1;
+      versionNumber = `${parts[0]}.${parts[1]}.${patch}`;
+    }
+  }
 
   // Extract zip to project folder
   const projectFolder = path.join(process.cwd(), "projects", String(projectId));
@@ -176,13 +221,29 @@ window.markerConfig = {
     );
     const buildUrl = `http://localhost:5000/apps/${relativeBuildPath}`;
 
-    // Save file path and build URL to project
-    await prisma.project.update({
-      where: { id: projectId },
-      data: { zipFilePath: req.file.path, buildUrl },
+    // Deactivate all existing versions for this project
+    await prisma.projectVersion.updateMany({
+      where: { projectId },
+      data: { isActive: false }
     });
 
-    res.json({ message: "Zip uploaded and built", buildUrl });
+    // Create new version
+    const newVersion = await prisma.projectVersion.create({
+      data: {
+        projectId,
+        version: versionNumber,
+        zipFilePath: req.file.path,
+        buildUrl,
+        isActive: true,
+        uploadedBy: userId
+      }
+    });
+
+    res.json({ 
+      message: "Zip uploaded and built", 
+      buildUrl,
+      version: newVersion
+    });
   });
 });
 
@@ -206,10 +267,85 @@ router.get("/:id/live-url", authenticateToken, async (req, res) => {
   }
   if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
-  if (!project.buildUrl) {
+  // Get active version
+  const activeVersion = await prisma.projectVersion.findFirst({
+    where: { projectId, isActive: true }
+  });
+
+  if (!activeVersion) {
     return res.status(404).json({ error: "No live build found for this project" });
   }
 
-  res.json({ liveUrl: project.buildUrl });
+  res.json({ liveUrl: activeVersion.buildUrl, version: activeVersion.version });
 });
+
+// Get all versions for a project
+router.get("/:id/versions", authenticateToken, async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  const { id: userId, role } = req.user;
+
+  // Check access
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) return res.status(404).json({ error: "Project not found" });
+
+  let hasAccess = false;
+  if (role === "admin") hasAccess = true;
+  else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
+  else if (role === "client") {
+    const access = await prisma.projectAccess.findFirst({
+      where: { projectId, userId }
+    });
+    if (access) hasAccess = true;
+  }
+  if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
+
+  const versions = await prisma.projectVersion.findMany({
+    where: { projectId },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      uploader: {
+        select: { id: true, name: true, email: true }
+      }
+    }
+  });
+
+  res.json(versions);
+});
+
+// Activate a specific version
+router.post("/:id/versions/:versionId/activate", authenticateToken, async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  const versionId = parseInt(req.params.versionId, 10);
+  const { id: userId, role } = req.user;
+
+  // Check access
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) return res.status(404).json({ error: "Project not found" });
+
+  let hasAccess = false;
+  if (role === "admin") hasAccess = true;
+  else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
+  if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
+
+  // Check if version exists
+  const version = await prisma.projectVersion.findFirst({
+    where: { id: versionId, projectId }
+  });
+  if (!version) return res.status(404).json({ error: "Version not found" });
+
+  // Deactivate all versions
+  await prisma.projectVersion.updateMany({
+    where: { projectId },
+    data: { isActive: false }
+  });
+
+  // Activate the selected version
+  await prisma.projectVersion.update({
+    where: { id: versionId },
+    data: { isActive: true }
+  });
+
+  res.json({ message: "Version activated successfully" });
+});
+
 export default router;

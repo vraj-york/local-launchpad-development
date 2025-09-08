@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { fetchProjects } from '../api';
 
-const DashboardHome = () => {
+const DashboardHome = ({ setActiveTab }) => {
     const [projects, setProjects] = useState([]);
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState({
@@ -14,15 +14,22 @@ const DashboardHome = () => {
         const loadDashboardData = async () => {
             try {
                 const projectsData = await fetchProjects();
+                console.log('Dashboard projects data:', projectsData);
                 setProjects(projectsData);
                 
                 // Calculate stats
                 const totalProjects = projectsData.length;
-                const activeProjects = projectsData.filter(p => p.buildUrl).length;
+                const activeProjects = projectsData.filter(p => 
+                    p.versions && p.versions.length > 0 && p.versions[0].buildUrl
+                ).length;
                 const recentUploads = projectsData.filter(p => {
-                    const createdAt = new Date(p.createdAt);
-                    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-                    return createdAt > weekAgo;
+                    if (p.versions && p.versions.length > 0) {
+                        const lastVersion = p.versions[0];
+                        const createdAt = new Date(lastVersion.createdAt);
+                        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+                        return createdAt > weekAgo;
+                    }
+                    return false;
                 }).length;
 
                 setStats({
@@ -117,16 +124,16 @@ const DashboardHome = () => {
                                     <div className="project-meta">
                                         <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
                                         <span style={{ 
-                                            color: project.buildUrl ? '#28a745' : '#6c757d',
+                                            color: (project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? '#28a745' : '#6c757d',
                                             fontWeight: '500'
                                         }}>
-                                            {project.buildUrl ? 'Live' : 'Draft'}
+                                            {(project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? 'Live' : 'Draft'}
                                         </span>
                                     </div>
                                     <div className="project-actions">
-                                        {project.buildUrl && (
+                                        {project.versions && project.versions.length > 0 && project.versions[0].buildUrl && (
                                             <a 
-                                                href={project.buildUrl} 
+                                                href={project.versions[0].buildUrl} 
                                                 target="_blank" 
                                                 rel="noopener noreferrer"
                                                 className="btn btn-primary"
@@ -134,7 +141,10 @@ const DashboardHome = () => {
                                                 View Live
                                             </a>
                                         )}
-                                        <button className="btn btn-outline">
+                                        <button 
+                                            className="btn btn-outline"
+                                            onClick={() => setActiveTab('projects')}
+                                        >
                                             Manage
                                         </button>
                                     </div>
@@ -152,19 +162,28 @@ const DashboardHome = () => {
                 </div>
                 <div className="card-body">
                     <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                        <button className="btn btn-primary">
+                        <button 
+                            className="btn btn-primary"
+                            onClick={() => setActiveTab('projects')}
+                        >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
                                 <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
                             </svg>
                             Create New Project
                         </button>
-                        <button className="btn btn-outline">
+                        <button 
+                            className="btn btn-outline"
+                            onClick={() => setActiveTab('upload')}
+                        >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
                                 <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
                             </svg>
                             Upload Build
                         </button>
-                        <button className="btn btn-outline">
+                        <button 
+                            className="btn btn-outline"
+                            onClick={() => setActiveTab('view')}
+                        >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
                                 <path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z"/>
                             </svg>

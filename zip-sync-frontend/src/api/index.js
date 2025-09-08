@@ -105,10 +105,13 @@ export const getProjectLiveUrl = async (projectId) => {
 };
 
 // Function to upload project build
-export const uploadProjectBuild = async (projectId, file) => {
+export const uploadProjectBuild = async (projectId, file, version = null) => {
     try {
         const formData = new FormData();
         formData.append('project', file);
+        if (version) {
+            formData.append('version', version);
+        }
         
         const response = await api.post(`/api/projects/${projectId}/upload`, formData, {
             headers: {
@@ -118,5 +121,25 @@ export const uploadProjectBuild = async (projectId, file) => {
         return response.data;
     } catch (error) {
         throw error.response?.data || { error: 'Failed to upload project' };
+    }
+};
+
+// Function to get project versions
+export const getProjectVersions = async (projectId) => {
+    try {
+        const response = await api.get(`/api/projects/${projectId}/versions`);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to fetch versions' };
+    }
+};
+
+// Function to activate a version
+export const activateVersion = async (projectId, versionId) => {
+    try {
+        const response = await api.post(`/api/projects/${projectId}/versions/${versionId}/activate`);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to activate version' };
     }
 };
