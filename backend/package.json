@@ -22,6 +22,7 @@
     "fs-extra": "^11.3.1",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
+    "node-fetch": "^3.3.2",
     "pg": "^8.16.3",
     "prisma": "^6.15.0",
     "unzipper": "^0.12.3"
