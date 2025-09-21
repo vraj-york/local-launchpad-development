@@ -40,7 +40,7 @@ const ProjectView = ({ setActiveTab, setSelectedProjectForVersions }) => {
     const getProjectStatus = (project) => {
         const hasActiveVersion = project.versions && project.versions.length > 0 && project.versions[0].buildUrl;
         if (hasActiveVersion) {
-            return { text: 'Live', color: '#28a745', bg: '#d4edda' };
+            return { text: 'Live', color: '#00B48B', bg: '#d4edda' };
         }
         return { text: 'Draft', color: '#6c757d', bg: '#e9ecef' };
     };
@@ -247,7 +247,7 @@ const ProjectView = ({ setActiveTab, setSelectedProjectForVersions }) => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginTop: '24px' }}>
                 <div className="card">
                     <div className="card-body" style={{ textAlign: 'center' }}>
-                        <div style={{ fontSize: '24px', fontWeight: '700', color: '#28a745', marginBottom: '8px' }}>
+                        <div style={{ fontSize: '24px', fontWeight: '700', color: '#00B48B', marginBottom: '8px' }}>
                             {projects.filter(p => p.versions && p.versions.length > 0 && p.versions[0].buildUrl).length}
                         </div>
                         <div style={{ color: '#6c757d', fontSize: '14px' }}>Live Projects</div>

@@ -52,7 +52,11 @@ const Sidebar = ({ activeTab, setActiveTab, user, logout, isOpen, onClose }) => 
     return (
         <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
             <div className="sidebar-header">
+                <div className="sidebar-logo" style={{ display: 'flex', alignItems: 'center' }}>
+
+                <img src="/york-logo.png" alt="Zip Sync Logo" style={{ width: '40px', marginRight: '10px' }} />
                 <h2>Zip Sync</h2>
+                </div>
                 <button className="sidebar-close" onClick={onClose}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>

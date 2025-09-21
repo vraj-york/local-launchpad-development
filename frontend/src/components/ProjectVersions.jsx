@@ -150,7 +150,7 @@ const ProjectVersions = ({ projectId, projectName }) => {
                                                         borderRadius: '12px',
                                                         fontSize: '12px',
                                                         fontWeight: '500',
-                                                        color: '#28a745',
+                                                        color: '#00B48B',
                                                         backgroundColor: '#d4edda'
                                                     }}>
                                                         Active

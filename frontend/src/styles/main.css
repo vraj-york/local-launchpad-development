@@ -67,7 +67,7 @@ body {
 }
 
 .nav-item.active {
-    background-color: #28a745;
+    background-color: #00B48B;
     color: #ffffff;
     border-radius: 0 25px 25px 0;
     margin-right: 20px;
@@ -138,7 +138,7 @@ body {
 }
 
 .btn-primary {
-    background-color: #28a745;
+    background-color: #00B48B;
     color: #ffffff;
 }
 
@@ -158,12 +158,12 @@ body {
 
 .btn-outline {
     background-color: transparent;
-    color: #28a745;
-    border: 2px solid #28a745;
+    color: #00B48B;
+    border: 2px solid #00B48B;
 }
 
 .btn-outline:hover {
-    background-color: #28a745;
+    background-color: #00B48B;
     color: #ffffff;
 }
 
@@ -240,7 +240,7 @@ body {
 
 .form-input:focus {
     outline: none;
-    border-color: #28a745;
+    border-color: #00B48B;
 }
 
 .form-textarea {
@@ -256,7 +256,7 @@ body {
 
 .form-textarea:focus {
     outline: none;
-    border-color: #28a745;
+    border-color: #00B48B;
 }
 
 /* Login Page */
@@ -321,7 +321,7 @@ body {
     width: 20px;
     height: 20px;
     border: 2px solid #e9ecef;
-    border-top: 2px solid #28a745;
+    border-top: 2px solid #00B48B;
     border-radius: 50%;
     animation: spin 1s linear infinite;
     margin-right: 10px;

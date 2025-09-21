@@ -84,7 +84,14 @@ const LoginPage = () => {
     return (
         <div className="login-container">
             <div className="login-card">
-                <h1 className="login-title">Zip Sync</h1>
+               
+                <div>
+                    <img 
+                        src="/logo.png" 
+                        alt="Zip Sync Logo" 
+                        style={{ width: '200px', display: 'block', margin: '0 auto 10px' }} 
+                    />
+                </div>
                 <p style={{ textAlign: 'center', color: '#6c757d', marginBottom: '30px' }}>
                     {isLogin ? 'Sign in to your account' : 'Create a new account'}
                 </p>
@@ -105,7 +112,7 @@ const LoginPage = () => {
                             padding: '8px 16px',
                             border: 'none',
                             borderRadius: '6px',
-                            background: isLogin ? '#28a745' : 'transparent',
+                            background: isLogin ? '#00B48B' : 'transparent',
                             color: isLogin ? 'white' : '#6c757d',
                             cursor: 'pointer',
                             transition: 'all 0.2s ease'
@@ -121,7 +128,7 @@ const LoginPage = () => {
                             padding: '8px 16px',
                             border: 'none',
                             borderRadius: '6px',
-                            background: !isLogin ? '#28a745' : 'transparent',
+                            background: !isLogin ? '#00B48B' : 'transparent',
                             color: !isLogin ? 'white' : '#6c757d',
                             cursor: 'pointer',
                             transition: 'all 0.2s ease'

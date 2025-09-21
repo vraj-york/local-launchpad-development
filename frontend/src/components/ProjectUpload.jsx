@@ -209,7 +209,7 @@ const ProjectUpload = () => {
                                     <div style={{ 
                                         width: `${uploadProgress}%`, 
                                         height: '100%', 
-                                        background: '#28a745',
+                                        background: '#00B48B',
                                         transition: 'width 0.3s ease'
                                     }}></div>
                                 </div>

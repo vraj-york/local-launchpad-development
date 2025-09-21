@@ -71,7 +71,7 @@ const DashboardHome = ({ setActiveTab }) => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginBottom: '32px' }}>
                 <div className="card">
                     <div className="card-body" style={{ textAlign: 'center' }}>
-                        <div style={{ fontSize: '32px', fontWeight: '700', color: '#28a745', marginBottom: '8px' }}>
+                        <div style={{ fontSize: '32px', fontWeight: '700', color: '#00B48B', marginBottom: '8px' }}>
                             {stats.totalProjects}
                         </div>
                         <div style={{ color: '#6c757d', fontSize: '14px' }}>Total Projects</div>
@@ -124,7 +124,7 @@ const DashboardHome = ({ setActiveTab }) => {
                                     <div className="project-meta">
                                         <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
                                         <span style={{ 
-                                            color: (project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? '#28a745' : '#6c757d',
+                                            color: (project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? '#00B48B' : '#6c757d',
                                             fontWeight: '500'
                                         }}>
                                             {(project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? 'Live' : 'Draft'}

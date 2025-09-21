@@ -200,7 +200,7 @@ const ProjectManagement = ({ setActiveTab }) => {
                                     <div className="project-meta">
                                         <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
                                         <span style={{ 
-                                            color: (project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? '#28a745' : '#6c757d',
+                                            color: (project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? '#00B48B' : '#6c757d',
                                             fontWeight: '500'
                                         }}>
                                             {(project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? 'Live' : 'Draft'}
