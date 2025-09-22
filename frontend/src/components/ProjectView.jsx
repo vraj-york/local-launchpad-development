@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { fetchProjects } from '../api';
 import { useAuth } from '../context/AuthContext';
+import DiffModal from './DiffModal';
+import ProjectActionsDropdown from './ProjectActionsDropdown';
 
 const ProjectView = ({ setActiveTab, setSelectedProjectForVersions }) => {
     const { user } = useAuth();
@@ -8,6 +10,7 @@ const ProjectView = ({ setActiveTab, setSelectedProjectForVersions }) => {
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('all'); // all, live, draft
     const [searchTerm, setSearchTerm] = useState('');
+    const [diffModal, setDiffModal] = useState({ isOpen: false, projectId: null, projectName: '' });
     // const [selectedProjectForVersions, setSelectedProjectForVersions] = useState(null);
 
     useEffect(() => {
@@ -213,27 +216,27 @@ const ProjectView = ({ setActiveTab, setSelectedProjectForVersions }) => {
                                                 </a>
                                             )}
                                             
-                                            <button 
-                                                className="btn btn-outline"
-                                                onClick={() => {
-                                                    setSelectedProjectForVersions(project);
-                                                    setActiveTab('versions');
-                                                }}
-                                            >
-                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
-                                                    <path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z"/>
-                                                </svg>
-                                                Details
-                                            </button>
-                                            
                                             {(!project.versions || project.versions.length === 0) && (user?.role === 'admin' || user?.role === 'manager') && (
-                                                <button className="btn btn-outline">
+                                                <button 
+                                                    className="btn btn-outline"
+                                                    onClick={() => setActiveTab('upload')}
+                                                >
                                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
                                                         <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
                                                     </svg>
                                                     Upload
                                                 </button>
                                             )}
+                                            
+                                            <ProjectActionsDropdown
+                                                project={project}
+                                                user={user}
+                                                onGitDiff={() => setDiffModal({ isOpen: true, projectId: project.id, projectName: project.name })}
+                                                onManage={() => {
+                                                    setSelectedProjectForVersions(project);
+                                                    setActiveTab('versions');
+                                                }}
+                                            />
                                         </div>
                                     </div>
                                 );
@@ -272,6 +275,14 @@ const ProjectView = ({ setActiveTab, setSelectedProjectForVersions }) => {
                     </div>
                 </div>
             </div>
+            
+            {/* Diff Modal */}
+            <DiffModal
+                isOpen={diffModal.isOpen}
+                onClose={() => setDiffModal({ isOpen: false, projectId: null, projectName: '' })}
+                projectId={diffModal.projectId}
+                projectName={diffModal.projectName}
+            />
         </div>
     );
 };

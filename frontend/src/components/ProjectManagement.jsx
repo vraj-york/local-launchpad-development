@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { fetchProjects, createProject } from '../api';
 import { useAuth } from '../context/AuthContext';
+import DiffModal from './DiffModal';
+import ProjectActionsDropdown from './ProjectActionsDropdown';
 
 const ProjectManagement = ({ setActiveTab }) => {
     const { user } = useAuth();
@@ -16,6 +18,7 @@ const ProjectManagement = ({ setActiveTab }) => {
         description: '',
         assignedManagerId: user.role === 'manager' ? user.id : null
     });
+    const [diffModal, setDiffModal] = useState({ isOpen: false, projectId: null, projectName: '' });
 
     useEffect(() => {
         loadProjects();
@@ -233,15 +236,19 @@ const ProjectManagement = ({ setActiveTab }) => {
                                                 Live
                                             </a>
                                         )}
+                                        
                                         <button 
                                             className="btn btn-outline"
                                             onClick={() => setActiveTab('upload')}
                                         >
                                             Upload 
                                         </button>
-                                        <button className="btn btn-outline">
-                                            Edit
-                                        </button>
+                                        
+                                        <ProjectActionsDropdown
+                                            project={project}
+                                            user={user}
+                                            onGitDiff={() => setDiffModal({ isOpen: true, projectId: project.id, projectName: project.name })}
+                                        />
                                     </div>
                                 </div>
                             ))}
@@ -249,6 +256,14 @@ const ProjectManagement = ({ setActiveTab }) => {
                     )}
                 </div>
             </div>
+            
+            {/* Diff Modal */}
+            <DiffModal
+                isOpen={diffModal.isOpen}
+                onClose={() => setDiffModal({ isOpen: false, projectId: null, projectName: '' })}
+                projectId={diffModal.projectId}
+                projectName={diffModal.projectName}
+            />
         </div>
     );
 };

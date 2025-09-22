@@ -143,7 +143,7 @@ const ProjectUpload = () => {
                                 <option value="">Choose a project...</option>
                                 {projects.map((project) => (
                                     <option key={project.id} value={project.id}>
-                                        {project.name} {project.buildUrl ? '(has build)' : '(no build)'}
+                                        {project.name}
                                     </option>
                                 ))}
                             </select>

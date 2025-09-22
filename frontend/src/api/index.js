@@ -143,3 +143,13 @@ export const activateVersion = async (projectId, versionId) => {
         throw error.response?.data || { error: 'Failed to activate version' };
     }
 };
+
+// Function to get project diff summary
+export const fetchProjectDiff = async (projectId) => {
+    try {
+        const response = await api.get(`/api/projects/${projectId}/diff-summary`);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to fetch project diff' };
+    }
+};

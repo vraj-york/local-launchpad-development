@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { fetchProjects } from '../api';
+import DiffModal from './DiffModal';
+import ProjectActionsDropdown from './ProjectActionsDropdown';
 
 const DashboardHome = ({ setActiveTab }) => {
     const [projects, setProjects] = useState([]);
@@ -9,6 +11,7 @@ const DashboardHome = ({ setActiveTab }) => {
         activeProjects: 0,
         recentUploads: 0
     });
+    const [diffModal, setDiffModal] = useState({ isOpen: false, projectId: null, projectName: '' });
 
     useEffect(() => {
         const loadDashboardData = async () => {
@@ -115,7 +118,7 @@ const DashboardHome = ({ setActiveTab }) => {
                         </div>
                     ) : (
                         <div className="projects-grid">
-                            {projects.slice(0, 6).map((project) => (
+                            {projects.slice(-6).reverse().map((project) => (
                                 <div key={project.id} className="project-card">
                                     <h4 className="project-title">{project.name}</h4>
                                     <p className="project-description">
@@ -141,12 +144,19 @@ const DashboardHome = ({ setActiveTab }) => {
                                                 View Live
                                             </a>
                                         )}
+                                        
                                         <button 
                                             className="btn btn-outline"
                                             onClick={() => setActiveTab('projects')}
                                         >
                                             Manage
                                         </button>
+                                        
+                                        <ProjectActionsDropdown
+                                            project={project}
+                                            user={{ role: 'admin' }}
+                                            onGitDiff={() => setDiffModal({ isOpen: true, projectId: project.id, projectName: project.name })}
+                                        />
                                     </div>
                                 </div>
                             ))}
@@ -192,6 +202,14 @@ const DashboardHome = ({ setActiveTab }) => {
                     </div>
                 </div>
             </div>
+            
+            {/* Diff Modal */}
+            <DiffModal
+                isOpen={diffModal.isOpen}
+                onClose={() => setDiffModal({ isOpen: false, projectId: null, projectName: '' })}
+                projectId={diffModal.projectId}
+                projectName={diffModal.projectName}
+            />
         </div>
     );
 };
