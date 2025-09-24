@@ -1,6 +1,7 @@
 import express from "express";
 import { PrismaClient } from "@prisma/client";
 import { authenticateToken } from "../middleware/auth.middleware.js";
+import { generateProjectHeader } from "../utils/headerUtils.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs-extra";
@@ -423,7 +424,7 @@ router.post("/:id/upload", authenticateToken, upload.single("project"), async (r
           throw new Error('Not a valid React project: build script not found in package.json');
         }
 
-        // Find and inject Marker.io script into root HTML file
+        // Find and inject scripts/components into root HTML file
         const htmlFiles = ['index.html', 'public/index.html', 'src/index.html'];
         let rootHtmlPath = null;
         
@@ -448,34 +449,61 @@ window.markerConfig = {
           !function(e,r,a){if(!e.__Marker){e.__Marker={};var t=[],n={__cs:t};["show","hide","isVisible","capture","cancelCapture","unload","reload","isExtensionInstalled","setReporter","setCustomData","on","off"].forEach(function(e){n[e]=function(){var r=Array.prototype.slice.call(arguments);r.unshift(e),t.push(r)}}),e.Marker=n;var s=r.createElement("script");s.async=1,s.src="https://edge.marker.io/latest/shim.js";var i=r.getElementsByTagName("script")[0];i.parentNode.insertBefore(s,i)}}(window,document);
 </script>`;
 
-            // Check if script is already injected to avoid duplicates
+            // Get project header HTML using helper function
+            const projectHeader = generateProjectHeader();
+
+            let hasChanges = false;
+
+            // Check if Marker.io script is already injected to avoid duplicates
             if (!htmlContent.includes('window.markerConfig')) {
-              // Inject script before closing head tag
+              // Inject Marker.io script before closing head tag
               if (htmlContent.includes('</head>')) {
                 htmlContent = htmlContent.replace('</head>', `${markerScript}\n</head>`);
               } else if (htmlContent.includes('<head>')) {
-                // If no closing head tag, inject after opening head tag
                 htmlContent = htmlContent.replace('<head>', `<head>\n${markerScript}`);
               } else {
-                // If no head tag at all, add it at the beginning of body or after html tag
                 if (htmlContent.includes('<body>')) {
                   htmlContent = htmlContent.replace('<body>', `<head>\n${markerScript}\n</head>\n<body>`);
                 } else if (htmlContent.includes('<html>')) {
                   htmlContent = htmlContent.replace('<html>', `<html>\n<head>\n${markerScript}\n</head>`);
                 }
               }
-              
-              fs.writeFileSync(rootHtmlPath, htmlContent, 'utf-8');
-              console.log('✅ Marker.io script injected into:', rootHtmlPath);
+              hasChanges = true;
+              console.log('✅ Marker.io script injected');
             } else {
-              console.log('ℹ️  Marker.io script already present in:', rootHtmlPath);
+              console.log('ℹ️  Marker.io script already present');
+            }
+
+            // Check if project header is already injected to avoid duplicates
+            if (!htmlContent.includes('zip-sync-header')) {
+              // Inject project header after opening body tag
+              if (htmlContent.includes('<body>')) {
+                htmlContent = htmlContent.replace('<body>', `<body>\n${projectHeader}`);
+              } else if (htmlContent.includes('<body ')) {
+                // Handle body tag with attributes
+                htmlContent = htmlContent.replace(/<body([^>]*)>/, `<body$1>\n${projectHeader}`);
+              } else {
+                // Fallback: add to end of head or create body
+                if (htmlContent.includes('</head>')) {
+                  htmlContent = htmlContent.replace('</head>', `</head>\n<body>\n${projectHeader}\n</body>`);
+                }
+              }
+              hasChanges = true;
+              console.log('✅ Project header injected');
+            } else {
+              console.log('ℹ️  Project header already present');
+            }
+
+            if (hasChanges) {
+              fs.writeFileSync(rootHtmlPath, htmlContent, 'utf-8');
+              console.log('✅ HTML file updated with injections:', rootHtmlPath);
             }
           } catch (error) {
-            console.error('❌ Error injecting Marker.io script:', error.message);
-            // Continue with build process even if script injection fails
+            console.error('❌ Error injecting scripts/components:', error.message);
+            // Continue with build process even if injection fails
           }
         } else {
-          console.log('⚠️  No root HTML file found to inject Marker.io script');
+          console.log('⚠️  No root HTML file found to inject scripts/components');
         }
 
         // Build React app
@@ -847,6 +875,310 @@ router.get("/:id/diff-summary", authenticateToken, async (req, res) => {
   } catch (err) {
     console.error("Diff + summary error:", err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Get detailed git diff with individual file changes
+router.get("/:id/git-diff", authenticateToken, async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  const { id: userId, role } = req.user;
+
+  try {
+    console.log("🔍 Git diff request for project ID:", projectId);
+
+    // Check access (same as diff-summary)
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    let hasAccess = false;
+    if (role === "admin") hasAccess = true;
+    else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
+    else if (role === "client") {
+      const access = await prisma.projectAccess.findFirst({
+        where: { projectId, userId }
+      });
+      if (access) hasAccess = true;
+    }
+    if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
+
+    // Get project folder path
+    const projectFolder = path.join(process.cwd(), "projects", String(projectId));
+    
+    // Ensure project exists
+    if (!fs.existsSync(projectFolder)) {
+      return res.status(404).json({ error: "Project folder not found" });
+    }
+
+    const gitDir = path.join(projectFolder, ".git");
+    if (!fs.existsSync(gitDir)) {
+      return res.status(400).json({ error: "Not a git repository" });
+    }
+
+    // Get last 2 commit hashes
+    const logOutput = runCommand(
+      "git log -2 --pretty=format:%H",
+      projectFolder
+    );
+    const commits = logOutput.trim().split("\n");
+
+    if (commits.length < 2) {
+      return res.status(400).json({ error: "Not enough commits to generate a diff" });
+    }
+
+    const [latestCommit, previousCommit] = commits;
+
+    // Get list of changed files with their status
+    const changedFilesOutput = runCommand(
+      `git diff --name-status ${previousCommit} ${latestCommit}`,
+      projectFolder
+    );
+
+    // Get diff stats (additions/deletions per file)
+    const diffStatsOutput = runCommand(
+      `git diff --numstat ${previousCommit} ${latestCommit}`,
+      projectFolder
+    );
+
+    // Parse changed files
+    const changedFiles = [];
+    const fileLines = changedFilesOutput.trim().split("\n").filter(line => line);
+    const statsLines = diffStatsOutput.trim().split("\n").filter(line => line);
+
+    // Create a map of file stats
+    const statsMap = {};
+    statsLines.forEach(line => {
+      const parts = line.split("\t");
+      if (parts.length === 3) {
+        const [additions, deletions, filename] = parts;
+        statsMap[filename] = {
+          additions: additions === "-" ? 0 : parseInt(additions, 10),
+          deletions: deletions === "-" ? 0 : parseInt(deletions, 10)
+        };
+      }
+    });
+
+    // Process each changed file
+    for (let i = 0; i < fileLines.length; i++) {
+      const line = fileLines[i];
+      const status = line.charAt(0);
+      const filename = line.substring(2);
+      
+      // Skip binary files and very large files
+      const filePath = path.join(projectFolder, filename);
+      let isLargeFile = false;
+      let isBinaryFile = false;
+
+      // Check if file exists and get size
+      if (fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        isLargeFile = stats.size > 100000; // 100KB limit
+        
+        // Simple binary file check
+        try {
+          const buffer = fs.readFileSync(filePath);
+          isBinaryFile = buffer.includes(0);
+        } catch (error) {
+          console.warn(`Could not read file ${filename}:`, error.message);
+          isBinaryFile = true;
+        }
+      }
+
+      let oldValue = "";
+      let newValue = "";
+
+      if (!isBinaryFile && !isLargeFile) {
+        try {
+          // Get file content from previous commit
+          if (status !== "A") { // Not a new file
+            try {
+              oldValue = runCommand(
+                `git show ${previousCommit}:${filename}`,
+                projectFolder
+              );
+            } catch (error) {
+              console.warn(`Could not get old content for ${filename}:`, error.message);
+              oldValue = "";
+            }
+          }
+
+          // Get file content from latest commit
+          if (status !== "D") { // Not a deleted file
+            try {
+              newValue = runCommand(
+                `git show ${latestCommit}:${filename}`,
+                projectFolder
+              );
+            } catch (error) {
+              console.warn(`Could not get new content for ${filename}:`, error.message);
+              newValue = "";
+            }
+          }
+        } catch (error) {
+          console.warn(`Error processing file ${filename}:`, error.message);
+          isLargeFile = true; // Treat as large file if we can't process it
+        }
+      }
+
+      // Determine file status
+      let fileStatus;
+      switch (status) {
+        case "A":
+          fileStatus = "added";
+          break;
+        case "D":
+          fileStatus = "deleted";
+          break;
+        case "M":
+          fileStatus = "modified";
+          break;
+        case "R":
+          fileStatus = "renamed";
+          break;
+        case "C":
+          fileStatus = "copied";
+          break;
+        default:
+          fileStatus = "modified";
+      }
+
+      const fileStats = statsMap[filename] || { additions: 0, deletions: 0 };
+
+      changedFiles.push({
+        id: i + 1,
+        filename: path.basename(filename),
+        path: filename,
+        status: fileStatus,
+        additions: fileStats.additions,
+        deletions: fileStats.deletions,
+        oldValue: isLargeFile || isBinaryFile ? "" : oldValue,
+        newValue: isLargeFile || isBinaryFile ? "" : newValue,
+        isLargeFile: isLargeFile,
+        isBinaryFile: isBinaryFile
+      });
+    }
+
+    // Calculate total stats
+    const totalAdditions = changedFiles.reduce((sum, file) => sum + file.additions, 0);
+    const totalDeletions = changedFiles.reduce((sum, file) => sum + file.deletions, 0);
+
+    res.json({
+      projectId,
+      projectName: project.name,
+      repository: `https://github.com/${GITHUB_USERNAME}/${project.name}`,
+      from: previousCommit,
+      to: latestCommit,
+      files: changedFiles,
+      totalFiles: changedFiles.length,
+      totalAdditions,
+      totalDeletions
+    });
+
+  } catch (err) {
+    console.error("Git diff error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API endpoint to get project info for header display
+router.get("/:id/info", async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  
+  try {
+    // Get project basic info
+    const project = await prisma.project.findUnique({ 
+      where: { id: projectId },
+      select: { 
+        id: true, 
+        name: true,
+        
+      }
+    });
+    
+    if (!project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    // Get active version
+    const activeVersion = await prisma.projectVersion.findFirst({
+      where: { projectId, isActive: true },
+      select: { version: true, createdAt: true }
+    });
+
+    res.json({
+      id: project.id,
+      name: project.name,
+      version: activeVersion?.version || "1.0.0",
+      lastUpdated: activeVersion?.createdAt || null,
+      locked: project.isLocked || false
+    });
+  } catch (error) {
+    console.error('Error fetching project info:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// API endpoint to lock/unlock a project
+router.post("/:id/lock", authenticateToken, async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  const { locked } = req.body;
+  const { id: userId, role } = req.user;
+  
+  try {
+    // Check if project exists and user has permission
+    const project = await prisma.project.findUnique({ 
+      where: { id: projectId },
+      select: { 
+        id: true, 
+        name: true,
+        assignedManagerId: true,
+        isLocked: true
+      }
+    });
+    
+    if (!project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    // Check permissions - only admin or assigned manager can lock/unlock
+    let hasPermission = false;
+    if (role === "admin") {
+      hasPermission = true;
+    } else if (role === "manager" && project.assignedManagerId === userId) {
+      hasPermission = true;
+    }
+    
+    if (!hasPermission) {
+      return res.status(403).json({ error: "Forbidden: You don't have permission to lock/unlock this project" });
+    }
+
+    // Validate locked parameter
+    if (typeof locked !== 'boolean') {
+      return res.status(400).json({ error: "Invalid 'locked' parameter. Must be true or false." });
+    }
+
+    // Update project lock status
+    const updatedProject = await prisma.project.update({
+      where: { id: projectId },
+      data: { isLocked: locked },
+      select: { 
+        id: true, 
+        name: true, 
+        isLocked: true 
+      }
+    });
+
+    // Log the action
+    console.log(`🔒 Project "${updatedProject.name}" (ID: ${projectId}) ${locked ? 'locked' : 'unlocked'} by user ${userId}`);
+
+    res.json({
+      message: `Project ${locked ? 'locked' : 'unlocked'} successfully`,
+      projectId: updatedProject.id,
+      projectName: updatedProject.name,
+      locked: updatedProject.isLocked
+    });
+  } catch (error) {
+    console.error('Error updating project lock status:', error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

@@ -2,10 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { fetchProjects } from '../api';
 import DiffModal from './DiffModal';
 import ProjectActionsDropdown from './ProjectActionsDropdown';
+import { useNavigate } from 'react-router-dom';
 
 const DashboardHome = ({ setActiveTab }) => {
     const [projects, setProjects] = useState([]);
     const [loading, setLoading] = useState(true);
+    const navigate = useNavigate();
     const [stats, setStats] = useState({
         totalProjects: 0,
         activeProjects: 0,
@@ -19,10 +21,10 @@ const DashboardHome = ({ setActiveTab }) => {
                 const projectsData = await fetchProjects();
                 console.log('Dashboard projects data:', projectsData);
                 setProjects(projectsData);
-                
+
                 // Calculate stats
                 const totalProjects = projectsData.length;
-                const activeProjects = projectsData.filter(p => 
+                const activeProjects = projectsData.filter(p =>
                     p.versions && p.versions.length > 0 && p.versions[0].buildUrl
                 ).length;
                 const recentUploads = projectsData.filter(p => {
@@ -110,7 +112,7 @@ const DashboardHome = ({ setActiveTab }) => {
                         <div className="empty-state">
                             <div className="empty-state-icon">
                                 <svg width="80" height="80" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z"/>
+                                    <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z" />
                                 </svg>
                             </div>
                             <h3>No Projects Yet</h3>
@@ -135,18 +137,19 @@ const DashboardHome = ({ setActiveTab }) => {
                                     </div>
                                     <div className="project-actions">
                                         {project.versions && project.versions.length > 0 && project.versions[0].buildUrl && (
-                                            <a 
-                                                href={project.versions[0].buildUrl} 
-                                                target="_blank" 
-                                                rel="noopener noreferrer"
-                                                className="btn btn-primary"
-                                            >
-                                                View Live
-                                            </a>
+                                            <>
+                                                <a
+                                                    href={project.versions[0].buildUrl}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="btn btn-primary"
+                                                >
+                                                    Live
+                                                </a>
+                                            </>
                                         )}
-                                        
-                                        <button 
-                                            className="btn btn-outline"
+                                        <button
+                                            className="text-sm btn btn-outline"
                                             onClick={() => setActiveTab('projects')}
                                         >
                                             Manage
@@ -172,30 +175,30 @@ const DashboardHome = ({ setActiveTab }) => {
                 </div>
                 <div className="card-body">
                     <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                        <button 
+                        <button
                             className="btn btn-primary"
                             onClick={() => setActiveTab('projects')}
                         >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
-                                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                             </svg>
                             Create New Project
                         </button>
-                        <button 
+                        <button
                             className="btn btn-outline"
                             onClick={() => setActiveTab('upload')}
                         >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
-                                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
                             </svg>
                             Upload Build
                         </button>
-                        <button 
+                        <button
                             className="btn btn-outline"
                             onClick={() => setActiveTab('view')}
                         >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
-                                <path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z"/>
+                                <path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z" />
                             </svg>
                             View All Projects
                         </button>

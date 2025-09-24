@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { fetchProjects, createProject } from '../api';
 import { useAuth } from '../context/AuthContext';
 import DiffModal from './DiffModal';
@@ -6,6 +7,7 @@ import ProjectActionsDropdown from './ProjectActionsDropdown';
 
 const ProjectManagement = ({ setActiveTab }) => {
     const { user } = useAuth();
+    const navigate = useNavigate();
     console.log('ProjectManagement user:', user);
     const [projects, setProjects] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -244,11 +246,23 @@ const ProjectManagement = ({ setActiveTab }) => {
                                             Upload 
                                         </button>
                                         
+                                        <button 
+                                            className="btn btn-outline"
+                                            onClick={() => navigate(`/projects/${project.id}/diff`)}
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
+                                                <path d="M8.5 12C8.5 12.82 9.18 13.5 10 13.5S11.5 12.82 11.5 12 10.82 10.5 10 10.5 8.5 11.18 8.5 12M12.5 12C12.5 12.82 13.18 13.5 14 13.5S15.5 12.82 15.5 12 14.82 10.5 14 10.5 12.5 11.18 12.5 12M3 7V17C3 18.1 3.9 19 5 19H19C20.1 19 21 18.1 21 17V7H3M12 2L14 4H20C20.6 4 21 4.4 21 5S20.6 6 20 6H4C3.4 6 3 5.6 3 5S3.4 4 4 4H10L12 2Z"/>
+                                            </svg>
+                                            Git Diff
+                                        </button>
                                         <ProjectActionsDropdown
                                             project={project}
                                             user={user}
                                             onGitDiff={() => setDiffModal({ isOpen: true, projectId: project.id, projectName: project.name })}
                                         />
+                                        {/* <button className="btn btn-outline">
+                                            Edit
+                                        </button> */}
                                     </div>
                                 </div>
                             ))}

@@ -101,7 +101,7 @@ body {
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     margin-bottom: 24px;
-    overflow: hidden;
+    overflow: visible ;
 }
 
 .card-header {
@@ -466,8 +466,7 @@ body {
     display: none;
     align-items: center;
     padding: 16px 20px;
-    background: #ffffff;
-    border-bottom: 1px solid #e9ecef;
+    background: #ffffff;    border-bottom: 1px solid #e9ecef;
     position: fixed;
     top: 0;
     left: 0;
@@ -619,6 +618,171 @@ body {
     max-width: 800px;
     width: 100%;
     max-height: 90vh;
+
+}
+/* Git Diff Styles */
+.git-diff-container {
+    background: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.git-diff-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid #e1e4e8;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.git-diff-header h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #24292e;
+}
+
+.diff-summary {
+    margin: 4px 0 0 0;
+    color: #656d76;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.diff-stats {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 8px;
+}
+
+.diff-stats .additions {
+    color: #1a7f37;
+    font-weight: 600;
+}
+
+.diff-stats .deletions {
+    color: #cf222e;
+    font-weight: 600;
+}
+
+/* GitHub-style File List */
+.git-diff-files {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px;
+}
+
+/* File Navigation Sidebar */
+.file-navigation {
+    width: 320px;
+    border-right: 1px solid #e1e4e8;
+    background: #fafbfc;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.file-nav-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid #e1e4e8;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.file-nav-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #24292e;
+}
+
+.file-count {
+    background: #e1e4e8;
+    color: #586069;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.file-list {
+    padding: 8px 0;
+}
+
+.file-item {
+    padding: 12px 20px;
+    cursor: pointer;
+    border-bottom: 1px solid #e1e4e8;
+    transition: background-color 0.2s;
+}
+
+.file-item:hover {
+    background: #f6f8fa;
+}
+
+.file-item.active {
+    background: #fff5b4;
+    border-left: 3px solid #ffdf5d;
+}
+
+.file-item-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.file-status-icon {
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+}
+
+.file-name {
+    font-weight: 600;
+    color: #24292e;
+    font-size: 14px;
+}
+
+.file-item-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.file-path {
+    color: #586069;
+    font-size: 12px;
+    font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+}
+
+.file-changes {
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.additions {
+    color: #28a745;
+}
+
+.deletions {
+    color: #d73a49;
+}
+
+/* Diff Viewer Container */
+.diff-viewer-container {
+    flex: 1;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -875,4 +1039,452 @@ body {
     .project-actions {
         justify-content: center;
     }
+}
+.diff-viewer {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.diff-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid #e1e4e8;
+    background: #fff;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.file-info h3 {
+    margin: 0 0 4px 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #24292e;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.file-status-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.file-path {
+    color: #586069;
+    font-size: 14px;
+    font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+}
+
+.file-stats {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.stat {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+}
+
+.stat.additions {
+    background: #dcffe4;
+    color: #28a745;
+}
+
+.stat.deletions {
+    background: #ffeef0;
+    color: #d73a49;
+}
+
+.diff-content {
+    flex: 1;
+    overflow: auto;
+    background: #fff;
+}
+
+/* Large File Notice */
+.large-file-notice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    text-align: center;
+    padding: 40px;
+    color: #586069;
+}
+
+.large-file-icon {
+    margin-bottom: 16px;
+    opacity: 0.6;
+}
+
+.large-file-notice h4 {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    color: #24292e;
+}
+
+.large-file-notice p {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+}
+
+.file-size-info {
+    margin-top: 16px !important;
+    padding: 12px 16px;
+    background: #f6f8fa;
+    border-radius: 6px;
+    border: 1px solid #e1e4e8;
+}
+
+/* No File Selected */
+.no-file-selected {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    text-align: center;
+    padding: 40px;
+    color: #586069;
+}
+
+.no-file-icon {
+    margin-bottom: 16px;
+    opacity: 0.6;
+}
+
+.no-file-selected h3 {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    color: #24292e;
+}
+
+.no-file-selected p {
+    margin: 0;
+    font-size: 14px;
+}
+
+/* Custom diff viewer overrides */
+.react-diff-viewer {
+    font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace !important;
+    font-size: 12px !important;
+}
+
+.react-diff-viewer table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.react-diff-viewer td {
+    vertical-align: top;
+}
+
+/* Mobile responsiveness for Git Diff */
+@media (max-width: 768px) {
+    .git-diff-files {
+        padding: 16px;
+    }
+    
+    .git-diff-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 16px;
+    }
+    
+    .diff-summary {
+        flex-wrap: wrap;
+    }
+    
+    .file-header {
+        padding: 12px 16px;
+    }
+    
+    .file-header-left {
+        gap: 6px;
+    }
+    
+    .file-path-text {
+        font-size: 13px;
+    }
+    
+    .file-changes-bar {
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+    }
+    
+    .changes-visual {
+        order: -1;
+    }
+}
+
+/* Error and Empty States for Git Diff */
+.error-state, .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    text-align: center;
+    min-height: 400px;
+}
+
+.error-icon, .empty-icon {
+    margin-bottom: 24px;
+    color: #6c757d;
+}
+
+.error-state .error-icon {
+    color: #dc3545;
+}
+
+.error-state h3, .empty-state h3 {
+    margin: 0 0 16px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #24292e;
+}
+
+.error-state p, .empty-state p {
+    margin: 0 0 24px 0;
+    color: #586069;
+    font-size: 16px;
+    line-height: 1.5;
+    max-width: 500px;
+}
+
+.file-path-info {
+    margin-top: 16px !important;
+    padding: 12px;
+    background-color: #f6f8fa;
+    border-radius: 6px;
+    font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+}
+
+/* Loading improvements */
+.loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    text-align: center;
+    min-height: 400px;
+    color: #586069;
+    font-size: 16px;
+}
+
+.loading .spinner {
+    width: 32px;
+    height: 32px;
+    margin-bottom: 16px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #0366d6;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* GitHub-style File Components */
+.git-diff-file {
+    border: 1px solid #d1d9e0;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+.file-header {
+    background: #f6f8fa;
+    border-bottom: 1px solid #d1d9e0;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.file-header:hover {
+    background: #f1f3f4;
+}
+
+.file-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.file-toggle-btn {
+    background: none;
+    border: none;
+    padding: 4px;
+    cursor: pointer;
+    color: #656d76;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+}
+
+.file-toggle-btn:hover {
+    background: #e1e4e8;
+}
+
+.file-status-indicator {
+    width: 12px;
+    height: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.file-status-indicator.added {
+    color: #1a7f37;
+}
+
+.file-status-indicator.deleted {
+    color: #cf222e;
+}
+
+.file-status-indicator.modified {
+    color: #bf8700;
+}
+
+.file-status-indicator.renamed {
+    color: #8250df;
+}
+
+.file-path-text {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 14px;
+    color: #24292f;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.file-header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.file-changes-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.additions-text {
+    color: #1a7f37;
+}
+
+.deletions-text {
+    color: #cf222e;
+}
+
+.changes-visual {
+    display: flex;
+    gap: 1px;
+}
+
+.change-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 1px;
+}
+
+.change-dot.addition {
+    background-color: #1a7f37;
+}
+
+.change-dot.deletion {
+    background-color: #cf222e;
+}
+
+/* File Content Styles */
+.file-content {
+    background: white;
+}
+
+.large-file-summary {
+    padding: 24px;
+    text-align: center;
+    background: #fafbfc;
+    border-top: 1px solid #d1d9e0;
+}
+
+.large-file-message {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: #656d76;
+    font-size: 14px;
+    margin-bottom: 16px;
+}
+
+.load-diff-btn {
+    background: #0969da;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.load-diff-btn:hover {
+    background: #0860ca;
+}
+
+.diff-viewer-content {
+    background: white;
+}
+
+/* Override react-diff-viewer styles for GitHub look */
+.diff-viewer-content .react-diff-viewer {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+.diff-viewer-content .react-diff-viewer table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.diff-viewer-content .react-diff-viewer td {
+    border: none;
+    vertical-align: top;
+    padding: 0;
+}
+
+.diff-viewer-content .react-diff-viewer pre {
+    margin: 0;
+    padding: 0 8px;
+    overflow: visible;
+    background: transparent;
+    border: none;
 }

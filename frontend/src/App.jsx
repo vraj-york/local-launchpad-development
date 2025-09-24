@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './components/Dashboard';
+import GitDiff from './components/GitDiff';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import './styles/main.css';
 
@@ -31,6 +32,14 @@ const App = () => {
             element={
               <ProtectedRoute>
                 <Dashboard />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/projects/:projectId/diff" 
+            element={
+              <ProtectedRoute>
+                <GitDiff />
               </ProtectedRoute>
             } 
           />

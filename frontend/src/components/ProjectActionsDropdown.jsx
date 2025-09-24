@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const ProjectActionsDropdown = ({ 
     project, 
@@ -8,6 +9,7 @@ const ProjectActionsDropdown = ({
 }) => {
     const [isOpen, setIsOpen] = useState(false);
     const dropdownRef = useRef(null);
+    const navigate = useNavigate();
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -67,6 +69,19 @@ const ProjectActionsDropdown = ({
                             Details
                         </button>
                     )}
+
+                    {project.versions &&
+                        project.versions.length > 0 &&
+                        project.versions[0].buildUrl && (
+                        <>
+                            <button
+                            className="dropdown-item"
+                            onClick={() => navigate(`/projects/${project.id}/diff`)}
+                            >
+                                View All Changes
+                            </button>
+                        </>
+                        )}
                 </div>
             )}
         </div>
