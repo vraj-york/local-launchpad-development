@@ -1428,63 +1428,171 @@ body {
     background: white;
 }
 
-.large-file-summary {
+/* Too many changes badge */
+.too-many-changes-badge {
+    display: inline-flex;
+    align-items: center;
+    background-color: #fff8e1;
+    color: #b76e00;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: 12px;
+    margin-left: 8px;
+    border: 1px solid #f4e4a6;
+}
+
+/* Too many changes message */
+.too-many-changes-message {
     padding: 24px;
     text-align: center;
-    background: #fafbfc;
+    background: #fefcf9;
+    border-top: 1px solid #d1d9e0;
+    border-left: 4px solid #fb8500;
+}
+
+.too-many-changes-icon {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 8px;
+    color: #fb8500;
+}
+
+.too-many-changes-message span {
+    color: #656d76;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+/* Binary file message */
+.binary-file-message {
+    padding: 24px;
+    text-align: center;
+    background: #f6f8fa;
     border-top: 1px solid #d1d9e0;
 }
 
-.large-file-message {
-    display: flex;
+.binary-file-icon {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    gap: 8px;
+    margin-right: 8px;
+    color: #656d76;
+}
+
+.binary-file-message span {
     color: #656d76;
     font-size: 14px;
-    margin-bottom: 16px;
 }
 
-.load-diff-btn {
-    background: #0969da;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 6px;
+/* No changes message */
+.no-changes-message {
+    padding: 24px;
+    text-align: center;
+    background: #f6f8fa;
+    border-top: 1px solid #d1d9e0;
+}
+
+.no-changes-message span {
+    color: #656d76;
+    font-size: 14px;
+}
+
+/* Diff error message */
+.diff-error-message {
+    padding: 24px;
+    text-align: center;
+    background: #ffebee;
+    border-top: 1px solid #d1d9e0;
+    border-left: 4px solid #f44336;
+}
+
+.diff-error-message span {
+    color: #d32f2f;
     font-size: 14px;
     font-weight: 500;
-    cursor: pointer;
-    transition: background-color 0.15s ease;
 }
 
-.load-diff-btn:hover {
-    background: #0860ca;
-}
-
-.diff-viewer-content {
+/* React Diff View Wrapper */
+.react-diff-view-wrapper {
     background: white;
+    border-top: 1px solid #d1d9e0;
 }
 
-/* Override react-diff-viewer styles for GitHub look */
-.diff-viewer-content .react-diff-viewer {
+/* React Diff View Styles */
+.react-diff-view-wrapper .diff {
     font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 12px;
+    line-height: 20px;
 }
 
-.diff-viewer-content .react-diff-viewer table {
+.react-diff-view-wrapper .diff-gutter {
+    background-color: #f6f8fa;
+    color: #656d76;
+    text-align: right;
+    padding: 0 8px;
+    border-right: 1px solid #d1d9e0;
+    user-select: none;
+    width: 50px;
+    min-width: 50px;
+}
+
+.react-diff-view-wrapper .diff-line {
+    padding: 0 8px;
+    white-space: pre;
+}
+
+.react-diff-view-wrapper .diff-line-normal {
+    background-color: #ffffff;
+}
+
+.react-diff-view-wrapper .diff-line-add {
+    background-color: #e6ffed;
+    color: #24292e;
+}
+
+.react-diff-view-wrapper .diff-line-delete {
+    background-color: #ffeef0;
+    color: #24292e;
+}
+
+.react-diff-view-wrapper .diff-gutter-add {
+    background-color: #cdffd8;
+}
+
+.react-diff-view-wrapper .diff-gutter-delete {
+    background-color: #ffdce0;
+}
+
+.react-diff-view-wrapper .diff-line-add .diff-code-edit {
+    background-color: #acf2bd;
+}
+
+.react-diff-view-wrapper .diff-line-delete .diff-code-edit {
+    background-color: #fdb8c0;
+}
+
+/* Split view */
+.react-diff-view-wrapper .diff-split {
+    display: table;
+    width: 100%;
     border-collapse: separate;
     border-spacing: 0;
 }
 
-.diff-viewer-content .react-diff-viewer td {
-    border: none;
-    vertical-align: top;
-    padding: 0;
+.react-diff-view-wrapper .diff-split .diff-gutter-col {
+    display: table-cell;
+    width: 50px;
 }
 
-.diff-viewer-content .react-diff-viewer pre {
-    margin: 0;
-    padding: 0 8px;
-    overflow: visible;
-    background: transparent;
-    border: none;
+.react-diff-view-wrapper .diff-split .diff-line-col {
+    display: table-cell;
+    width: 50%;
+}
+
+.react-diff-view-wrapper .diff-split .diff-gutter {
+    border-right: 1px solid #d1d9e0;
+}
+
+.react-diff-view-wrapper .diff-split .diff-line {
+    border-right: 1px solid #e1e4e8;
 }

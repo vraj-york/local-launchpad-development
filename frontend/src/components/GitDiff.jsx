@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import ReactDiffViewer from 'react-diff-viewer-continued';
+import { Diff, Hunk, parseDiff } from 'react-diff-view';
+import 'react-diff-view/style/index.css';
 import { fetchProjectGitDiff } from '../api';
 
 const GitDiff = () => {
@@ -10,7 +11,6 @@ const GitDiff = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [collapsedFiles, setCollapsedFiles] = useState(new Set());
-  const [loadedLargeFiles, setLoadedLargeFiles] = useState(new Set());
 
   const toggleFileCollapse = (fileId) => {
     const newCollapsed = new Set(collapsedFiles);
@@ -22,14 +22,136 @@ const GitDiff = () => {
     setCollapsedFiles(newCollapsed);
   };
 
-  const loadLargeFileDiff = (fileId) => {
-    const newLoaded = new Set(loadedLargeFiles);
-    newLoaded.add(fileId);
-    setLoadedLargeFiles(newLoaded);
+  const getFileChanges = (file) => file.additions + file.deletions;
+  const hasTooManyChanges = (file) => getFileChanges(file) >= 100;
+
+  // Convert file data to unified diff format for react-diff-view
+  const createUnifiedDiff = (file) => {
+    const oldValue = file.oldValue || '';
+    const newValue = file.newValue || '';
+    const oldLines = oldValue.split('\n');
+    const newLines = newValue.split('\n');
+    
+    // Simple line-by-line comparison
+    let diffLines = [];
+    const maxLines = Math.max(oldLines.length, newLines.length);
+    
+    // Add context lines around changes for better visualization
+    let hasChanges = false;
+    
+    for (let i = 0; i < maxLines; i++) {
+      const oldLine = oldLines[i];
+      const newLine = newLines[i];
+      
+      if (oldLine !== undefined && newLine !== undefined) {
+        if (oldLine === newLine) {
+          diffLines.push(` ${oldLine}`);
+        } else {
+          hasChanges = true;
+          diffLines.push(`-${oldLine}`);
+          diffLines.push(`+${newLine}`);
+        }
+      } else if (oldLine !== undefined) {
+        hasChanges = true;
+        diffLines.push(`-${oldLine}`);
+      } else if (newLine !== undefined) {
+        hasChanges = true;
+        diffLines.push(`+${newLine}`);
+      }
+    }
+    
+    if (!hasChanges) {
+      return null; // No changes to display
+    }
+    
+    // Create unified diff header
+    const header = `--- a/${file.path}\n+++ b/${file.path}\n@@ -1,${oldLines.length} +1,${newLines.length} @@`;
+    
+    return `${header}\n${diffLines.join('\n')}`;
   };
 
-  const getFileChanges = (file) => file.additions + file.deletions;
-  const isLargeFile = (file) => getFileChanges(file) > 500 || file.isLargeFile || file.isBinaryFile;
+  // Component for rendering collapsible diff content
+  const CollapsibleDiffContent = ({ file, isCollapsed }) => {
+    const totalChanges = getFileChanges(file);
+    const tooManyChanges = hasTooManyChanges(file);
+
+    if (isCollapsed) return null;
+
+    if (tooManyChanges) {
+      return (
+        <div className="too-many-changes-message">
+          <div className="too-many-changes-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M11,15H13V17H11V15M11,7H13V13H11V7M12,2C6.47,2 2,6.5 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20Z"/>
+            </svg>
+          </div>
+          <span>Too many changes ({totalChanges} lines changed)</span>
+        </div>
+      );
+    }
+
+    if (file.isBinaryFile) {
+      return (
+        <div className="binary-file-message">
+          <div className="binary-file-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M13,9H18.5L13,3.5V9M6,2H14L20,8V20A2,2 0 0,1 18,22H6C4.89,22 4,21.1 4,20V4C4,2.89 4.89,2 6,2Z"/>
+            </svg>
+          </div>
+          <span>Binary file not shown</span>
+        </div>
+      );
+    }
+
+    try {
+      const diffText = createUnifiedDiff(file);
+      
+      if (!diffText) {
+        return (
+          <div className="no-changes-message">
+            <span>No changes to display</span>
+          </div>
+        );
+      }
+
+      const parsedDiff = parseDiff(diffText);
+      
+      if (parsedDiff.length === 0 || !parsedDiff[0].hunks || parsedDiff[0].hunks.length === 0) {
+        return (
+          <div className="no-changes-message">
+            <span>No changes to display</span>
+          </div>
+        );
+      }
+
+      return (
+        <div className="react-diff-view-wrapper">
+          {parsedDiff.map((diffFile, index) => (
+            <Diff 
+              key={index} 
+              viewType="split" 
+              diffType={diffFile.type || 'modify'}
+              hunks={diffFile.hunks}
+            >
+              {(hunks) => 
+                hunks.map((hunk, hunkIndex) => 
+                   (
+                    <Hunk key={hunkIndex} hunk={hunk} />
+                  )
+                )
+              }
+            </Diff>
+          ))}
+        </div>
+      );
+    } catch (error) {
+      return (
+        <div className="diff-error-message">
+          <span>Error displaying diff: {error.message}</span>
+        </div>
+      );
+    }
+  };
 
   const getStatusIcon = (status) => {
     switch (status) {
@@ -64,13 +186,10 @@ const GitDiff = () => {
       setError(null);
       
       try {
-        console.log('🔍 Fetching git diff for project:', projectId);
         const data = await fetchProjectGitDiff(projectId);
-        console.log('📊 Received diff data:', data);
         
         setDiffData(data);
       } catch (err) {
-        console.error('❌ Error fetching git diff:', err);
         setError(err.error || err.message || 'Failed to fetch git diff data');
       } finally {
         setLoading(false);
@@ -205,9 +324,8 @@ const GitDiff = () => {
       <div className="git-diff-files">
         {diffData.files.map((file) => {
           const isCollapsed = collapsedFiles.has(file.id);
-          const isLarge = isLargeFile(file);
-          const isLoaded = loadedLargeFiles.has(file.id);
           const totalChanges = getFileChanges(file);
+          const tooManyChanges = hasTooManyChanges(file);
 
           return (
             <div key={file.id} className="git-diff-file">
@@ -236,6 +354,12 @@ const GitDiff = () => {
                   </span>
                   
                   <span className="file-path-text">{file.path}</span>
+                  
+                  {tooManyChanges && (
+                    <span className="too-many-changes-badge">
+                      Too many changes
+                    </span>
+                  )}
                 </div>
                 
                 <div className="file-header-right">
@@ -264,81 +388,7 @@ const GitDiff = () => {
                 </div>
               </div>
 
-              {!isCollapsed && (
-                <div className="file-content">
-                  {isLarge && !isLoaded ? (
-                    <div className="large-file-summary">
-                      <div className="large-file-message">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M11,15H13V17H11V15M11,7H13V13H11V7M12,2C6.47,2 2,6.5 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20Z"/>
-                        </svg>
-                        {file.isBinaryFile 
-                          ? 'Binary file not shown.' 
-                          : `Large diffs are not rendered by default.`
-                        }
-                      </div>
-                      
-                      {!file.isBinaryFile && (
-                        <button 
-                          className="load-diff-btn"
-                          onClick={() => loadLargeFileDiff(file.id)}
-                        >
-                          Load Diff
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="diff-viewer-content">
-                      <ReactDiffViewer
-                        oldValue={file.oldValue}
-                        newValue={file.newValue}
-                        splitView={true}
-                        showDiffStats={false}
-                        hideLineNumbers={false}
-                        useDarkTheme={false}
-                        styles={{
-                          variables: {
-                            light: {
-                              codeFoldGutterBackground: '#f8f9fa',
-                              codeFoldBackground: '#e9ecef',
-                              addedBackground: '#e6ffed',
-                              addedColor: '#24292e',
-                              removedBackground: '#ffeef0',
-                              removedColor: '#24292e',
-                              wordAddedBackground: '#acf2bd',
-                              wordRemovedBackground: '#fdb8c0',
-                              addedGutterBackground: '#cdffd8',
-                              removedGutterBackground: '#ffdce0',
-                              gutterBackground: '#f6f8fa',
-                              gutterBackgroundDark: '#f1f3f4',
-                              highlightBackground: '#fff5b4',
-                              highlightGutterBackground: '#fff5b4',
-                            },
-                          },
-                          line: {
-                            fontSize: '12px',
-                            lineHeight: '20px',
-                            fontFamily: 'ui-monospace, SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
-                          },
-                          gutter: {
-                            fontSize: '12px',
-                            lineHeight: '20px',
-                            minWidth: '40px',
-                            padding: '0 8px',
-                          },
-                          marker: {
-                            fontSize: '12px',
-                            lineHeight: '20px',
-                          },
-                          wordDiff: {
-                            padding: '1px 2px',
-                          },
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
+              <CollapsibleDiffContent file={file} isCollapsed={isCollapsed} />
             </div>
           );
         })}
