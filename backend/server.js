@@ -7,7 +7,7 @@ import extract from "extract-zip"; // ✅ use extract-zip
 import cors from "cors";
 
 const app = express();
-const PORT = 5001;
+const PORT = 5000;
 
 app.use(cors());
 app.use(express.json());

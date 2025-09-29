@@ -219,7 +219,7 @@ export function generateProjectHeader() {
       const currentUrl = window.location.href;
       console.log('🔍 Determining API base URL from:', currentUrl);
       if (currentUrl.includes('localhost')) {
-        return 'http://localhost:${process.env.PORT || 5001}';
+        return 'http://localhost:${process.env.PORT || 5000}';
       } else {
         const urlObj = new URL(currentUrl);
         return \`\${urlObj.protocol}//\${urlObj.hostname}:5000\`;

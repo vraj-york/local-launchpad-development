@@ -163,3 +163,55 @@ export const fetchProjectGitDiff = async (projectId) => {
         throw error.response?.data || { error: 'Failed to fetch project git diff' };
     }
 };
+
+// Release Management API Functions
+
+// Function to fetch all releases for a project
+export const fetchReleases = async (projectId) => {
+    try {
+        const response = await api.get(`/api/releases/project/${projectId}`);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to fetch releases' };
+    }
+};
+
+// Function to create a new release
+export const createRelease = async (releaseData) => {
+    try {
+        const response = await api.post('/api/releases', releaseData);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to create release' };
+    }
+};
+
+// Function to lock/unlock a release
+export const toggleReleaseLock = async (releaseId, locked) => {
+    try {
+        const response = await api.post(`/api/releases/${releaseId}/lock`, { locked });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to toggle release lock' };
+    }
+};
+
+// Function to upload ZIP to a release
+export const uploadToRelease = async (releaseId, file, version = null) => {
+    try {
+        const formData = new FormData();
+        formData.append('project', file);
+        if (version) {
+            formData.append('version', version);
+        }
+        
+        const response = await api.post(`/api/releases/${releaseId}/upload`, formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to upload to release' };
+    }
+};

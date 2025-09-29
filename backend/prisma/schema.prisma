@@ -17,6 +17,7 @@ model User {
   projectsManaged      Project[] @relation("ManagedProjects")
   projectAccess        ProjectAccess[]
   versionsUploaded     ProjectVersion[] @relation("VersionUploader")
+  releasesCreated       Release[]       @relation("ReleaseCreator")
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 }
@@ -34,6 +35,7 @@ model Project {
   assignedManager   User     @relation("ManagedProjects", fields: [assignedManagerId], references: [id])
   projectAccess     ProjectAccess[]
   versions          ProjectVersion[]
+  releases          Release[]
 }
 
 model ProjectAccess {
@@ -48,6 +50,7 @@ model ProjectAccess {
 model ProjectVersion {
   id          Int      @id @default(autoincrement())
   projectId   Int
+  releaseId   Int?     // Link to release (optional for backward compatibility)
   version     String   // e.g., "1.0.0", "1.1.0", "2.0.0"
   zipFilePath String
   buildUrl    String
@@ -57,11 +60,26 @@ model ProjectVersion {
   updatedAt   DateTime @updatedAt
 
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  release     Release? @relation(fields: [releaseId], references: [id], onDelete: Cascade)
   uploader    User     @relation("VersionUploader", fields: [uploadedBy], references: [id])
+}
+
+model Release {
+  id          Int      @id @default(autoincrement())
+  projectId   Int
+  name        String
+  description String?  // Roadmap/Description
+  isLocked    Boolean  @default(false)
+  createdBy   Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator     User            @relation("ReleaseCreator", fields: [createdBy], references: [id])
+  versions    ProjectVersion[]
 }
 
 enum Role {
   admin
   manager
-  client
 }

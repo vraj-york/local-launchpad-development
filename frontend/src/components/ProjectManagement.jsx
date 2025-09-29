@@ -4,6 +4,7 @@ import { fetchProjects, createProject } from '../api';
 import { useAuth } from '../context/AuthContext';
 import DiffModal from './DiffModal';
 import ProjectActionsDropdown from './ProjectActionsDropdown';
+import ReleaseManagement from './ReleaseManagement';
 
 const ProjectManagement = ({ setActiveTab }) => {
     const { user } = useAuth();
@@ -21,6 +22,7 @@ const ProjectManagement = ({ setActiveTab }) => {
         assignedManagerId: user.role === 'manager' ? user.id : null
     });
     const [diffModal, setDiffModal] = useState({ isOpen: false, projectId: null, projectName: '' });
+    const [selectedProject, setSelectedProject] = useState(null);
 
     useEffect(() => {
         loadProjects();
@@ -63,6 +65,27 @@ const ProjectManagement = ({ setActiveTab }) => {
             <div className="loading">
                 <div className="spinner"></div>
                 Loading projects...
+            </div>
+        );
+    }
+
+    // If a project is selected, show release management
+    if (selectedProject) {
+        return (
+            <div>
+                <div style={{ marginBottom: '16px' }}>
+                    <button 
+                        className="btn btn-secondary"
+                        onClick={() => setSelectedProject(null)}
+                        style={{ marginBottom: '16px' }}
+                    >
+                        ← Back to Projects
+                    </button>
+                </div>
+                <ReleaseManagement 
+                    projectId={selectedProject.id} 
+                    projectName={selectedProject.name}
+                />
             </div>
         );
     }
@@ -222,10 +245,36 @@ const ProjectManagement = ({ setActiveTab }) => {
                                     }}>
                                         <div>ID: {project.id}</div>
                                         <div>Manager ID: {project.assignedManagerId}</div>
+                                        <div>Releases: {project.releases?.length || 0}</div>
                                         {project.versions && project.versions.length > 0 && (
                                             <div>Current Version: {project.versions[0].version}</div>
                                         )}
                                     </div>
+
+                                    {/* Show recent releases */}
+                                    {project.releases && project.releases.length > 0 && (
+                                        <div style={{ 
+                                            fontSize: '12px', 
+                                            color: '#6c757d', 
+                                            marginBottom: '16px',
+                                            padding: '8px',
+                                            background: '#e7f3ff',
+                                            borderRadius: '6px',
+                                            border: '1px solid #b3d9ff'
+                                        }}>
+                                            <div style={{ fontWeight: '500', marginBottom: '4px' }}>Recent Releases:</div>
+                                            {project.releases.slice(0, 2).map((release) => (
+                                                <div key={release.id} style={{ marginBottom: '2px' }}>
+                                                    {release.name} {release.isLocked ? '🔒' : '🔓'}
+                                                </div>
+                                            ))}
+                                            {project.releases.length > 2 && (
+                                                <div style={{ fontStyle: 'italic' }}>
+                                                    +{project.releases.length - 2} more...
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
 
                                     <div className="project-actions">
                                         {project.versions && project.versions.length > 0 && project.versions[0].buildUrl && (
@@ -241,9 +290,9 @@ const ProjectManagement = ({ setActiveTab }) => {
                                         
                                         <button 
                                             className="btn btn-outline"
-                                            onClick={() => setActiveTab('upload')}
+                                            onClick={() => setSelectedProject(project)}
                                         >
-                                            Upload 
+                                            Manage Releases
                                         </button>
                                         
                                         <ProjectActionsDropdown
@@ -251,9 +300,6 @@ const ProjectManagement = ({ setActiveTab }) => {
                                             user={user}
                                             onGitDiff={() => setDiffModal({ isOpen: true, projectId: project.id, projectName: project.name })}
                                         />
-                                        {/* <button className="btn btn-outline">
-                                            Edit
-                                        </button> */}
                                     </div>
                                 </div>
                             ))}

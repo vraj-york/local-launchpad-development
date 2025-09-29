@@ -12,7 +12,7 @@ const LoginPage = () => {
         email: '', 
         password: '', 
         confirmPassword: '',
-        role: 'client'
+        role: 'manager'
     });
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -217,7 +217,6 @@ const LoginPage = () => {
                                     onChange={handleChange}
                                     required={!isLogin}
                                 >
-                                    <option value="client">Client</option>
                                     <option value="manager">Manager</option>
                                     <option value="admin">Admin</option>
                                 </select>
@@ -244,7 +243,6 @@ const LoginPage = () => {
                     <p>Demo Credentials:</p>
                     <p><strong>Admin:</strong> admin@example.com / admin123</p>
                     <p><strong>Manager:</strong> manager@example.com / manager123</p>
-                    <p><strong>Client:</strong> client@example.com / client123</p>
                 </div>
             </div>
         </div>

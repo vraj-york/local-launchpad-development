@@ -515,7 +515,7 @@ async function checkRepoExists(repoName) {
 }
 
 router.get("/", authenticateToken, async (req, res) => {
-  // List projects for user (admin: all, manager: assigned, client: access)
+  // List projects for user (admin: all, manager: assigned)
   const { id, role } = req.user;
   let projects;
   if (role === "admin") {
@@ -524,6 +524,15 @@ router.get("/", authenticateToken, async (req, res) => {
         versions: {
           where: { isActive: true },
           select: { id: true, version: true, buildUrl: true, createdAt: true }
+        },
+        releases: {
+          include: {
+            versions: {
+              orderBy: { createdAt: 'desc' },
+              take: 1
+            }
+          },
+          orderBy: { createdAt: 'desc' }
         }
       }
     });
@@ -534,24 +543,20 @@ router.get("/", authenticateToken, async (req, res) => {
         versions: {
           where: { isActive: true },
           select: { id: true, version: true, buildUrl: true, createdAt: true }
+        },
+        releases: {
+          include: {
+            versions: {
+              orderBy: { createdAt: 'desc' },
+              take: 1
+            }
+          },
+          orderBy: { createdAt: 'desc' }
         }
       }
     });
   } else {
-    projects = await prisma.projectAccess.findMany({
-      where: { userId: id },
-      include: { 
-        project: {
-          include: {
-            versions: {
-              where: { isActive: true },
-              select: { id: true, version: true, buildUrl: true, createdAt: true }
-            }
-          }
-        }
-      },
-    });
-    projects = projects.map(pa => pa.project);
+    return res.status(403).json({ error: "Forbidden" });
   }
   res.json(projects);
 });
@@ -929,16 +934,10 @@ router.get("/:id/live-url", authenticateToken, async (req, res) => {
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) return res.status(404).json({ error: "Project not found" });
 
-  // Only admin, assigned manager, or allowed client can access
+  // Only admin or assigned manager can access
   let hasAccess = false;
   if (role === "admin") hasAccess = true;
   else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
-  else if (role === "client") {
-    const access = await prisma.projectAccess.findFirst({
-      where: { projectId, userId }
-    });
-    if (access) hasAccess = true;
-  }
   if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
   // Get active version
@@ -965,12 +964,6 @@ router.get("/:id/versions", authenticateToken, async (req, res) => {
   let hasAccess = false;
   if (role === "admin") hasAccess = true;
   else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
-  else if (role === "client") {
-    const access = await prisma.projectAccess.findFirst({
-      where: { projectId, userId }
-    });
-    if (access) hasAccess = true;
-  }
   if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
   const versions = await prisma.projectVersion.findMany({
@@ -1035,12 +1028,6 @@ router.get("/:id/diff-summary", authenticateToken, async (req, res) => {
     let hasAccess = false;
     if (role === "admin") hasAccess = true;
     else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
-    else if (role === "client") {
-      const access = await prisma.projectAccess.findFirst({
-        where: { projectId, userId }
-      });
-      if (access) hasAccess = true;
-    }
     if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
     // Get project folder path
@@ -1131,12 +1118,6 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
     let hasAccess = false;
     if (role === "admin") hasAccess = true;
     else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
-    else if (role === "client") {
-      const access = await prisma.projectAccess.findFirst({
-        where: { projectId, userId }
-      });
-      if (access) hasAccess = true;
-    }
     if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
     // Get project folder path
