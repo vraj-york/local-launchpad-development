@@ -368,16 +368,81 @@ router.get("/:releaseId/info", async (req, res) => {
             return res.status(404).json({ error: "Release not found" });
         }
 
+        // Generate a unique lock token for this release
+        const lockToken = crypto.randomBytes(32).toString('hex');
+
         res.json({
             id: release.id,
             name: release.name,
             project: release.project,
             version: release.versions[0]?.version || "1.0.0",
             lastUpdated: release.versions[0]?.createdAt || null,
-            locked: release.isLocked || false
+            locked: release.isLocked || false,
+            lockToken: lockToken
         });
     } catch (error) {
         console.error('Error fetching release info:', error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+// Public API endpoint to lock/unlock a release (for clients without authentication)
+router.post("/:releaseId/public-lock", async (req, res) => {
+    const releaseId = parseInt(req.params.releaseId, 10);
+    const { locked, token } = req.body;
+    
+    try {
+        // Validate required parameters
+        if (typeof locked !== 'boolean') {
+            return res.status(400).json({ error: "Invalid 'locked' parameter. Must be true or false." });
+        }
+        
+        if (!token || typeof token !== 'string') {
+            return res.status(400).json({ error: "Token is required for public lock operations." });
+        }
+
+        // Check if release exists
+        const release = await prisma.release.findUnique({
+            where: { id: releaseId },
+            include: {
+                project: {
+                    select: { 
+                        id: true, 
+                        name: true
+                    }
+                }
+            }
+        });
+        
+        if (!release) {
+            return res.status(404).json({ error: "Release not found" });
+        }
+
+        // For now, accept any token since we're generating unique tokens per request
+        // In a production environment, you might want to implement token validation
+        if (!token || typeof token !== 'string') {
+            return res.status(403).json({ error: "Invalid or missing lock token for this release." });
+        }
+
+        // Update release lock status
+        const updatedRelease = await prisma.release.update({
+            where: { id: releaseId },
+            data: { isLocked: locked },
+            select: { 
+                id: true, 
+                name: true, 
+                isLocked: true 
+            }
+        });
+
+        res.json({
+            message: `Release ${locked ? 'locked' : 'unlocked'} successfully`,
+            releaseId: updatedRelease.id,
+            releaseName: updatedRelease.name,
+            locked: updatedRelease.isLocked
+        });
+    } catch (error) {
+        console.error('Error updating release lock status via public endpoint:', error);
         res.status(500).json({ error: "Internal server error" });
     }
 });

@@ -1365,8 +1365,7 @@ router.get("/:id/info", async (req, res) => {
       where: { id: projectId },
       select: { 
         id: true, 
-        name: true,
-        
+        name: true
       }
     });
     
@@ -1384,8 +1383,7 @@ router.get("/:id/info", async (req, res) => {
       id: project.id,
       name: project.name,
       version: activeVersion?.version || "1.0.0",
-      lastUpdated: activeVersion?.createdAt || null,
-      locked: project.isLocked || false
+      lastUpdated: activeVersion?.createdAt || null
     });
   } catch (error) {
     console.error('Error fetching project info:', error);
@@ -1393,67 +1391,5 @@ router.get("/:id/info", async (req, res) => {
   }
 });
 
-// API endpoint to lock/unlock a project
-router.post("/:id/lock", authenticateToken, async (req, res) => {
-  const projectId = parseInt(req.params.id, 10);
-  const { locked } = req.body;
-  const { id: userId, role } = req.user;
-  
-  try {
-    // Check if project exists and user has permission
-    const project = await prisma.project.findUnique({ 
-      where: { id: projectId },
-      select: { 
-        id: true, 
-        name: true,
-        assignedManagerId: true,
-        isLocked: true
-      }
-    });
-    
-    if (!project) {
-      return res.status(404).json({ error: "Project not found" });
-    }
-
-    // Check permissions - only admin or assigned manager can lock/unlock
-    let hasPermission = false;
-    if (role === "admin") {
-      hasPermission = true;
-    } else if (role === "manager" && project.assignedManagerId === userId) {
-      hasPermission = true;
-    }
-    
-    if (!hasPermission) {
-      return res.status(403).json({ error: "Forbidden: You don't have permission to lock/unlock this project" });
-    }
-
-    // Validate locked parameter
-    if (typeof locked !== 'boolean') {
-      return res.status(400).json({ error: "Invalid 'locked' parameter. Must be true or false." });
-    }
-
-    // Update project lock status
-    const updatedProject = await prisma.project.update({
-      where: { id: projectId },
-      data: { isLocked: locked },
-      select: { 
-        id: true, 
-        name: true, 
-        isLocked: true 
-      }
-    });
-
-
-    res.json({
-      message: `Project ${locked ? 'locked' : 'unlocked'} successfully`,
-      projectId: updatedProject.id,
-      projectName: updatedProject.name,
-      locked: updatedProject.isLocked
-    });
-  } catch (error) {
-    console.error('Error updating project lock status:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
 
 export default router;

@@ -4,6 +4,16 @@ dotenv.config();
 
 // Generate project header component HTML with improved design matching main.css
 export function generateProjectHeader() {
+  return generateHeader('project');
+}
+
+// Generate release header component HTML with improved design matching main.css
+export function generateReleaseHeader() {
+  return generateHeader('release');
+}
+
+// Generate header component HTML with improved design matching main.css
+function generateHeader(type = 'project') {
   return `
 <style>
   .zip-sync-header {
@@ -192,6 +202,8 @@ export function generateProjectHeader() {
   (function() {
     let isLocked = false;
     let projectId = null;
+    let releaseId = null;
+    let headerType = '${type}';
     
     // Extract project ID from URL
     function extractProjectId() {
@@ -214,6 +226,27 @@ export function generateProjectHeader() {
       return null;
     }
     
+    // Extract release ID from URL (if available)
+    function extractReleaseId() {
+      const currentUrl = window.location.href;
+      console.log('🔍 Extracting release ID from URL:', currentUrl);
+      
+      // Look for release ID in query params or path
+      const urlParams = new URLSearchParams(window.location.search);
+      const releaseIdParam = urlParams.get('releaseId');
+      if (releaseIdParam) {
+        return releaseIdParam;
+      }
+      
+      // Pattern: /apps/projectId/build/?releaseId=123
+      const releaseMatch = currentUrl.match(/releaseId=([^&]+)/);
+      if (releaseMatch) {
+        return releaseMatch[1];
+      }
+      
+      return null;
+    }
+    
     // Get API base URL
     function getApiBaseUrl() {
       const currentUrl = window.location.href;
@@ -226,7 +259,7 @@ export function generateProjectHeader() {
       }
     }
     
-    // Toggle project lock with API call
+    // Toggle project/release lock with API call
     window.toggleProjectLock = async function() {
       if (!projectId) {
         console.warn('No project ID available for lock toggle');
@@ -241,27 +274,46 @@ export function generateProjectHeader() {
       lockText.textContent = 'Processing...';
       
       try {
-        const apiUrl = \`\${getApiBaseUrl()}/api/projects/\${projectId}/lock\`;
+        let apiUrl;
+        let requestBody;
+        
+        if (headerType === 'release' && releaseId) {
+          // For releases, use the public endpoint with token
+          apiUrl = \`\${getApiBaseUrl()}/api/releases/\${releaseId}/public-lock\`;
+          requestBody = { 
+            locked: !isLocked,
+            token: window.zipSyncLockToken 
+          };
+        } else {
+          // For projects, show error since project locking is not supported
+          alert('Project locking is not available. Please use release locking instead.');
+          return;
+        }
+        
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ locked: !isLocked })
+          body: JSON.stringify(requestBody)
         });
         
         if (response.ok) {
           const result = await response.json();
           isLocked = result.locked;
           updateLockUI();
-          console.log('✅ Lock status updated:', isLocked ? 'Locked' : 'Unlocked');
+          const entityType = headerType === 'release' ? 'Release' : 'Project';
+          console.log(\`✅ \${entityType} lock status updated:\`, isLocked ? 'Locked' : 'Unlocked');
         } else {
           console.error('❌ Failed to update lock status:', response.status);
-          alert('Failed to update project lock status. Please try again.');
+          const errorData = await response.json().catch(() => ({}));
+          const entityType = headerType === 'release' ? 'release' : 'project';
+          alert(\`Failed to update \${entityType} lock status: \${errorData.error || 'Unknown error'}\`);
         }
       } catch (error) {
         console.error('❌ Error toggling lock:', error);
-        alert('Error updating project lock. Please check your connection.');
+        const entityType = headerType === 'release' ? 'release' : 'project';
+        alert(\`Error updating \${entityType} lock. Please check your connection.\`);
       } finally {
         lockBtn.disabled = false;
       }
@@ -272,17 +324,18 @@ export function generateProjectHeader() {
       const lockBtn = document.getElementById('zip-sync-lock-btn');
       const lockText = document.getElementById('lock-btn-text');
       const lockIcon = lockBtn.querySelector('.zip-sync-lock-icon');
+      const entityType = headerType === 'release' ? 'Release' : 'Project';
       
       if (isLocked) {
         lockBtn.className = 'zip-sync-lock-btn locked';
-        lockText.textContent = 'Unlock Project';
-        lockIcon.innerHTML = \`<path fill-rule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2v2H9.5V8a3.5 3.5 0 017 0z" clip-rule="evenodd"></path>\`;
+        lockText.textContent = \`Unlock \${entityType}\`;
+        lockIcon.innerHTML = \`<path fill-rule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2v2H9.5V8a3.5 3.5 0 717 0z" clip-rule="evenodd"></path>\`;
         
         // Show lock overlay
         showLockOverlay();
       } else {
         lockBtn.className = 'zip-sync-lock-btn';
-        lockText.textContent = 'Lock Project';
+        lockText.textContent = \`Lock \${entityType}\`;
         lockIcon.innerHTML = \`<path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 616 0z" clip-rule="evenodd"></path>\`;
         
         // Remove lock overlay
@@ -309,37 +362,77 @@ export function generateProjectHeader() {
       }
     }
     
-    // Load project info from API
+    // Load project/release info from API
     async function loadProjectInfo() {
       try {
         projectId = extractProjectId();
+        releaseId = extractReleaseId();
         console.log('🔍 Detected project ID:', projectId);
+        console.log('🔍 Detected release ID:', releaseId);
         
         if (projectId) {
-          const apiUrl = \`\${getApiBaseUrl()}/api/projects/\${projectId}/info\`;
-          console.log('🔍 Fetching project info from:', apiUrl);
-          const response = await fetch(apiUrl);
-          console.log('🔍 Project info response:', response);
-          
-          if (response.ok) {
-            const projectInfo = await response.json();
-            console.log('🔍 Project info data:', projectInfo);
-            document.getElementById('zip-sync-project-name').textContent = projectInfo.name;
-            document.getElementById('zip-sync-project-version').textContent = \`v\${projectInfo.version}\`;
+          if (headerType === 'release' && releaseId) {
+            // For releases, get release info
+            const apiUrl = \`\${getApiBaseUrl()}/api/releases/\${releaseId}/info\`;
+            console.log('🔍 Fetching release info from:', apiUrl);
+            const response = await fetch(apiUrl);
+            console.log('🔍 Release info response:', response);
             
-            // Check if project is locked
-            isLocked = projectInfo.locked || false;
-            updateLockUI();
-            
-            console.log('✅ Project info loaded successfully');
+            if (response.ok) {
+              const info = await response.json();
+              console.log('🔍 Release info data:', info);
+              
+              // Handle release response
+              const projectName = info.project.name;
+              const version = info.version || '1.0.0';
+              const locked = info.locked || false;
+              const lockToken = info.lockToken;
+              
+              document.getElementById('zip-sync-project-name').textContent = projectName;
+              document.getElementById('zip-sync-project-version').textContent = \`v\${version}\`;
+              
+              // Store lock token for public API calls
+              if (lockToken) {
+                window.zipSyncLockToken = lockToken;
+              }
+              
+              // Check if release is locked
+              isLocked = locked;
+              updateLockUI();
+              
+              console.log('✅ Release info loaded successfully');
+            } else {
+              console.warn('⚠️ Failed to fetch release info:', response.status);
+            }
           } else {
-            console.warn('⚠️ Failed to fetch project info:', response.status);
+            // For projects, show basic info without lock functionality
+            const apiUrl = \`\${getApiBaseUrl()}/api/projects/\${projectId}/info\`;
+            console.log('🔍 Fetching project info from:', apiUrl);
+            const response = await fetch(apiUrl);
+            
+            if (response.ok) {
+              const info = await response.json();
+              console.log('🔍 Project info data:', info);
+              
+              document.getElementById('zip-sync-project-name').textContent = info.name;
+              document.getElementById('zip-sync-project-version').textContent = \`v\${info.version}\`;
+              
+              // Hide lock button for projects since locking is not supported
+              const lockBtn = document.getElementById('zip-sync-lock-btn');
+              if (lockBtn) {
+                lockBtn.style.display = 'none';
+              }
+              
+              console.log('✅ Project info loaded successfully (no lock functionality)');
+            } else {
+              console.warn('⚠️ Failed to fetch project info:', response.status);
+            }
           }
         } else {
           console.warn('⚠️ Could not determine project ID from URL');
         }
       } catch (error) {
-        console.error('❌ Error loading project info:', error);
+        console.error('❌ Error loading info:', error);
       }
     }
     
