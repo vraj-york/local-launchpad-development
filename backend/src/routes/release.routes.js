@@ -1,6 +1,7 @@
 import express from "express";
 import { PrismaClient } from "@prisma/client";
 import { authenticateToken } from "../middleware/auth.middleware.js";
+import { generateProjectHeader, generateReleaseHeader } from "../utils/headerUtils.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs-extra";
@@ -339,6 +340,48 @@ router.post("/:releaseId/lock", authenticateToken, async (req, res) => {
     }
 });
 
+// API endpoint to get release info for header display
+router.get("/:releaseId/info", async (req, res) => {
+    const releaseId = parseInt(req.params.releaseId, 10);
+    
+    try {
+        // Get release info with project details
+        const release = await prisma.release.findUnique({
+            where: { id: releaseId },
+            include: {
+                project: {
+                    select: { 
+                        id: true, 
+                        name: true
+                    }
+                },
+                versions: {
+                    where: { isActive: true },
+                    orderBy: { createdAt: 'desc' },
+                    take: 1,
+                    select: { version: true, createdAt: true }
+                }
+            }
+        });
+        
+        if (!release) {
+            return res.status(404).json({ error: "Release not found" });
+        }
+
+        res.json({
+            id: release.id,
+            name: release.name,
+            project: release.project,
+            version: release.versions[0]?.version || "1.0.0",
+            lastUpdated: release.versions[0]?.createdAt || null,
+            locked: release.isLocked || false
+        });
+    } catch (error) {
+        console.error('Error fetching release info:', error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
 // Upload ZIP to a release
 const upload = multer({
     dest: path.join(process.cwd(), "uploads"),
@@ -463,6 +506,79 @@ router.post("/:releaseId/upload", authenticateToken, upload.single("project"), a
                     throw new Error('Not a valid React project: build script not found in package.json');
                 }
 
+                // Find and inject scripts/components into root HTML file
+                const htmlFiles = ['index.html', 'public/index.html', 'src/index.html'];
+                let rootHtmlPath = null;
+                
+                for (const htmlFile of htmlFiles) {
+                    const potentialPath = path.join(actualProjectPath, htmlFile);
+                    if (fs.existsSync(potentialPath)) {
+                        rootHtmlPath = potentialPath;
+                        break;
+                    }
+                }
+
+                if (rootHtmlPath) {
+                    try {
+                        let htmlContent = fs.readFileSync(rootHtmlPath, 'utf-8');
+                        
+                        // Marker.io script to inject
+                        const markerScript = `<script>
+window.markerConfig = {
+              project: '66c70a4bc69f538671fe255f',
+              source: 'snippet'
+            };
+          !function(e,r,a){if(!e.__Marker){e.__Marker={};var t=[],n={__cs:t};["show","hide","isVisible","capture","cancelCapture","unload","reload","isExtensionInstalled","setReporter","setCustomData","on","off"].forEach(function(e){n[e]=function(){var r=Array.prototype.slice.call(arguments);r.unshift(e),t.push(r)}}),e.Marker=n;var s=r.createElement("script");s.async=1,s.src="https://edge.marker.io/latest/shim.js";var i=r.getElementsByTagName("script")[0];i.parentNode.insertBefore(s,i)}}(window,document);
+</script>`;
+
+                        // Get release header HTML using helper function
+                        const projectHeader = generateReleaseHeader();
+
+                        let hasChanges = false;
+
+                        // Check if Marker.io script is already injected to avoid duplicates
+                        if (!htmlContent.includes('window.markerConfig')) {
+                            // Inject Marker.io script before closing head tag
+                            if (htmlContent.includes('</head>')) {
+                                htmlContent = htmlContent.replace('</head>', `${markerScript}\n</head>`);
+                            } else if (htmlContent.includes('<head>')) {
+                                htmlContent = htmlContent.replace('<head>', `<head>\n${markerScript}`);
+                            } else {
+                                if (htmlContent.includes('<body>')) {
+                                    htmlContent = htmlContent.replace('<body>', `<head>\n${markerScript}\n</head>\n<body>`);
+                                } else if (htmlContent.includes('<html>')) {
+                                    htmlContent = htmlContent.replace('<html>', `<html>\n<head>\n${markerScript}\n</head>`);
+                                }
+                            }
+                            hasChanges = true;
+                        }
+
+                        // Check if project header is already injected to avoid duplicates
+                        if (!htmlContent.includes('zip-sync-header')) {
+                            // Inject project header after opening body tag
+                            if (htmlContent.includes('<body>')) {
+                                htmlContent = htmlContent.replace('<body>', `<body>\n${projectHeader}`);
+                            } else if (htmlContent.includes('<body ')) {
+                                // Handle body tag with attributes
+                                htmlContent = htmlContent.replace(/<body([^>]*)>/, `<body$1>\n${projectHeader}`);
+                            } else {
+                                // Fallback: add to end of head or create body
+                                if (htmlContent.includes('</head>')) {
+                                    htmlContent = htmlContent.replace('</head>', `</head>\n<body>\n${projectHeader}\n</body>`);
+                                }
+                            }
+                            hasChanges = true;
+                        }
+
+                        if (hasChanges) {
+                            fs.writeFileSync(rootHtmlPath, htmlContent, 'utf-8');
+                        }
+                    } catch (error) {
+                        console.error('❌ Error injecting scripts/components:', error.message);
+                        // Continue with build process even if injection fails
+                    }
+                }
+
                 // Build React app
                 try {
                     runCommand("npm install", actualProjectPath);
@@ -554,12 +670,20 @@ router.post("/:releaseId/upload", authenticateToken, upload.single("project"), a
                     throw new Error("No build output found");
                 }
 
-                // Calculate build URL
+                // Patch index.html asset paths (optional)
+                const indexPath = path.join(actualProjectPath, outputDir, "index.html");
+                if (fs.existsSync(indexPath)) {
+                    let html = fs.readFileSync(indexPath, "utf-8");
+                    html = html.replace(/"\/assets\//g, '"./assets/');
+                    fs.writeFileSync(indexPath, html);
+                }
+
+                // Calculate build URL with release ID parameter
                 const relativeBuildPath = path.relative(
                     path.join(process.cwd(), "projects"),
                     path.join(actualProjectPath, outputDir)
                 );
-                const buildUrl = `http://localhost:5000/apps/${relativeBuildPath}`;
+                const buildUrl = `http://localhost:5000/apps/${relativeBuildPath}?releaseId=${releaseId}`;
 
                 // Deactivate all existing versions for this project
                 await prisma.projectVersion.updateMany({

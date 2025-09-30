@@ -292,7 +292,7 @@ const ProjectManagement = ({ setActiveTab }) => {
                                             className="btn btn-outline"
                                             onClick={() => setSelectedProject(project)}
                                         >
-                                            Manage Releases
+                                            Releases
                                         </button>
                                         
                                         <ProjectActionsDropdown
