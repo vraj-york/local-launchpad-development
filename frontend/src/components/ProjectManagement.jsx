@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProjects, createProject } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import DiffModal from './DiffModal';
 import ProjectActionsDropdown from './ProjectActionsDropdown';
 import ReleaseManagement from './ReleaseManagement';
 
 const ProjectManagement = ({ setActiveTab }) => {
     const { user } = useAuth();
+    const { showSuccess, showError, showInfo } = useToast();
     const navigate = useNavigate();
     console.log('ProjectManagement user:', user);
     const [projects, setProjects] = useState([]);
@@ -65,12 +67,16 @@ const ProjectManagement = ({ setActiveTab }) => {
 
         try {
             setCreating(true);
+            showInfo('Creating project...');
             await createProject(newProject);
             setNewProject({ name: '', description: '', assignedManagerId: user.role === 'manager' ? user.id : null });
             setShowCreateForm(false);
             await loadProjects();
+            showSuccess(`Project "${newProject.name}" created successfully!`);
         } catch (err) {
-            setError(err.message || 'Failed to create project');
+            const errorMessage = err.message || 'Failed to create project';
+            setError(errorMessage);
+            showError(`Failed to create project: ${errorMessage}`);
         } finally {
             setCreating(false);
         }

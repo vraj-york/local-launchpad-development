@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { fetchProjectDiff, generateJiraTickets } from '../api';
+import { useToast } from '../context/ToastContext';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
 
 const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
+    const { showSuccess, showError, showInfo } = useToast();
     const [diffData, setDiffData] = useState(null);
     console.log('🔍 diffData:', diffData);
     const [loading, setLoading] = useState(false);
@@ -16,13 +18,17 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
         
         setLoading(true);
         setError(null);
+        showInfo('Generating git diff summary...');
         
         try {
             const data = await fetchProjectDiff(projectId);
             console.log('🔍 data:', data);
             setDiffData(data);
+            showSuccess('Git diff summary generated successfully!');
         } catch (err) {
-            setError(err.message || 'Failed to fetch diff summary');
+            const errorMessage = err.message || 'Failed to fetch diff summary';
+            setError(errorMessage);
+            showError(`Failed to generate summary: ${errorMessage}`);
         } finally {
             setLoading(false);
         }
@@ -43,14 +49,23 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
         setJiraLoading(true);
         setJiraError(null);
         setJiraResult(null);
+        showInfo('Creating Jira tickets...');
         
         try {
             const result = await generateJiraTickets(projectId);
             console.log('🎫 Jira Result:', result);
             setJiraResult(result);
+            
+            if (result.success) {
+                showSuccess(`Successfully created ${result.successfulTickets} Jira tickets!`);
+            } else {
+                showError(`Failed to create Jira tickets: ${result.error || result.message}`);
+            }
         } catch (err) {
             console.error('❌ Jira Error:', err);
-            setJiraError(err.message || 'Failed to generate Jira tickets');
+            const errorMessage = err.message || 'Failed to generate Jira tickets';
+            setJiraError(errorMessage);
+            showError(`Failed to create Jira tickets: ${errorMessage}`);
         } finally {
             setJiraLoading(false);
         }
@@ -60,6 +75,7 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
         if (!diffData) return;
 
         try {
+            showInfo('Generating DOCX document...');
             const doc = new Document({
                 sections: [{
                     properties: {},
@@ -109,9 +125,10 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
             link.click();
             document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
+            showSuccess('DOCX document downloaded successfully!');
         } catch (error) {
             console.error('Error generating DOCX:', error);
-            alert('Failed to generate DOCX file. Please try again.');
+            showError('Failed to generate DOCX file. Please try again.');
         }
     };
 

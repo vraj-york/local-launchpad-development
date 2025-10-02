@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage';
 import Dashboard from './components/Dashboard';
 import GitDiff from './components/GitDiff';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
 import './styles/main.css';
 
 const ProtectedRoute = ({ children }) => {
@@ -24,28 +25,30 @@ const ProtectedRoute = ({ children }) => {
 const App = () => {
   return (
     <AuthProvider>
-      <Router>
-        <Routes>
-          <Route path="/" element={<LoginPage />} />
-          <Route 
-            path="/dashboard" 
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/projects/:projectId/diff" 
-            element={
-              <ProtectedRoute>
-                <GitDiff />
-              </ProtectedRoute>
-            } 
-          />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
-      </Router>
+      <ToastProvider>
+        <Router>
+          <Routes>
+            <Route path="/" element={<LoginPage />} />
+            <Route 
+              path="/dashboard" 
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/projects/:projectId/diff" 
+              element={
+                <ProtectedRoute>
+                  <GitDiff />
+                </ProtectedRoute>
+              } 
+            />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </Router>
+      </ToastProvider>
     </AuthProvider>
   );
 };

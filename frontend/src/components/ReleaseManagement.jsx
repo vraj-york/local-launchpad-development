@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { fetchReleases, createRelease, toggleReleaseLock, uploadToRelease } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 
 const ReleaseManagement = ({ projectId, projectName }) => {
     const { user } = useAuth();
+    const { showSuccess, showError, showInfo, showWarning } = useToast();
     const [releases, setReleases] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -45,6 +47,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
         try {
             setCreating(true);
+            showInfo('Creating release...');
             await createRelease({
                 projectId,
                 name: newRelease.name.trim(),
@@ -53,8 +56,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             setNewRelease({ name: '', description: '' });
             setShowCreateForm(false);
             await loadReleases();
+            showSuccess(`Release "${newRelease.name}" created successfully!`);
         } catch (err) {
-            setError(err.message || 'Failed to create release');
+            const errorMessage = err.message || 'Failed to create release';
+            setError(errorMessage);
+            showError(`Failed to create release: ${errorMessage}`);
         } finally {
             setCreating(false);
         }
@@ -90,6 +96,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             setUploading(true);
             setUploadStatus('Uploading and building project...');
             setUploadProgress(0);
+            showInfo('Uploading and building project...');
 
             // Simulate progress
             const progressInterval = setInterval(() => {
@@ -113,8 +120,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             setVersion('');
             document.getElementById('file-input').value = '';
             await loadReleases();
+            showSuccess(`Project uploaded successfully! Version: ${result.version.version}`);
         } catch (err) {
-            setUploadStatus(`❌ Upload failed: ${err.error || err.message}`);
+            const errorMessage = err.error || err.message || 'Upload failed';
+            setUploadStatus(`❌ Upload failed: ${errorMessage}`);
+            showError(`Upload failed: ${errorMessage}`);
         } finally {
             setUploading(false);
         }
