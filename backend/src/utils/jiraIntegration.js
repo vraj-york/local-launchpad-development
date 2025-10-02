@@ -61,11 +61,28 @@ function parseSummaryForTickets(summary) {
     }
 
     const tickets = [];
+    let summaryText = '';
     
-    // Handle structured summary with output.Summary
-    if (summary.output?.Summary) {
-        const summaryText = summary.output.Summary;
-        const changes = summaryText.split('\n').filter(line => line.trim());
+    // Handle new batching response structure
+    if (summary.summary) {
+        summaryText = summary.summary;
+    }
+    // Handle old structured summary with output.Summary
+    else if (summary.output?.Summary) {
+        summaryText = summary.output.Summary;
+    }
+    
+    if (summaryText) {
+        // Handle multi-chunk summaries by combining all chunks
+        const changes = summaryText
+            .split('--- Chunk Summary ---')
+            .flatMap(chunk => 
+                chunk.trim()
+                    .split('\n')
+                    .filter(line => line.trim())
+                    .map(line => line.replace(/^[-•]\s*/, '').trim())
+                    .filter(line => line)
+            );
         
         // Group changes by category
         const categories = {

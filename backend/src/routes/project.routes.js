@@ -372,6 +372,266 @@ function runCommand(command, cwd, options = {}) {
     }
 }
 
+// Utility function to split diff into chunks based on file boundaries
+function splitDiffIntoChunks(diff, maxChunkSize = 150000) { // 150KB per chunk (configurable)
+  if (diff.length <= maxChunkSize) {
+    return [diff];
+  }
+
+  const chunks = [];
+  const lines = diff.split('\n');
+  let currentChunk = '';
+  let currentSize = 0;
+  let currentFile = '';
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineSize = line.length + 1; // +1 for newline
+
+    // Detect file boundaries (lines starting with "diff --git" or "+++" or "---")
+    const isFileBoundary = line.startsWith('diff --git') || 
+                          line.startsWith('+++') || 
+                          line.startsWith('---');
+
+    // If this is a file boundary and we have content, consider splitting
+    if (isFileBoundary && currentChunk.length > 0 && currentSize > maxChunkSize * 0.7) {
+      chunks.push(currentChunk);
+      currentChunk = '';
+      currentSize = 0;
+    }
+
+    // If a single line exceeds maxChunkSize, we need to handle it specially
+    if (lineSize > maxChunkSize) {
+      // If we have content in current chunk, save it first
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+        currentChunk = '';
+        currentSize = 0;
+      }
+      // Split the large line itself (this is rare but possible)
+      const lineChunks = splitLargeLine(line, maxChunkSize);
+      chunks.push(...lineChunks);
+      continue;
+    }
+
+    // If adding this line would exceed the chunk size, start a new chunk
+    if (currentSize + lineSize > maxChunkSize && currentChunk.length > 0) {
+      chunks.push(currentChunk);
+      currentChunk = '';
+      currentSize = 0;
+    }
+
+    currentChunk += line + '\n';
+    currentSize += lineSize;
+
+    // Track current file for better chunking
+    if (line.startsWith('diff --git')) {
+      currentFile = line;
+    }
+  }
+
+  // Add the last chunk if it has content
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
+// Helper function to split very large lines
+function splitLargeLine(line, maxSize) {
+  if (line.length <= maxSize) {
+    return [line];
+  }
+
+  const chunks = [];
+  for (let i = 0; i < line.length; i += maxSize) {
+    chunks.push(line.substring(i, i + maxSize));
+  }
+  return chunks;
+}
+
+// Semaphore class to limit concurrent requests
+class Semaphore {
+  constructor(maxConcurrent) {
+    this.maxConcurrent = maxConcurrent;
+    this.current = 0;
+    this.queue = [];
+  }
+
+  async acquire() {
+    return new Promise((resolve) => {
+      if (this.current < this.maxConcurrent) {
+        this.current++;
+        resolve();
+      } else {
+        this.queue.push(resolve);
+      }
+    });
+  }
+
+  release() {
+    this.current--;
+    if (this.queue.length > 0) {
+      const next = this.queue.shift();
+      this.current++;
+      next();
+    }
+  }
+}
+
+// Function to call webhook with a single chunk (with retry logic)
+async function callWebhookWithChunk(chunk, chunkIndex, totalChunks, maxRetries = 3) {
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`Attempting webhook call for chunk ${chunkIndex + 1} (attempt ${attempt}/${maxRetries})`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      
+      const webhookResponse = await fetch(
+        "https://workflow.yorkdevs.link/webhook/generatesummary",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            diff: chunk,
+            chunkIndex,
+            totalChunks,
+            isPartial: totalChunks > 1
+          }),
+          signal: controller.signal
+        }
+      );
+
+      clearTimeout(timeoutId);
+
+      if (!webhookResponse.ok) {
+        const errorText = await webhookResponse.text();
+        throw new Error(`Webhook call failed for chunk ${chunkIndex}: ${errorText}`);
+      }
+
+      return await webhookResponse.json();
+    } catch (error) {
+      lastError = error;
+      console.error(`Webhook attempt ${attempt} failed for chunk ${chunkIndex + 1}:`, error.message);
+      
+      if (attempt < maxRetries) {
+        // Exponential backoff: wait 2^attempt seconds
+        const delay = Math.pow(2, attempt) * 1000;
+        console.log(`Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  throw new Error(`All ${maxRetries} attempts failed for chunk ${chunkIndex + 1}. Last error: ${lastError.message}`);
+}
+
+// Function to process chunks in parallel with semaphore
+async function processChunksInParallel(chunks, maxConcurrent = 5) {
+  const semaphore = new Semaphore(maxConcurrent);
+  const results = new Array(chunks.length); // Pre-allocate array for better performance
+  
+  const processChunk = async (chunk, index) => {
+    await semaphore.acquire();
+    const chunkStartTime = Date.now();
+    
+    try {
+      console.log(`🚀 Starting chunk ${index + 1}/${chunks.length} (${chunk.length} bytes)`);
+      const response = await callWebhookWithChunk(chunk, index, chunks.length);
+      const chunkTime = (Date.now() - chunkStartTime) / 1000;
+      results[index] = { success: true, data: response };
+      console.log(`✅ Chunk ${index + 1} completed in ${chunkTime.toFixed(2)}s`);
+    } catch (error) {
+      const chunkTime = (Date.now() - chunkStartTime) / 1000;
+      console.error(`❌ Chunk ${index + 1} failed after ${chunkTime.toFixed(2)}s:`, error.message);
+      results[index] = { 
+        success: false, 
+        error: error.message,
+        data: { 
+          summary: `Chunk ${index + 1} processing failed: ${error.message}`,
+          error: true 
+        }
+      };
+    } finally {
+      semaphore.release();
+    }
+  };
+
+  // Start all chunk processing in parallel (limited by semaphore)
+  const promises = chunks.map((chunk, index) => processChunk(chunk, index));
+  await Promise.all(promises);
+
+  return results;
+}
+
+// Function to aggregate multiple webhook responses into a single summary
+function aggregateWebhookResponses(parallelResults) {
+  if (parallelResults.length === 1) {
+    // For single chunk, return the data directly or wrap it properly
+    const singleResult = parallelResults[0];
+    if (singleResult.success) {
+      return singleResult.data;
+    } else {
+      return {
+        summary: singleResult.data.summary || 'Processing failed',
+        error: true
+      };
+    }
+  }
+
+  // Separate successful and failed responses
+  const successfulResponses = parallelResults.filter(r => r.success);
+  const failedResponses = parallelResults.filter(r => !r.success);
+
+  // Combine summaries from successful chunks
+  const successfulSummaries = successfulResponses.map(r => {
+    // Extract the actual summary text from the response
+    if (typeof r.data === 'string') {
+      return r.data;
+    } else if (r.data && typeof r.data.summary === 'string') {
+      return r.data.summary;
+    } else if (r.data && r.data.output && typeof r.data.output.Summary === 'string') {
+      return r.data.output.Summary;
+    } else if (r.data && typeof r.data === 'object') {
+      // Try to find any text content in the object
+      return JSON.stringify(r.data, null, 2);
+    } else {
+      return 'No summary available for this chunk';
+    }
+  });
+  
+  const failedSummaries = failedResponses.map(r => {
+    if (typeof r.data === 'string') {
+      return r.data;
+    } else if (r.data && typeof r.data.summary === 'string') {
+      return r.data.summary;
+    } else {
+      return r.error || 'Chunk processing failed';
+    }
+  });
+
+  let combinedSummary = successfulSummaries.join('\n\n--- Chunk Summary ---\n\n');
+  
+  // Add failed chunks information if any
+  if (failedSummaries.length > 0) {
+    combinedSummary += '\n\n--- Failed Chunks ---\n\n' + failedSummaries.join('\n\n');
+  }
+
+  const result = {
+    summary: combinedSummary,
+    totalChunks: parallelResults.length,
+    successfulChunks: successfulResponses.length,
+    failedChunks: failedResponses.length,
+    aggregated: true
+  };
+
+  return result;
+}
+
 function findProjectRoot(dir) {
     // Files/folders to ignore when searching for project root
     const ignoreList = [
@@ -1065,22 +1325,28 @@ router.get("/:id/diff-summary", authenticateToken, async (req, res) => {
       projectFolder
     );
 
-    // Call n8n webhook
-    const webhookResponse = await fetch(
-      "https://workflow.yorkdevs.link/webhook/generatesummary",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ diff: diffOutput }),
-      }
-    );
+    // Split diff into chunks if it's too large
+    const diffChunks = splitDiffIntoChunks(diffOutput);
+    console.log(`Diff split into ${diffChunks.length} chunks (total size: ${diffOutput.length} bytes)`);
 
-    if (!webhookResponse.ok) {
-      const errorText = await webhookResponse.text();
-      throw new Error(`Webhook call failed: ${errorText}`);
-    }
+    // Process chunks in parallel (up to 5 concurrent requests)
+    const maxConcurrent = 5; // Configurable concurrent limit
+    console.log(`Starting parallel processing of ${diffChunks.length} chunks with max ${maxConcurrent} concurrent requests...`);
+    const startTime = Date.now();
+    
+    const parallelResults = await processChunksInParallel(diffChunks, maxConcurrent);
+    
+    const endTime = Date.now();
+    const processingTime = (endTime - startTime) / 1000;
+    
+    const successfulChunks = parallelResults.filter(r => r.success).length;
+    const failedChunks = parallelResults.filter(r => !r.success).length;
+    
+    console.log(`🚀 Parallel processing complete in ${processingTime.toFixed(2)}s: ${successfulChunks} successful, ${failedChunks} failed`);
 
-    const summary = await webhookResponse.json();
+    // Aggregate all responses into a single summary
+    const summary = aggregateWebhookResponses(parallelResults);
+    console.log('📊 Final summary structure:', JSON.stringify(summary, null, 2));
 
     res.json({
       projectId,
@@ -1448,22 +1714,28 @@ router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) =>
       projectFolder
     );
 
-    // Generate summary using existing webhook
-    const webhookResponse = await fetch(
-      "https://workflow.yorkdevs.link/webhook/generatesummary",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ diff: gitDiff }),
-      }
-    );
+    // Split diff into chunks if it's too large (same as diff-summary endpoint)
+    const diffChunks = splitDiffIntoChunks(gitDiff);
+    console.log(`Jira: Diff split into ${diffChunks.length} chunks (total size: ${gitDiff.length} bytes)`);
 
-    if (!webhookResponse.ok) {
-      const errorText = await webhookResponse.text();
-      throw new Error(`Summary generation failed: ${errorText}`);
-    }
+    // Process chunks in parallel (up to 5 concurrent requests)
+    const maxConcurrent = 5;
+    console.log(`Jira: Starting parallel processing of ${diffChunks.length} chunks with max ${maxConcurrent} concurrent requests...`);
+    const startTime = Date.now();
+    
+    const parallelResults = await processChunksInParallel(diffChunks, maxConcurrent);
+    
+    const endTime = Date.now();
+    const processingTime = (endTime - startTime) / 1000;
+    
+    const successfulChunks = parallelResults.filter(r => r.success).length;
+    const failedChunks = parallelResults.filter(r => !r.success).length;
+    
+    console.log(`Jira: 🚀 Parallel processing complete in ${processingTime.toFixed(2)}s: ${successfulChunks} successful, ${failedChunks} failed`);
 
-    const summary = await webhookResponse.json();
+    // Aggregate all responses into a single summary
+    const summary = aggregateWebhookResponses(parallelResults);
+    console.log('Jira: 📊 Final summary structure:', JSON.stringify(summary, null, 2));
 
     // Create Jira tickets from summary
     const projectInfo = {

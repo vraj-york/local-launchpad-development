@@ -22,7 +22,9 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
         
         try {
             const data = await fetchProjectDiff(projectId);
-            console.log('🔍 data:', data);
+            console.log('🔍 Full API Response:', data);
+            console.log('🔍 Summary Structure:', data.summary);
+            console.log('🔍 Summary Type:', typeof data.summary);
             setDiffData(data);
             showSuccess('Git diff summary generated successfully!');
         } catch (err) {
@@ -101,12 +103,43 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
                             text: "Summary:",
                             heading: HeadingLevel.HEADING_2,
                         }),
-                        ...(diffData.summary && typeof diffData.summary === 'object' && diffData.summary.output?.Summary ? 
-                            diffData.summary.output.Summary.split('\n').map(line => 
-                                new Paragraph({
-                                    text: line.replace(/^-\s*/, ''),
-                                    bullet: line.startsWith('-') ? { level: 0 } : undefined,
-                                })
+                        ...(diffData.summary && typeof diffData.summary === 'object' ? 
+                            // Handle new batching response structure
+                            (diffData.summary.summary ? 
+                                (diffData.summary.summary.includes('--- Chunk Summary ---') ? 
+                                    // Combine all chunks into a single list of points
+                                    diffData.summary.summary
+                                        .split('--- Chunk Summary ---')
+                                        .flatMap(chunk => 
+                                            chunk.trim()
+                                                .split('\n')
+                                                .filter(line => line.trim())
+                                                .map(line => line.replace(/^[-•]\s*/, '').trim())
+                                                .filter(line => line)
+                                        )
+                                        .map(point => 
+                                            new Paragraph({
+                                                text: point,
+                                                bullet: { level: 0 }
+                                            })
+                                        ) :
+                                    // Handle single summary
+                                    [new Paragraph({
+                                        text: diffData.summary.summary,
+                                    })]
+                                ) :
+                                // Handle old response structure
+                                (diffData.summary.output?.Summary ? 
+                                    diffData.summary.output.Summary.split('\n').map(line => 
+                                        new Paragraph({
+                                            text: line.replace(/^-\s*/, ''),
+                                            bullet: line.startsWith('-') ? { level: 0 } : undefined,
+                                        })
+                                    ) : 
+                                    [new Paragraph({
+                                        text: 'No summary available',
+                                    })]
+                                )
                             ) : 
                             [new Paragraph({
                                 text: diffData.summary || 'No summary available',
@@ -225,17 +258,60 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
                                 <div className="summary-content">
                                     {diffData.summary && typeof diffData.summary === 'object' ? (
                                         <div className="summary-structured">
-                                           {diffData.summary.output?.Summary && (
-  <div className="summary-section">
-    
-    <h6>Changes Made:</h6>
-    <ul>
-      {diffData.summary.output.Summary.split("\n").map((change, index) => (
-        <li key={index}>{change.replace(/^-\s*/, "")}</li> // remove leading "-"
-      ))}
-    </ul>
-  </div>
-)}
+                                            {/* Handle new batching response structure */}
+                                            {diffData.summary.summary && (
+                                                <div className="summary-section">
+                                                    <h6>Changes Made:</h6>
+                                                    <div className="summary-text">
+                                                        {diffData.summary.summary.includes('--- Chunk Summary ---') ? (
+                                                            // Combine all chunks into a single list of points
+                                                            <ul>
+                                                                {diffData.summary.summary
+                                                                    .split('--- Chunk Summary ---')
+                                                                    .flatMap(chunk => 
+                                                                        chunk.trim()
+                                                                            .split('\n')
+                                                                            .filter(line => line.trim())
+                                                                            .map(line => line.replace(/^[-•]\s*/, '').trim())
+                                                                            .filter(line => line)
+                                                                    )
+                                                                    .map((point, index) => (
+                                                                        <li key={index} style={{ marginBottom: '8px' }}>
+                                                                            {point}
+                                                                        </li>
+                                                                    ))
+                                                                }
+                                                            </ul>
+                                                        ) : (
+                                                            <p style={{ whiteSpace: 'pre-wrap' }}>{diffData.summary.summary}</p>
+                                                        )}
+                                                    </div>
+                                                    {diffData.summary.aggregated && (
+                                                        <div className="batch-info" style={{ 
+                                                            marginTop: '12px', 
+                                                            padding: '8px 12px', 
+                                                            background: '#e3f2fd', 
+                                                            borderRadius: '4px',
+                                                            fontSize: '14px',
+                                                            color: '#1976d2'
+                                                        }}>
+                                                            <strong>Batch Processing:</strong> {diffData.summary.successfulChunks}/{diffData.summary.totalChunks} chunks processed successfully
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            
+                                            {/* Handle old response structure */}
+                                            {diffData.summary.output?.Summary && (
+                                                <div className="summary-section">
+                                                    <h6>Changes Made:</h6>
+                                                    <ul>
+                                                        {diffData.summary.output.Summary.split("\n").map((change, index) => (
+                                                            <li key={index}>{change.replace(/^-\s*/, "")}</li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
 
                                             {diffData.summary.files && (
                                                 <div className="summary-section">
@@ -261,7 +337,7 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
                                         </div>
                                     ) : (
                                         <div className="summary-text">
-                                            <p>{diffData.summary || 'No summary available'}</p>
+                                            <p>{typeof diffData.summary === 'string' ? diffData.summary : (diffData.summary || 'No summary available')}</p>
                                         </div>
                                     )}
                                 </div>
