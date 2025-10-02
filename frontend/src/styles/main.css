@@ -167,6 +167,20 @@ body {
     color: #ffffff;
 }
 
+.btn-success {
+    background-color: #28a745;
+    color: #ffffff;
+}
+
+.btn-success:hover {
+    background-color: #218838;
+}
+
+.btn-success:disabled {
+    background-color: #6c757d;
+    cursor: not-allowed;
+}
+
 /* Project Grid */
 .projects-grid {
     display: grid;
@@ -794,6 +808,7 @@ body {
     padding: 20px 24px;
     border-bottom: 1px solid #e5e7eb;
     background: #f9fafb;
+    border-radius: 12px 12px 0 0;
 }
 
 .modal-header h3 {

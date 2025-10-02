@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { fetchProjectDiff } from '../api';
+import { fetchProjectDiff, generateJiraTickets } from '../api';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
 
 const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
@@ -7,6 +7,9 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
     console.log('🔍 diffData:', diffData);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [jiraLoading, setJiraLoading] = useState(false);
+    const [jiraResult, setJiraResult] = useState(null);
+    const [jiraError, setJiraError] = useState(null);
 
     const handleFetchDiff = async () => {
         if (!projectId) return;
@@ -28,7 +31,29 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
     const handleClose = () => {
         setDiffData(null);
         setError(null);
+        setJiraResult(null);
+        setJiraError(null);
         onClose();
+    };
+
+
+    const handleGenerateJiraTickets = async () => {
+        if (!projectId) return;
+        
+        setJiraLoading(true);
+        setJiraError(null);
+        setJiraResult(null);
+        
+        try {
+            const result = await generateJiraTickets(projectId);
+            console.log('🎫 Jira Result:', result);
+            setJiraResult(result);
+        } catch (err) {
+            console.error('❌ Jira Error:', err);
+            setJiraError(err.message || 'Failed to generate Jira tickets');
+        } finally {
+            setJiraLoading(false);
+        }
     };
 
     const handleDownloadDocx = async () => {
@@ -242,12 +267,151 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
                                     Download DOCX
                                 </button>
                                 <button 
+                                    className="btn btn-success"
+                                    onClick={handleGenerateJiraTickets}
+                                    disabled={jiraLoading}
+                                >
+                                    {jiraLoading ? (
+                                        <>
+                                            <div className="loading-spinner" style={{ width: '16px', height: '16px', marginRight: '8px' }}></div>
+                                            Creating Jira Tickets...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
+                                                <path d="M14,3V5H17.59L7.76,14.83L9.17,16.24L19,6.41V10H21V3M19,19H5V5H12V3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V12H19V19Z"/>
+                                            </svg>
+                                            Generate Jira Tickets
+                                        </>
+                                    )}
+                                </button>
+                                <button 
                                     className="btn btn-primary"
                                     onClick={handleClose}
                                 >
                                     Close
                                 </button>
                             </div>
+
+                            {/* Jira Results Section */}
+                            {jiraResult && (
+                                <div className="jira-results" style={{ 
+                                    marginTop: '24px', 
+                                    padding: '20px', 
+                                    background: '#f8f9fa', 
+                                    borderRadius: '8px',
+                                    border: '1px solid #e9ecef'
+                                }}>
+                                    <h5 style={{ marginBottom: '16px', color: jiraResult.success ? '#28a745' : '#dc3545', display: 'flex', alignItems: 'center' }}>
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
+                                            {jiraResult.success ? 
+                                                <path d="M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z"/> :
+                                                <path d="M12,2C17.53,2 22,6.47 22,12C22,17.53 17.53,22 12,22C6.47,22 2,17.53 2,12C2,6.47 6.47,2 12,2M15.59,7L12,10.59L8.41,7L7,8.41L10.59,12L7,15.59L8.41,17L12,13.41L15.59,17L17,15.59L13.41,12L17,8.41L15.59,7Z"/>
+                                            }
+                                        </svg>
+                                        {jiraResult.success ? 'Jira Tickets Created Successfully!' : 'Failed to Create Jira Tickets'}
+                                    </h5>
+                                    
+                                    {jiraResult.success && (
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <p style={{ marginBottom: '8px' }}>
+                                                <strong>Status:</strong> {jiraResult.message}
+                                            </p>
+                                            <p style={{ marginBottom: '8px' }}>
+                                                <strong>Total Tickets:</strong> {jiraResult.totalTickets} | 
+                                                <strong> Successful:</strong> {jiraResult.successfulTickets} | 
+                                                <strong> Failed:</strong> {jiraResult.failedTickets}
+                                            </p>
+                                            
+                                            {jiraResult.tickets?.created && jiraResult.tickets.created.length > 0 && (
+                                                <div style={{ marginBottom: '16px' }}>
+                                                    <h6>Created Tickets:</h6>
+                                                    <ul style={{ marginLeft: '20px' }}>
+                                                        {jiraResult.tickets.created.map((ticket, index) => (
+                                                            <li key={index} style={{ marginBottom: '4px' }}>
+                                                                <strong>{ticket.key}:</strong> {ticket.title}
+                                                                <br />
+                                                                <a href={ticket.url} target="_blank" rel="noopener noreferrer" style={{ color: '#007bff', fontSize: '14px' }}>
+                                                                    View in Jira →
+                                                                </a>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                            
+                                            {jiraResult.tickets?.failed && jiraResult.tickets.failed.length > 0 && (
+                                                <div style={{ marginBottom: '16px' }}>
+                                                    <h6>Failed Tickets:</h6>
+                                                    <ul style={{ marginLeft: '20px' }}>
+                                                        {jiraResult.tickets.failed.map((ticket, index) => (
+                                                            <li key={index} style={{ color: '#dc3545' }}>
+                                                                <strong>{ticket.title}:</strong> {ticket.error}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                    
+                                    {!jiraResult.success && (
+                                        <div style={{ 
+                                            padding: '12px', 
+                                            background: '#f8d7da', 
+                                            border: '1px solid #f5c6cb', 
+                                            borderRadius: '6px',
+                                            color: '#721c24'
+                                        }}>
+                                            <strong>Error:</strong> {jiraResult.error || jiraResult.message}
+                                        </div>
+                                    )}
+                                    
+                                    {jiraResult.success && (
+                                        <div style={{ 
+                                            padding: '12px', 
+                                            background: '#d4edda', 
+                                            border: '1px solid #c3e6cb', 
+                                            borderRadius: '6px',
+                                            color: '#155724'
+                                        }}>
+                                            <strong>Next Steps:</strong>
+                                            <ul style={{ marginTop: '8px', marginBottom: '0', marginLeft: '10px' }}>
+                                                <li>Check your Jira project for the newly created tickets</li>
+                                                <li>Tickets are automatically labeled and categorized</li>
+                                                <li>Review and assign tickets to team members as needed</li>
+                                            </ul>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {jiraError && (
+                                <div className="jira-error" style={{ 
+                                    marginTop: '24px', 
+                                    padding: '20px', 
+                                    background: '#f8d7da', 
+                                    borderRadius: '8px',
+                                    border: '1px solid #f5c6cb',
+                                    color: '#721c24'
+                                }}>
+                                    <h5 style={{ marginBottom: '16px', color: '#dc3545', display: 'flex', alignItems: 'center' }}>
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
+                                            <path d="M12,2C17.53,2 22,6.47 22,12C22,17.53 17.53,22 12,22C6.47,22 2,17.53 2,12C2,6.47 6.47,2 12,2M15.59,7L12,10.59L8.41,7L7,8.41L10.59,12L7,15.59L8.41,17L12,13.41L15.59,17L17,15.59L13.41,12L17,8.41L15.59,7Z"/>
+                                        </svg>
+                                        Failed to Create Jira Tickets
+                                    </h5>
+                                    <p><strong>Error:</strong> {jiraError}</p>
+                                    <button 
+                                        className="btn btn-outline"
+                                        onClick={handleGenerateJiraTickets}
+                                        style={{ marginTop: '12px' }}
+                                    >
+                                        Try Again
+                                    </button>
+                                </div>
+                            )}
+
                         </div>
                     )}
                 </div>

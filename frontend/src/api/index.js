@@ -215,3 +215,24 @@ export const uploadToRelease = async (releaseId, file, version = null) => {
         throw error.response?.data || { error: 'Failed to upload to release' };
     }
 };
+
+
+// Function to generate Jira tickets from git diff summary
+export const generateJiraTickets = async (projectId) => {
+    try {
+        const response = await api.post(`/api/projects/${projectId}/generate-jira-tickets`);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to generate Jira tickets' };
+    }
+};
+
+// Function to test Jira connection
+export const testJiraConnection = async () => {
+    try {
+        const response = await api.get('/api/projects/jira/test-connection');
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to test Jira connection' };
+    }
+};

@@ -11,10 +11,12 @@ const ProjectManagement = ({ setActiveTab }) => {
     const navigate = useNavigate();
     console.log('ProjectManagement user:', user);
     const [projects, setProjects] = useState([]);
+    const [filteredProjects, setFilteredProjects] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [showCreateForm, setShowCreateForm] = useState(false);
     const [creating, setCreating] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
 
     const [newProject, setNewProject] = useState({
         name: '',
@@ -28,12 +30,28 @@ const ProjectManagement = ({ setActiveTab }) => {
         loadProjects();
     }, []);
 
+    // Filter projects based on search term
+    useEffect(() => {
+        if (searchTerm.trim() === '') {
+            setFilteredProjects(projects);
+        } else {
+            const filtered = projects.filter(project =>
+                project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (project.description && project.description.toLowerCase().includes(searchTerm.toLowerCase()))
+            );
+            setFilteredProjects(filtered);
+        }
+    }, [searchTerm, projects]);
+
     const loadProjects = async () => {
         try {
             setLoading(true);
             const data = await fetchProjects();
             console.log('ProjectManagement projects data:', data);
-            setProjects(data);
+            // Sort projects by creation date in descending order (newest first)
+            const sortedProjects = data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            setProjects(sortedProjects);
+            setFilteredProjects(sortedProjects);
         } catch (err) {
             setError(err.message || 'Failed to load projects');
         } finally {
@@ -192,22 +210,74 @@ const ProjectManagement = ({ setActiveTab }) => {
                 </div>
             )}
 
+            {/* Search Bar */}
+            <div className="card" style={{ marginBottom: '24px' }}>
+                <div className="card-body">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div style={{ flex: 1 }}>
+                            <input
+                                type="text"
+                                placeholder="Search projects by name or description..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    padding: '12px 16px',
+                                    border: '1px solid #ddd',
+                                    borderRadius: '8px',
+                                    fontSize: '16px',
+                                    outline: 'none',
+                                    transition: 'border-color 0.2s ease'
+                                }}
+                                onFocus={(e) => e.target.style.borderColor = '#007bff'}
+                                onBlur={(e) => e.target.style.borderColor = '#ddd'}
+                            />
+                        </div>
+                        {searchTerm && (
+                            <button
+                                onClick={() => setSearchTerm('')}
+                                style={{
+                                    padding: '8px 12px',
+                                    background: '#6c757d',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    fontSize: '14px'
+                                }}
+                            >
+                                Clear
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+
             {/* Projects List */}
             <div className="card">
                 <div className="card-header">
-                    <h3 className="card-title">All Projects ({projects.length})</h3>
+                    <h3 className="card-title">
+                        {searchTerm ? `Search Results (${filteredProjects.length})` : `All Projects (${projects.length})`}
+                    </h3>
                 </div>
                 <div className="card-body">
-                    {projects.length === 0 ? (
+                    {filteredProjects.length === 0 ? (
                         <div className="empty-state">
                             <div className="empty-state-icon">
                                 <svg width="80" height="80" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z"/>
                                 </svg>
                             </div>
-                            <h3>No Projects Found</h3>
-                            <p>Create your first project to get started.</p>
-                            {canCreateProject && (
+                            <h3>{searchTerm ? 'No Projects Found' : 'No Projects Found'}</h3>
+                            <p>{searchTerm ? 'Try adjusting your search terms.' : 'Create your first project to get started.'}</p>
+                            {searchTerm ? (
+                                <button 
+                                    className="btn btn-secondary"
+                                    onClick={() => setSearchTerm('')}
+                                >
+                                    Clear Search
+                                </button>
+                            ) : canCreateProject && (
                                 <button 
                                     className="btn btn-primary"
                                     onClick={() => setShowCreateForm(true)}
@@ -218,7 +288,7 @@ const ProjectManagement = ({ setActiveTab }) => {
                         </div>
                     ) : (
                         <div className="projects-grid">
-                            {projects.map((project) => (
+                            {filteredProjects.map((project) => (
                                 <div key={project.id} className="project-card">
                                     <h4 className="project-title">{project.name}</h4>
                                     <p className="project-description">

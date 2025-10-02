@@ -2,6 +2,7 @@ import express from "express";
 import { PrismaClient } from "@prisma/client";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import { generateProjectHeader } from "../utils/headerUtils.js";
+import { createJiraTicketsFromSummary, testJiraConnection, getJiraProjectInfo } from "../utils/jiraIntegration.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs-extra";
@@ -1355,6 +1356,7 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
   }
 });
 
+
 // API endpoint to get project info for header display
 router.get("/:id/info", async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
@@ -1391,5 +1393,136 @@ router.get("/:id/info", async (req, res) => {
   }
 });
 
+// API endpoint to generate Jira tickets from git diff summary
+router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  console.log('Project ID:', projectId);
+  const { id: userId, role } = req.user;
+  console.log('User ID:', userId);
+  console.log('Role:', role);
+
+  try {
+    // Check access
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    let hasAccess = false;
+    if (role === "admin") hasAccess = true;
+    else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
+    if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
+
+    // Get project folder path
+    const projectFolder = path.join(process.cwd(), "projects", String(projectId));
+    
+    if (!fs.existsSync(projectFolder)) {
+      return res.status(404).json({ error: "Project folder not found" });
+    }
+
+    const gitDir = path.join(projectFolder, ".git");
+    if (!fs.existsSync(gitDir)) {
+      return res.status(400).json({ error: "Not a git repository" });
+    }
+
+    // Get git diff data
+    const logOutput = runCommand(
+      "git log -2 --pretty=format:%H",
+      projectFolder
+    );
+    const commits = logOutput.trim().split("\n");
+
+    if (commits.length < 2) {
+      return res.status(400).json({ error: "Not enough commits to generate a diff" });
+    }
+
+    const [latestCommit, previousCommit] = commits;
+    
+    // Get git diff
+    const gitDiff = runCommand(
+      `git diff ${previousCommit} ${latestCommit}`,
+      projectFolder
+    );
+
+    // Get commit info
+    const authorOutput = runCommand(
+      `git log -1 --pretty=format:"%an <%ae>" ${latestCommit}`,
+      projectFolder
+    );
+
+    // Generate summary using existing webhook
+    const webhookResponse = await fetch(
+      "https://workflow.yorkdevs.link/webhook/generatesummary",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ diff: gitDiff }),
+      }
+    );
+
+    if (!webhookResponse.ok) {
+      const errorText = await webhookResponse.text();
+      throw new Error(`Summary generation failed: ${errorText}`);
+    }
+
+    const summary = await webhookResponse.json();
+
+    // Create Jira tickets from summary
+    const projectInfo = {
+      id: projectId,
+      name: project.name,
+      version: "1.0.0", // You might want to get this from project versions
+      commitHash: latestCommit,
+      author: authorOutput.trim(),
+      repository: `https://github.com/${GITHUB_USERNAME}/${project.name}`
+    };
+
+    const jiraResult = await createJiraTicketsFromSummary(summary, projectInfo);
+
+    res.json({
+      success: jiraResult.success,
+      message: jiraResult.success 
+        ? `Successfully created ${jiraResult.successfulTickets} Jira tickets`
+        : jiraResult.error || "Failed to create Jira tickets",
+      projectId,
+      projectName: project.name,
+      totalTickets: jiraResult.totalTickets,
+      successfulTickets: jiraResult.successfulTickets,
+      failedTickets: jiraResult.failedTickets,
+      tickets: jiraResult.summary,
+      error: jiraResult.error
+    });
+
+  } catch (err) {
+    console.error("Jira ticket generation error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API endpoint to test Jira connection
+router.get("/jira/test-connection", authenticateToken, async (req, res) => {
+  const { role } = req.user;
+
+  if (role !== "admin") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const connectionResult = await testJiraConnection();
+    const projectResult = await getJiraProjectInfo();
+
+    res.json({
+      connection: connectionResult,
+      project: projectResult,
+      config: {
+        baseUrl: process.env.JIRA_BASE_URL ? 'Set' : 'Not set',
+        username: process.env.JIRA_USERNAME ? 'Set' : 'Not set',
+        apiToken: process.env.JIRA_API_TOKEN ? 'Set' : 'Not set',
+        projectKey: process.env.JIRA_PROJECT_KEY ? 'Set' : 'Not set'
+      }
+    });
+  } catch (err) {
+    console.error("Jira connection test error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 export default router;
