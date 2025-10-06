@@ -251,8 +251,8 @@ function generateHeader(type = 'project') {
     function getApiBaseUrl() {
       const currentUrl = window.location.href;
       console.log('🔍 Determining API base URL from:', currentUrl);
-      if (currentUrl.includes('localhost')) {
-        return 'http://localhost:${process.env.PORT || 5000}';
+      if (currentUrl.includes('localhost') || currentUrl.includes('13.203.192.57')) {
+        return 'http://13.203.192.57:5000';
       } else {
         const urlObj = new URL(currentUrl);
         return \`\${urlObj.protocol}//\${urlObj.hostname}:5000\`;

@@ -60,7 +60,7 @@ function runCommand(command, cwd, options = {}) {
         cwd,
         encoding: "utf-8",
         env: process.env,
-        timeout: 30000, // 30 second default timeout
+        timeout: 300000, // 5 min default timeout
         maxBuffer: 10 * 1024 * 1024 // 10MB max buffer to prevent memory issues
     };
     
@@ -748,7 +748,7 @@ window.markerConfig = {
                     path.join(process.cwd(), "projects"),
                     path.join(actualProjectPath, outputDir)
                 );
-                const buildUrl = `http://localhost:5000/apps/${relativeBuildPath}?releaseId=${releaseId}`;
+                const buildUrl = `http://13.203.192.57:5000/apps/${relativeBuildPath}?releaseId=${releaseId}`;
 
                 // Deactivate all existing versions for this project
                 await prisma.projectVersion.updateMany({

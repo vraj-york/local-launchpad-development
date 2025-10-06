@@ -1139,7 +1139,7 @@ window.markerConfig = {
           path.join(process.cwd(), "projects"),
           path.join(actualProjectPath, outputDir)
         );
-        const buildUrl = `http://localhost:5000/apps/${relativeBuildPath}`;
+        const buildUrl = `http://13.203.192.57:5000/apps/${relativeBuildPath}`;
 
         // Deactivate all existing versions for this project
         await prisma.projectVersion.updateMany({
