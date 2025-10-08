@@ -10,5 +10,5 @@ app.use((req, res, next) => {
 
 console.log("Starting server...")
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://13.203.192.57:${PORT}`);
+  console.log(`🚀 Server running on http://43.205.121.85:${PORT}`);
 });

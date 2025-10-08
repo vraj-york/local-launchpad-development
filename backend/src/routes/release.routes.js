@@ -748,7 +748,7 @@ window.markerConfig = {
                     path.join(process.cwd(), "projects"),
                     path.join(actualProjectPath, outputDir)
                 );
-                const buildUrl = `http://13.203.192.57:5000/apps/${relativeBuildPath}?releaseId=${releaseId}`;
+                const buildUrl = `http://43.205.121.85:5000/apps/${relativeBuildPath}?releaseId=${releaseId}`;
 
                 // Deactivate all existing versions for this project
                 await prisma.projectVersion.updateMany({
