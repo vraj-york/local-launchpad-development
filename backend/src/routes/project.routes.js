@@ -1050,7 +1050,39 @@ window.markerConfig = {
         try {
           runCommand("npm run build", actualProjectPath);
         } catch (error) {
-          throw new Error(`Build failed: ${error.message}`);
+          console.log("⚠️ Build failed, trying alternative approach...");
+          // Try building with Vite directly as fallback
+          try {
+            runCommand("npx vite build", actualProjectPath);
+          } catch (viteError) {
+            console.log("⚠️ Vite build also failed, trying Babel-based build...");
+            // Create a compatible vite config that uses Babel instead of SWC
+            try {
+              const compatibleViteConfig = `
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    outDir: 'dist',
+    sourcemap: false
+  }
+})
+`;
+              const viteConfigPath = path.join(actualProjectPath, 'vite.config.js');
+              fs.writeFileSync(viteConfigPath, compatibleViteConfig);
+              
+              // Install Babel-based React plugin
+              const buildEnv = { ...process.env, NODE_ENV: 'development' };
+              runCommand("npm install @vitejs/plugin-react --save-dev", actualProjectPath, { env: buildEnv });
+              
+              // Try build with new config
+              runCommand("npx vite build", actualProjectPath);
+            } catch (babelError) {
+              throw new Error(`All build methods failed. Original: ${error.message}. Vite: ${viteError.message}. Babel: ${babelError.message}`);
+            }
+          }
         }
 
         // Ensure .gitignore exists
