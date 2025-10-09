@@ -1047,18 +1047,9 @@ window.markerConfig = {
           throw new Error(`Dependency installation failed: ${error.message}`);
         }
 
-        try {
-          runCommand("npm run build", actualProjectPath);
-        } catch (error) {
-          console.log("⚠️ Build failed, trying alternative approach...");
-          // Try building with Vite directly as fallback
-          try {
-            runCommand("npx vite build", actualProjectPath);
-          } catch (viteError) {
-            console.log("⚠️ Vite build also failed, trying Babel-based build...");
-            // Create a compatible vite config that uses Babel instead of SWC
-            try {
-              const compatibleViteConfig = `
+        // Pre-emptively replace vite config to avoid SWC issues
+        console.log("🔧 Creating Babel-based Vite config to avoid SWC issues...");
+        const compatibleViteConfig = `
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -1070,18 +1061,22 @@ export default defineConfig({
   }
 })
 `;
-              const viteConfigPath = path.join(actualProjectPath, 'vite.config.js');
-              fs.writeFileSync(viteConfigPath, compatibleViteConfig);
-              
-              // Install Babel-based React plugin
-              const babelEnv = { ...process.env, NODE_ENV: 'development' };
-              runCommand("npm install @vitejs/plugin-react --save-dev", actualProjectPath, { env: babelEnv });
-              
-              // Try build with new config
-              runCommand("npx vite build", actualProjectPath);
-            } catch (babelError) {
-              throw new Error(`All build methods failed. Original: ${error.message}. Vite: ${viteError.message}. Babel: ${babelError.message}`);
-            }
+        const viteConfigPath = path.join(actualProjectPath, 'vite.config.js');
+        fs.writeFileSync(viteConfigPath, compatibleViteConfig);
+        
+        // Install Babel-based React plugin
+        const babelEnv = { ...process.env, NODE_ENV: 'development' };
+        runCommand("npm install @vitejs/plugin-react --save-dev", actualProjectPath, { env: babelEnv });
+
+        try {
+          console.log("🔨 Building project with Babel-based config...");
+          runCommand("npx vite build", actualProjectPath);
+        } catch (error) {
+          console.log("⚠️ Babel build failed, trying original build...");
+          try {
+            runCommand("npm run build", actualProjectPath);
+          } catch (originalError) {
+            throw new Error(`All build methods failed. Babel: ${error.message}. Original: ${originalError.message}`);
           }
         }
 
