@@ -34,7 +34,7 @@ pm2 stop $SERVICE_NAME 2>/dev/null || true
 
 # Start with PM2
 echo "▶️ Starting application..."
-pm2 start ecosystem.config.js --env production
+pm2 start ecosystem.config.cjs --env production
 
 # Save PM2 configuration
 pm2 save
