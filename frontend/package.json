@@ -6,7 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "serve": "vite preview"
+    "serve": "vite preview",
+    "start": "pm2 start ecosystem.config.cjs --env production",
+    "start:dev": "pm2 start ecosystem.config.cjs --env development",
+    "stop": "pm2 stop zip-sync-frontend",
+    "restart": "pm2 restart zip-sync-frontend",
+    "reload": "pm2 reload zip-sync-frontend",
+    "delete": "pm2 delete zip-sync-frontend",
+    "logs": "pm2 logs zip-sync-frontend",
+    "monit": "pm2 monit",
+    "status": "pm2 status"
   },
   "dependencies": {
     "axios": "^1.6.0",
