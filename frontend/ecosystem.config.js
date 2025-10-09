@@ -3,7 +3,7 @@ export default {
     {
       name: 'zip-sync-frontend',
       script: 'npm',
-      args: 'run serve',
+      args: 'run dev -- --host 0.0.0.0 --port 5173',
       cwd: process.cwd(),
       instances: 1,
       exec_mode: 'fork',

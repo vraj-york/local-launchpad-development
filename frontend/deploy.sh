@@ -20,15 +20,6 @@ echo "📥 Pulling latest changes..."
 echo "📦 Installing dependencies..."
 npm install
 
-# Build the application
-echo "🔨 Building the application..."
-npm run build
-
-if [ $? -ne 0 ]; then
-    echo "❌ Build failed. Please check the build errors above."
-    exit 1
-fi
-
 # Stop existing PM2 process
 echo "🛑 Stopping existing process..."
 pm2 stop $SERVICE_NAME 2>/dev/null || true
