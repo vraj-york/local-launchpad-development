@@ -3,12 +3,16 @@ module.exports = {
     {
       name: 'zip-sync-backend',
       script: 'src/server.js',
-      cwd: '/home/ubuntu/zip-sync/backend',
+      cwd: process.cwd(),
       instances: 1,
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
-        PORT: 5000
+        PORT: 5000,
+        NODE_PATH: '/home/ubuntu/zip-sync/backend/node_modules',
+        PATH: process.env.PATH + ':/home/ubuntu/zip-sync/backend/node_modules/.bin',
+        HOME: process.env.HOME,
+        USER: process.env.USER
       },
       env_development: {
         NODE_ENV: 'development',

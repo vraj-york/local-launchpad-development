@@ -59,7 +59,11 @@ function runCommand(command, cwd, options = {}) {
     const defaultOptions = {
         cwd,
         encoding: "utf-8",
-        env: process.env,
+        env: {
+            ...process.env,
+            NODE_PATH: '/home/ubuntu/zip-sync/backend/node_modules',
+            PATH: process.env.PATH + ':/home/ubuntu/zip-sync/backend/node_modules/.bin'
+        },
         timeout: 300000, // 5 min default timeout
         maxBuffer: 10 * 1024 * 1024 // 10MB max buffer to prevent memory issues
     };
