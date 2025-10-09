@@ -651,7 +651,7 @@ window.markerConfig = {
                 // Build React app
                 try {
                     console.log("📦 Installing all dependencies (including dev dependencies)...");
-                    // Temporarily set NODE_ENV to development to ensure dev dependencies are installed
+                    // Use development environment for builds (PM2 sets NODE_ENV=production)
                     const buildEnv = { ...process.env, NODE_ENV: 'development' };
                     runCommand("npm install --omit=optional", actualProjectPath, { env: buildEnv });
                     

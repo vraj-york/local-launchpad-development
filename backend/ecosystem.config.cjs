@@ -12,7 +12,9 @@ module.exports = {
         NODE_PATH: '/home/ubuntu/zip-sync/backend/node_modules',
         PATH: process.env.PATH + ':/home/ubuntu/zip-sync/backend/node_modules/.bin',
         HOME: process.env.HOME,
-        USER: process.env.USER
+        USER: process.env.USER,
+        // Override for build processes
+        BUILD_NODE_ENV: 'development'
       },
       env_development: {
         NODE_ENV: 'development',
