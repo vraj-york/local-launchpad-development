@@ -1036,11 +1036,10 @@ window.markerConfig = {
 
         // Build React app
         try {
-          console.log("📦 Installing production dependencies...");
-          runCommand("npm install --production", actualProjectPath);
-          
-          console.log("📦 Installing dev dependencies for build...");
-          runCommand("npm install --only=dev", actualProjectPath);
+          console.log("📦 Installing all dependencies (including dev dependencies)...");
+          // Temporarily set NODE_ENV to development to ensure dev dependencies are installed
+          const buildEnv = { ...process.env, NODE_ENV: 'development' };
+          runCommand("npm install --omit=optional", actualProjectPath, { env: buildEnv });
         } catch (error) {
           throw new Error(`Dependency installation failed: ${error.message}`);
         }
