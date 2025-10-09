@@ -650,62 +650,17 @@ window.markerConfig = {
 
                 // Build React app
                 try {
-                    console.log("📦 Installing all dependencies (including dev dependencies)...");
-                    // Use development environment for builds (PM2 sets NODE_ENV=production)
-                    const buildEnv = { ...process.env, NODE_ENV: 'development' };
-                    runCommand("npm install --omit=optional", actualProjectPath, { env: buildEnv });
-                    
-                    console.log("🔧 Rebuilding native bindings...");
-                    runCommand("npm rebuild", actualProjectPath, { env: buildEnv });
+                    console.log("📦 Installing project dependencies...");
+                    runCommand("npm install", actualProjectPath);
                 } catch (error) {
                     throw new Error(`Dependency installation failed: ${error.message}`);
                 }
 
-                // Pre-emptively replace vite config to avoid SWC issues
-                console.log("🔧 Creating Babel-based Vite config to avoid SWC issues...");
-                const compatibleViteConfig = `
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  build: {
-    outDir: 'dist',
-    sourcemap: false,
-    rollupOptions: {
-      external: [],
-      output: {
-        manualChunks: undefined
-      }
-    }
-  },
-  resolve: {
-    alias: {
-      '@': '/src'
-    }
-  },
-  optimizeDeps: {
-    include: ['sonner', 'next-themes']
-  }
-})
-`;
-                const viteConfigPath = path.join(actualProjectPath, 'vite.config.js');
-                fs.writeFileSync(viteConfigPath, compatibleViteConfig);
-                
-                // Install Babel-based React plugin
-                const babelEnv = { ...process.env, NODE_ENV: 'development' };
-                runCommand("npm install @vitejs/plugin-react --save-dev", actualProjectPath, { env: babelEnv });
-
                 try {
-                    console.log("🔨 Building project with Babel-based config...");
-                    runCommand("npx vite build", actualProjectPath);
+                    console.log("🔨 Building project...");
+                    runCommand("npm run build", actualProjectPath);
                 } catch (error) {
-                    console.log("⚠️ Babel build failed, trying original build...");
-                    try {
-                        runCommand("npm run build", actualProjectPath);
-                    } catch (originalError) {
-                        throw new Error(`All build methods failed. Babel: ${error.message}. Original: ${originalError.message}`);
-                    }
+                    throw new Error(`Build failed: ${error.message}`);
                 }
 
                 // Ensure .gitignore exists

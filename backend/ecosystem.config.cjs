@@ -7,14 +7,12 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       env: {
-        NODE_ENV: 'production',
+        NODE_ENV: 'development',
         PORT: 5000,
         NODE_PATH: '/home/ubuntu/zip-sync/backend/node_modules',
         PATH: process.env.PATH + ':/home/ubuntu/zip-sync/backend/node_modules/.bin',
         HOME: process.env.HOME,
-        USER: process.env.USER,
-        // Override for build processes
-        BUILD_NODE_ENV: 'development'
+        USER: process.env.USER
       },
       env_development: {
         NODE_ENV: 'development',
