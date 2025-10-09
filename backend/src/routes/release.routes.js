@@ -689,7 +689,8 @@ export default defineConfig({
                             fs.writeFileSync(viteConfigPath, compatibleViteConfig);
                             
                             // Install Babel-based React plugin
-                            runCommand("npm install @vitejs/plugin-react --save-dev", actualProjectPath, { env: buildEnv });
+                            const babelEnv = { ...process.env, NODE_ENV: 'development' };
+                            runCommand("npm install @vitejs/plugin-react --save-dev", actualProjectPath, { env: babelEnv });
                             
                             // Try build with new config
                             runCommand("npx vite build", actualProjectPath);
