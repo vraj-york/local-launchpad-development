@@ -1,0 +1,18 @@
+[Unit]
+Description=Zip-Sync Backend Service
+Documentation=https://pm2.keymetrics.io/
+After=network.target
+
+[Service]
+Type=forking
+User=ubuntu
+WorkingDirectory=/home/ubuntu/zip-sync/backend
+Environment=PATH=/usr/bin:/usr/local/bin
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/pm2 start ecosystem.config.js --env production
+ExecReload=/usr/bin/pm2 reload zip-sync-backend
+ExecStop=/usr/bin/pm2 stop zip-sync-backend
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
