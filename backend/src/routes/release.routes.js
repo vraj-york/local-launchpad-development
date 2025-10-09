@@ -61,8 +61,8 @@ function runCommand(command, cwd, options = {}) {
         encoding: "utf-8",
         env: {
             ...process.env,
-            NODE_PATH: '/home/ubuntu/zip-sync/backend/node_modules',
-            PATH: process.env.PATH + ':/home/ubuntu/zip-sync/backend/node_modules/.bin'
+            NODE_PATH: cwd + '/node_modules',
+            PATH: process.env.PATH + ':' + cwd + '/node_modules/.bin'
         },
         timeout: 300000, // 5 min default timeout
         maxBuffer: 10 * 1024 * 1024 // 10MB max buffer to prevent memory issues
@@ -650,12 +650,17 @@ window.markerConfig = {
 
                 // Build React app
                 try {
-                    runCommand("npm install", actualProjectPath);
+                    console.log("📦 Installing production dependencies...");
+                    runCommand("npm install --production", actualProjectPath);
+                    
+                    console.log("📦 Installing dev dependencies for build...");
+                    runCommand("npm install --only=dev", actualProjectPath);
                 } catch (error) {
                     throw new Error(`Dependency installation failed: ${error.message}`);
                 }
 
                 try {
+                    console.log("🔨 Building project...");
                     runCommand("npm run build", actualProjectPath);
                 } catch (error) {
                     throw new Error(`Build failed: ${error.message}`);
