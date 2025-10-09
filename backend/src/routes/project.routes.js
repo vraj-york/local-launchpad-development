@@ -1057,7 +1057,21 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: 'dist',
-    sourcemap: false
+    sourcemap: false,
+    rollupOptions: {
+      external: [],
+      output: {
+        manualChunks: undefined
+      }
+    }
+  },
+  resolve: {
+    alias: {
+      '@': '/src'
+    }
+  },
+  optimizeDeps: {
+    include: ['sonner', 'next-themes']
   }
 })
 `;
