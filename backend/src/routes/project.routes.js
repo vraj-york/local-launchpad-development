@@ -1040,6 +1040,9 @@ window.markerConfig = {
           // Temporarily set NODE_ENV to development to ensure dev dependencies are installed
           const buildEnv = { ...process.env, NODE_ENV: 'development' };
           runCommand("npm install --omit=optional", actualProjectPath, { env: buildEnv });
+          
+          console.log("🔧 Rebuilding native bindings...");
+          runCommand("npm rebuild", actualProjectPath, { env: buildEnv });
         } catch (error) {
           throw new Error(`Dependency installation failed: ${error.message}`);
         }

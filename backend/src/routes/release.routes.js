@@ -654,6 +654,9 @@ window.markerConfig = {
                     // Temporarily set NODE_ENV to development to ensure dev dependencies are installed
                     const buildEnv = { ...process.env, NODE_ENV: 'development' };
                     runCommand("npm install --omit=optional", actualProjectPath, { env: buildEnv });
+                    
+                    console.log("🔧 Rebuilding native bindings...");
+                    runCommand("npm rebuild", actualProjectPath, { env: buildEnv });
                 } catch (error) {
                     throw new Error(`Dependency installation failed: ${error.message}`);
                 }
@@ -662,7 +665,13 @@ window.markerConfig = {
                     console.log("🔨 Building project...");
                     runCommand("npm run build", actualProjectPath);
                 } catch (error) {
-                    throw new Error(`Build failed: ${error.message}`);
+                    console.log("⚠️ Build failed, trying alternative approach...");
+                    // Try building with Vite directly as fallback
+                    try {
+                        runCommand("npx vite build", actualProjectPath);
+                    } catch (viteError) {
+                        throw new Error(`Build failed: ${error.message}. Vite fallback also failed: ${viteError.message}`);
+                    }
                 }
 
                 // Ensure .gitignore exists
