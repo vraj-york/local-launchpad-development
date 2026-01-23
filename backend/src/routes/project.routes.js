@@ -11,6 +11,7 @@ import { exec, execSync } from "child_process";
 import crypto from "crypto";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
+import config from "../config/index.js";
 
 dotenv.config();
 
@@ -31,27 +32,27 @@ const MAX_CALLS_PER_WINDOW = 10;
 
 // Helper functions
 function validateProjectName(name) {
-    if (!name || typeof name !== 'string') {
-        throw new Error('Invalid project name: must be a non-empty string');
-    }
-    if (!/^[a-zA-Z0-9-_]+$/.test(name)) {
-        throw new Error('Project name contains invalid characters. Only alphanumeric, hyphens, and underscores allowed.');
-    }
-    if (name.length > 100) {
-        throw new Error('Project name too long. Maximum 100 characters allowed.');
-    }
-    if (name.length < 1) {
-        throw new Error('Project name too short. Minimum 1 character required.');
-    }
-    return name;
+  if (!name || typeof name !== 'string') {
+    throw new Error('Invalid project name: must be a non-empty string');
+  }
+  if (!/^[a-zA-Z0-9-_]+$/.test(name)) {
+    throw new Error('Project name contains invalid characters. Only alphanumeric, hyphens, and underscores allowed.');
+  }
+  if (name.length > 100) {
+    throw new Error('Project name too long. Maximum 100 characters allowed.');
+  }
+  if (name.length < 1) {
+    throw new Error('Project name too short. Minimum 1 character required.');
+  }
+  return name;
 }
 
 function sanitizeCommand(command) {
-    const dangerousChars = /[;&|`$(){}[\]\\]/g;
-    if (dangerousChars.test(command)) {
-        throw new Error('Command contains potentially dangerous characters');
-    }
-    return command;
+  const dangerousChars = /[;&|`$(){}[\]\\]/g;
+  if (dangerousChars.test(command)) {
+    throw new Error('Command contains potentially dangerous characters');
+  }
+  return command;
 }
 
 /**
@@ -61,24 +62,24 @@ function sanitizeCommand(command) {
 function parseGitDiffLine(line) {
   const trimmed = line.trim();
   if (!trimmed) return null;
-  
+
   const tabIndex = trimmed.indexOf('\t');
   if (tabIndex === -1) {
     // Malformed line without tab - try to parse anyway
     return parseMalformedGitLine(trimmed);
   }
-  
+
   const statusPart = trimmed.substring(0, tabIndex);
   const pathPart = trimmed.substring(tabIndex + 1);
-  
+
   // Extract status character and similarity score for renames/copies
   const statusMatch = statusPart.match(/^([ACDMRTUX])(\d*)$/);
   if (!statusMatch) {
     return parseMalformedGitLine(trimmed);
   }
-  
+
   const [, statusChar, similarity] = statusMatch;
-  
+
   // Handle rename/copy format: "old_path\tnew_path"
   if (statusChar === 'R' || statusChar === 'C') {
     const pathParts = pathPart.split('\t');
@@ -92,7 +93,7 @@ function parseGitDiffLine(line) {
       };
     }
   }
-  
+
   return {
     status: statusChar,
     similarity: null,
@@ -107,7 +108,7 @@ function parseGitDiffLine(line) {
  */
 function parseMalformedGitLine(line) {
   const parts = line.trim().split(/\s+/);
-  
+
   if (parts.length < 2) {
     return {
       status: 'M',
@@ -117,16 +118,16 @@ function parseMalformedGitLine(line) {
       filename: parts[0] || ''
     };
   }
-  
+
   // Try to extract status from first part
   const statusChar = parts[0].charAt(0);
   const validStatuses = ['A', 'C', 'D', 'M', 'R', 'T', 'U', 'X'];
-  
+
   if (validStatuses.includes(statusChar)) {
     const pathParts = parts.slice(1);
     return generatePathCandidatesFromParts(statusChar, pathParts);
   }
-  
+
   // No valid status found - treat as modified file with complex path
   return generatePathCandidatesFromParts('M', parts);
 }
@@ -137,14 +138,14 @@ function parseMalformedGitLine(line) {
 function generatePathCandidatesFromParts(status, parts) {
   const candidates = [];
   const pathRegex = /^[^\/]*\/.*\.[a-zA-Z0-9]+$/;
-  
+
   // Strategy 1: Find individual complete file paths
   for (let i = 0; i < parts.length; i++) {
     if (pathRegex.test(parts[i])) {
       candidates.push(parts[i]);
     }
   }
-  
+
   // Strategy 2: Reconstruct multi-word directory paths
   for (let i = 0; i < parts.length; i++) {
     for (let j = i + 1; j < parts.length; j++) {
@@ -154,14 +155,14 @@ function generatePathCandidatesFromParts(status, parts) {
       }
     }
   }
-  
+
   // Strategy 3: Just use the last part as fallback
   if (candidates.length === 0 && parts.length > 0) {
     candidates.push(parts[parts.length - 1]);
   }
-  
+
   const primaryPath = candidates[0] || parts[parts.length - 1] || '';
-  
+
   return {
     status,
     similarity: null,
@@ -180,19 +181,19 @@ const MAX_CANONICAL_PATHS = 5000; // Limit to prevent memory issues
 
 function getCanonicalPaths(commit, cwd) {
   const cacheKey = `${commit}:${cwd}`;
-  
+
   // Check cache first
   if (canonicalPathsCache.has(cacheKey)) {
     return canonicalPathsCache.get(cacheKey);
   }
-  
+
   try {
     const output = execSync(`git ls-tree -r --name-only ${commit}`, {
       cwd,
       encoding: 'utf-8',
       timeout: 10000 // 10 second timeout
     });
-    
+
     const paths = output
       .trim()
       .split('\n')
@@ -209,13 +210,13 @@ function getCanonicalPaths(commit, cwd) {
         }
         return line;
       });
-    
+
     // Cache result (with TTL via size limit)
     if (canonicalPathsCache.size > 10) {
       canonicalPathsCache.clear(); // Simple cache eviction
     }
     canonicalPathsCache.set(cacheKey, paths);
-    
+
     return paths;
   } catch (error) {
     console.warn(`Could not get canonical paths for commit ${commit}:`, error.message);
@@ -229,46 +230,46 @@ function getCanonicalPaths(commit, cwd) {
 function getPathCandidates(rawPath, commit = null, cwd = null) {
   const parsed = parseGitDiffLine(rawPath);
   if (!parsed) return [];
-  
+
   const candidates = [];
-  
+
   // Add primary paths
   if (parsed.newPath) candidates.push(parsed.newPath);
   if (parsed.oldPath) candidates.push(parsed.oldPath);
-  
+
   // Add any additional candidates from malformed parsing
   if (parsed.candidates) {
     candidates.push(...parsed.candidates);
   }
-  
+
   // PERFORMANCE FIX: Only do fuzzy matching for malformed inputs
   // and limit the search to prevent infinite loops
   if (commit && cwd && candidates.length === 0) {
-    
+
     try {
       const canonicalPaths = getCanonicalPaths(commit, cwd);
-      
+
       // Limit fuzzy matching to prevent performance issues
       const maxFuzzyAttempts = 100;
       let fuzzyAttempts = 0;
-      
+
       for (const candidate of candidates.slice(0, 3)) { // Only check first 3 candidates
         if (fuzzyAttempts >= maxFuzzyAttempts) break;
-        
+
         const fuzzyMatches = canonicalPaths
           .slice(0, 1000) // Limit canonical paths to search
           .filter(canonical => {
             fuzzyAttempts++;
             return canonical.includes(candidate) || candidate.includes(canonical);
           });
-        
+
         candidates.push(...fuzzyMatches.slice(0, 5)); // Limit matches per candidate
       }
     } catch (error) {
       console.warn(`Fuzzy matching failed for "${rawPath}":`, error.message);
     }
   }
-  
+
   // Remove duplicates while preserving order and limit total candidates
   return [...new Set(candidates.filter(Boolean))].slice(0, 10);
 }
@@ -279,7 +280,7 @@ function getPathCandidates(rawPath, commit = null, cwd = null) {
  */
 function safeQuotePath(filePath) {
   if (!filePath) return '""';
-  
+
   // Escape internal quotes and wrap in quotes
   const escaped = filePath.replace(/"/g, '\\"');
   return `"${escaped}"`;
@@ -292,9 +293,9 @@ function safeQuotePath(filePath) {
 function pathExistsInCommit(commit, filePath, cwd) {
   try {
     const quotedPath = safeQuotePath(filePath);
-    execSync(`git cat-file -e ${commit}:${quotedPath}`, { 
-      cwd, 
-      stdio: "ignore" 
+    execSync(`git cat-file -e ${commit}:${quotedPath}`, {
+      cwd,
+      stdio: "ignore"
     });
     return true;
   } catch {
@@ -308,14 +309,14 @@ function pathExistsInCommit(commit, filePath, cwd) {
  */
 function findValidPath(commit, rawPath, cwd) {
   const candidates = getPathCandidates(rawPath, commit, cwd);
-  
+
   // Try each candidate in order of preference
   for (const candidate of candidates) {
     if (pathExistsInCommit(commit, candidate, cwd)) {
       return candidate;
     }
   }
-  
+
   // If no valid path found, log warning and use first candidate
   if (candidates.length > 0) {
     console.warn(`⚠️ No valid path found for "${rawPath}", using first candidate: "${candidates[0]}"`);
@@ -345,7 +346,7 @@ function normalizeGitFilePath(rawPath) {
 
 function runCommand(command, cwd, options = {}) {
   const sanitizedCommand = sanitizeCommand(command);
-  
+
   const defaultOptions = {
     cwd,
     encoding: "utf-8",
@@ -357,23 +358,23 @@ function runCommand(command, cwd, options = {}) {
     timeout: 30000, // 30 second default timeout
     maxBuffer: 10 * 1024 * 1024 // 10MB max buffer to prevent memory issues
   };
-  
+
   const finalOptions = { ...defaultOptions, ...options };
-  
+
   try {
     return execSync(sanitizedCommand, finalOptions);
-    } catch (error) {
+  } catch (error) {
     console.error(`Command failed: ${sanitizedCommand} - ${error.message}`);
-    
+
     // Provide more specific error messages
     if (error.code === 'TIMEOUT') {
       throw new Error(`Command timed out after ${finalOptions.timeout}ms: ${sanitizedCommand}`);
     } else if (error.message.includes('maxBuffer')) {
       throw new Error(`Command output too large (>10MB): ${sanitizedCommand}`);
     }
-    
-        throw error;
-    }
+
+    throw error;
+  }
 }
 
 // Utility function to split diff into chunks based on file boundaries
@@ -393,9 +394,9 @@ function splitDiffIntoChunks(diff, maxChunkSize = 150000) { // 150KB per chunk (
     const lineSize = line.length + 1; // +1 for newline
 
     // Detect file boundaries (lines starting with "diff --git" or "+++" or "---")
-    const isFileBoundary = line.startsWith('diff --git') || 
-                          line.startsWith('+++') || 
-                          line.startsWith('---');
+    const isFileBoundary = line.startsWith('diff --git') ||
+      line.startsWith('+++') ||
+      line.startsWith('---');
 
     // If this is a file boundary and we have content, consider splitting
     if (isFileBoundary && currentChunk.length > 0 && currentSize > maxChunkSize * 0.7) {
@@ -487,20 +488,20 @@ class Semaphore {
 // Function to call webhook with a single chunk (with retry logic)
 async function callWebhookWithChunk(chunk, chunkIndex, totalChunks, maxRetries = 3) {
   let lastError;
-  
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`Attempting webhook call for chunk ${chunkIndex + 1} (attempt ${attempt}/${maxRetries})`);
-      
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
-      
+
       const webhookResponse = await fetch(
         "https://workflow.yorkdevs.link/webhook/generatesummary",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
+          body: JSON.stringify({
             diff: chunk,
             chunkIndex,
             totalChunks,
@@ -521,7 +522,7 @@ async function callWebhookWithChunk(chunk, chunkIndex, totalChunks, maxRetries =
     } catch (error) {
       lastError = error;
       console.error(`Webhook attempt ${attempt} failed for chunk ${chunkIndex + 1}:`, error.message);
-      
+
       if (attempt < maxRetries) {
         // Exponential backoff: wait 2^attempt seconds
         const delay = Math.pow(2, attempt) * 1000;
@@ -530,7 +531,7 @@ async function callWebhookWithChunk(chunk, chunkIndex, totalChunks, maxRetries =
       }
     }
   }
-  
+
   throw new Error(`All ${maxRetries} attempts failed for chunk ${chunkIndex + 1}. Last error: ${lastError.message}`);
 }
 
@@ -538,11 +539,11 @@ async function callWebhookWithChunk(chunk, chunkIndex, totalChunks, maxRetries =
 async function processChunksInParallel(chunks, maxConcurrent = 5) {
   const semaphore = new Semaphore(maxConcurrent);
   const results = new Array(chunks.length); // Pre-allocate array for better performance
-  
+
   const processChunk = async (chunk, index) => {
     await semaphore.acquire();
     const chunkStartTime = Date.now();
-    
+
     try {
       console.log(`🚀 Starting chunk ${index + 1}/${chunks.length} (${chunk.length} bytes)`);
       const response = await callWebhookWithChunk(chunk, index, chunks.length);
@@ -552,12 +553,12 @@ async function processChunksInParallel(chunks, maxConcurrent = 5) {
     } catch (error) {
       const chunkTime = (Date.now() - chunkStartTime) / 1000;
       console.error(`❌ Chunk ${index + 1} failed after ${chunkTime.toFixed(2)}s:`, error.message);
-      results[index] = { 
-        success: false, 
+      results[index] = {
+        success: false,
         error: error.message,
-        data: { 
+        data: {
           summary: `Chunk ${index + 1} processing failed: ${error.message}`,
-          error: true 
+          error: true
         }
       };
     } finally {
@@ -607,7 +608,7 @@ function aggregateWebhookResponses(parallelResults) {
       return 'No summary available for this chunk';
     }
   });
-  
+
   const failedSummaries = failedResponses.map(r => {
     if (typeof r.data === 'string') {
       return r.data;
@@ -619,7 +620,7 @@ function aggregateWebhookResponses(parallelResults) {
   });
 
   let combinedSummary = successfulSummaries.join('\n\n--- Chunk Summary ---\n\n');
-  
+
   // Add failed chunks information if any
   if (failedSummaries.length > 0) {
     combinedSummary += '\n\n--- Failed Chunks ---\n\n' + failedSummaries.join('\n\n');
@@ -637,146 +638,146 @@ function aggregateWebhookResponses(parallelResults) {
 }
 
 function findProjectRoot(dir) {
-    // Files/folders to ignore when searching for project root
-    const ignoreList = [
-        '.git',
-        '.gitignore',
-        '.gitattributes',
-        '.npmignore',
-        'README.md',
-        'LICENSE',
-        '.DS_Store',
-        'Thumbs.db',
-        'desktop.ini',
-        'node_modules',
-        'build',
-        'dist'
-    ];
+  // Files/folders to ignore when searching for project root
+  const ignoreList = [
+    '.git',
+    '.gitignore',
+    '.gitattributes',
+    '.npmignore',
+    'README.md',
+    'LICENSE',
+    '.DS_Store',
+    'Thumbs.db',
+    'desktop.ini',
+    'node_modules',
+    'build',
+    'dist'
+  ];
 
-    // Check if current directory has package.json
-    const packageJsonPath = path.join(dir, 'package.json');
-    if (fs.existsSync(packageJsonPath)) {
-        return dir;
-    }
-
-    // Search in subdirectories, excluding ignored items
-    const items = fs.readdirSync(dir);
-    const directories = items.filter(item => {
-        const itemPath = path.join(dir, item);
-        const isDirectory = fs.statSync(itemPath).isDirectory();
-        const shouldIgnore = ignoreList.includes(item);
-        
-        return isDirectory && !shouldIgnore;
-    });
-
-    // If there's only one directory, check if it contains the project
-    if (directories.length === 1) {
-        const subDir = path.join(dir, directories[0]);
-        const subPackageJson = path.join(subDir, 'package.json');
-
-        if (fs.existsSync(subPackageJson)) {
-            return subDir;
-        }
-
-        // Recursively search deeper
-        return findProjectRoot(subDir);
-    }
-
-    // If multiple directories, search each one
-    for (const subDir of directories) {
-        const subDirPath = path.join(dir, subDir);
-        const found = findProjectRoot(subDirPath);
-        if (found) return found;
-    }
-
+  // Check if current directory has package.json
+  const packageJsonPath = path.join(dir, 'package.json');
+  if (fs.existsSync(packageJsonPath)) {
     return dir;
+  }
+
+  // Search in subdirectories, excluding ignored items
+  const items = fs.readdirSync(dir);
+  const directories = items.filter(item => {
+    const itemPath = path.join(dir, item);
+    const isDirectory = fs.statSync(itemPath).isDirectory();
+    const shouldIgnore = ignoreList.includes(item);
+
+    return isDirectory && !shouldIgnore;
+  });
+
+  // If there's only one directory, check if it contains the project
+  if (directories.length === 1) {
+    const subDir = path.join(dir, directories[0]);
+    const subPackageJson = path.join(subDir, 'package.json');
+
+    if (fs.existsSync(subPackageJson)) {
+      return subDir;
+    }
+
+    // Recursively search deeper
+    return findProjectRoot(subDir);
+  }
+
+  // If multiple directories, search each one
+  for (const subDir of directories) {
+    const subDirPath = path.join(dir, subDir);
+    const found = findProjectRoot(subDirPath);
+    if (found) return found;
+  }
+
+  return dir;
 }
 
 // File locking mechanism
 async function withProjectLock(projectName, operation) {
-    if (projectLocks.has(projectName)) {
-        throw new Error('Project is currently being processed. Please try again in a moment.');
-    }
+  if (projectLocks.has(projectName)) {
+    throw new Error('Project is currently being processed. Please try again in a moment.');
+  }
 
-    projectLocks.set(projectName, true);
-    try {
-        return await operation();
-    } finally {
-        projectLocks.delete(projectName);
-    }
+  projectLocks.set(projectName, true);
+  try {
+    return await operation();
+  } finally {
+    projectLocks.delete(projectName);
+  }
 }
 
 // GitHub API rate limiting
 function checkRateLimit() {
-    const now = Date.now();
-    const windowStart = now - RATE_LIMIT_WINDOW;
+  const now = Date.now();
+  const windowStart = now - RATE_LIMIT_WINDOW;
 
-    // Clean old entries
-    for (const [timestamp] of githubApiCalls) {
-        if (timestamp < windowStart) {
-            githubApiCalls.delete(timestamp);
-        }
+  // Clean old entries
+  for (const [timestamp] of githubApiCalls) {
+    if (timestamp < windowStart) {
+      githubApiCalls.delete(timestamp);
     }
+  }
 
-    // Check if we're over the limit
-    if (githubApiCalls.size >= MAX_CALLS_PER_WINDOW) {
-        throw new Error('GitHub API rate limit exceeded. Please try again later.');
-    }
+  // Check if we're over the limit
+  if (githubApiCalls.size >= MAX_CALLS_PER_WINDOW) {
+    throw new Error('GitHub API rate limit exceeded. Please try again later.');
+  }
 
-    // Record this API call
-    githubApiCalls.set(now, true);
+  // Record this API call
+  githubApiCalls.set(now, true);
 }
 
 // GitHub repository management
 async function createGithubRepo(repoName) {
-    checkRateLimit();
+  checkRateLimit();
 
-    if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
-        throw new Error('GitHub credentials not configured. Please set GITHUB_TOKEN and GITHUB_USERNAME environment variables.');
+  if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
+    throw new Error('GitHub credentials not configured. Please set GITHUB_TOKEN and GITHUB_USERNAME environment variables.');
+  }
+
+  const response = await fetch(`https://api.github.com/user/repos`, {
+    method: "POST",
+    headers: {
+      Authorization: `token ${GITHUB_TOKEN}`,
+      "Content-Type": "application/json",
+      "User-Agent": "GitHub-Zip-Worker/1.0",
+    },
+    body: JSON.stringify({
+      name: repoName,
+      private: false,
+      description: `Auto-generated repository for ${repoName}`,
+      auto_init: false,
+    }),
+  });
+
+  if (response.status === 422) {
+    return; // Repo already exists
+  } else if (response.status === 401) {
+    throw new Error('GitHub authentication failed. Please check your GITHUB_TOKEN.');
+  } else if (response.status === 403) {
+    const rateLimitRemaining = response.headers.get('x-ratelimit-remaining');
+    if (rateLimitRemaining === '0') {
+      throw new Error('GitHub API rate limit exceeded. Please try again later.');
     }
-
-    const response = await fetch(`https://api.github.com/user/repos`, {
-        method: "POST",
-        headers: {
-            Authorization: `token ${GITHUB_TOKEN}`,
-            "Content-Type": "application/json",
-            "User-Agent": "GitHub-Zip-Worker/1.0",
-        },
-        body: JSON.stringify({
-            name: repoName,
-            private: false,
-            description: `Auto-generated repository for ${repoName}`,
-            auto_init: false,
-        }),
-    });
-
-    if (response.status === 422) {
-        return; // Repo already exists
-    } else if (response.status === 401) {
-        throw new Error('GitHub authentication failed. Please check your GITHUB_TOKEN.');
-    } else if (response.status === 403) {
-        const rateLimitRemaining = response.headers.get('x-ratelimit-remaining');
-        if (rateLimitRemaining === '0') {
-            throw new Error('GitHub API rate limit exceeded. Please try again later.');
-        }
-        throw new Error('GitHub API access forbidden. Please check your token permissions.');
-    } else if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`GitHub repo creation failed: ${error}`);
-    }
+    throw new Error('GitHub API access forbidden. Please check your token permissions.');
+  } else if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`GitHub repo creation failed: ${error}`);
+  }
 }
 
 async function checkRepoExists(repoName) {
-    checkRateLimit();
+  checkRateLimit();
 
-    const response = await fetch(`https://api.github.com/repos/${GITHUB_USERNAME}/${repoName}`, {
-        headers: {
-            Authorization: `token ${GITHUB_TOKEN}`,
-            "User-Agent": "GitHub-Zip-Worker/1.0",
-        },
-    });
+  const response = await fetch(`https://api.github.com/repos/${GITHUB_USERNAME}/${repoName}`, {
+    headers: {
+      Authorization: `token ${GITHUB_TOKEN}`,
+      "User-Agent": "GitHub-Zip-Worker/1.0",
+    },
+  });
 
-    return response.status === 200;
+  return response.status === 200;
 }
 
 router.get("/", authenticateToken, async (req, res) => {
@@ -802,7 +803,7 @@ router.get("/", authenticateToken, async (req, res) => {
       }
     });
   } else if (role === "manager") {
-    projects = await prisma.project.findMany({ 
+    projects = await prisma.project.findMany({
       where: { assignedManagerId: id },
       include: {
         versions: {
@@ -884,7 +885,7 @@ router.post("/:id/upload", authenticateToken, upload.single("project"), async (r
         orderBy: { createdAt: 'desc' },
         take: 1
       });
-      
+
       if (existingVersions.length === 0) {
         versionNumber = "1.0.0";
       } else {
@@ -945,7 +946,7 @@ router.post("/:id/upload", authenticateToken, upload.single("project"), async (r
 
         // Validate that it's a React project
         const packageJsonPath = path.join(actualProjectPath, 'package.json');
-        
+
         if (!fs.existsSync(packageJsonPath)) {
           throw new Error(`Not a valid React project: package.json not found at ${packageJsonPath}`);
         }
@@ -964,7 +965,7 @@ router.post("/:id/upload", authenticateToken, upload.single("project"), async (r
         // Find and inject scripts/components into root HTML file
         const htmlFiles = ['index.html', 'public/index.html', 'src/index.html'];
         let rootHtmlPath = null;
-        
+
         for (const htmlFile of htmlFiles) {
           const potentialPath = path.join(actualProjectPath, htmlFile);
           if (fs.existsSync(potentialPath)) {
@@ -976,7 +977,7 @@ router.post("/:id/upload", authenticateToken, upload.single("project"), async (r
         if (rootHtmlPath) {
           try {
             let htmlContent = fs.readFileSync(rootHtmlPath, 'utf-8');
-            
+
             // Marker.io script to inject
             const markerScript = `<script>
 window.markerConfig = {
@@ -1145,7 +1146,7 @@ window.markerConfig = {
           path.join(process.cwd(), "projects"),
           path.join(actualProjectPath, outputDir)
         );
-        const buildUrl = `http://43.205.121.85:5000/apps/${relativeBuildPath}`;
+        const buildUrl = `${config.BASE_URL}/apps/${relativeBuildPath}`;
 
         // Deactivate all existing versions for this project
         await prisma.projectVersion.updateMany({
@@ -1299,7 +1300,7 @@ router.get("/:id/diff-summary", authenticateToken, async (req, res) => {
 
     // Get project folder path
     const projectFolder = path.join(process.cwd(), "projects", String(projectId));
-    
+
     // Ensure project exists
     if (!fs.existsSync(projectFolder)) {
       return res.status(404).json({ error: "Project folder not found" });
@@ -1339,15 +1340,15 @@ router.get("/:id/diff-summary", authenticateToken, async (req, res) => {
     const maxConcurrent = 5; // Configurable concurrent limit
     console.log(`Starting parallel processing of ${diffChunks.length} chunks with max ${maxConcurrent} concurrent requests...`);
     const startTime = Date.now();
-    
+
     const parallelResults = await processChunksInParallel(diffChunks, maxConcurrent);
-    
+
     const endTime = Date.now();
     const processingTime = (endTime - startTime) / 1000;
-    
+
     const successfulChunks = parallelResults.filter(r => r.success).length;
     const failedChunks = parallelResults.filter(r => !r.success).length;
-    
+
     console.log(`🚀 Parallel processing complete in ${processingTime.toFixed(2)}s: ${successfulChunks} successful, ${failedChunks} failed`);
 
     // Aggregate all responses into a single summary
@@ -1376,7 +1377,7 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
   // PERFORMANCE SAFEGUARD: Set overall timeout for the entire operation
   const operationStartTime = Date.now();
   const MAX_OPERATION_TIME = 5 * 60 * 1000; // 5 minutes max
-  
+
   const checkTimeout = () => {
     if (Date.now() - operationStartTime > MAX_OPERATION_TIME) {
       throw new Error('Git diff operation timed out after 5 minutes');
@@ -1395,7 +1396,7 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
 
     // Get project folder path
     const projectFolder = path.join(process.cwd(), "projects", String(projectId));
-    
+
     // Ensure project exists
     if (!fs.existsSync(projectFolder)) {
       return res.status(404).json({ error: "Project folder not found" });
@@ -1452,40 +1453,40 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
     // PERFORMANCE SAFEGUARD: Limit number of files processed to prevent infinite loops
     const MAX_FILES_TO_PROCESS = 1000;
     const totalFiles = fileLines.length;
-    
+
     if (totalFiles > MAX_FILES_TO_PROCESS) {
       console.warn(`⚠️ Large diff detected: ${totalFiles} files changed. Processing first ${MAX_FILES_TO_PROCESS} files only.`);
     }
-    
+
     const filesToProcess = Math.min(totalFiles, MAX_FILES_TO_PROCESS);
-    
+
     // Process each changed file using robust parsing
     for (let i = 0; i < filesToProcess; i++) {
       // PERFORMANCE SAFEGUARD: Check timeout periodically
       if (i % 50 === 0) { // Check every 50 files
         checkTimeout();
       }
-      
+
       const line = fileLines[i];
-      
+
       // Parse git diff line using the robust parser
       const parsed = parseGitDiffLine(line);
       if (!parsed) {
         console.warn(`Could not parse git diff line: ${line}`);
         continue;
       }
-      
+
       const statusChar = parsed.status;
       const filename = parsed.filename;
       const oldPath = parsed.oldPath;
       const newPath = parsed.newPath;
-      
+
       // PERFORMANCE SAFEGUARD: Skip files that are too large or binary early
       if (!filename || filename.length > 500) {
         console.warn(`Skipping file with invalid or too long filename: ${filename?.substring(0, 100)}...`);
         continue;
       }
-      
+
       // Skip binary files and very large files
       const filePath = path.join(projectFolder, filename);
       let isLargeFile = false;
@@ -1494,23 +1495,23 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
       // Check if file exists and get size (with performance safeguards)
       if (fs.existsSync(filePath)) {
         try {
-        const stats = fs.statSync(filePath);
-        isLargeFile = stats.size > 100000; // 100KB limit
-        
+          const stats = fs.statSync(filePath);
+          isLargeFile = stats.size > 100000; // 100KB limit
+
           // PERFORMANCE SAFEGUARD: Skip extremely large files completely
           if (stats.size > 10 * 1024 * 1024) { // 10MB limit
             console.warn(`Skipping extremely large file: ${filename} (${(stats.size / 1024 / 1024).toFixed(1)}MB)`);
             continue;
           }
-          
+
           // Simple binary file check (but limit read size)
           if (!isLargeFile) {
             try {
               const buffer = fs.readFileSync(filePath, { encoding: null, flag: 'r' }).slice(0, 8192); // Read only first 8KB
-          isBinaryFile = buffer.includes(0);
-        } catch (error) {
-          console.warn(`Could not read file ${filename}:`, error.message);
-          isBinaryFile = true;
+              isBinaryFile = buffer.includes(0);
+            } catch (error) {
+              console.warn(`Could not read file ${filename}:`, error.message);
+              isBinaryFile = true;
             }
           }
         } catch (error) {
@@ -1529,7 +1530,7 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
             timeout: 10000, // 10 second timeout for individual files
             maxBuffer: 5 * 1024 * 1024 // 5MB max for individual files
           };
-          
+
           // Get file content from previous commit
           if (statusChar !== "A") { // Not a new file
             try {
@@ -1602,7 +1603,7 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
     // Calculate total stats
     const totalAdditions = changedFiles.reduce((sum, file) => sum + file.additions, 0);
     const totalDeletions = changedFiles.reduce((sum, file) => sum + file.deletions, 0);
-    
+
     // Calculate processing summary
     const processingTime = Date.now() - operationStartTime;
     const wasLimitedByFileCount = totalFiles > MAX_FILES_TO_PROCESS;
@@ -1632,17 +1633,17 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
 // API endpoint to get project info for header display
 router.get("/:id/info", async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
-  
+
   try {
     // Get project basic info
-    const project = await prisma.project.findUnique({ 
+    const project = await prisma.project.findUnique({
       where: { id: projectId },
-      select: { 
-        id: true, 
+      select: {
+        id: true,
         name: true
       }
     });
-    
+
     if (!project) {
       return res.status(404).json({ error: "Project not found" });
     }
@@ -1685,7 +1686,7 @@ router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) =>
 
     // Get project folder path
     const projectFolder = path.join(process.cwd(), "projects", String(projectId));
-    
+
     if (!fs.existsSync(projectFolder)) {
       return res.status(404).json({ error: "Project folder not found" });
     }
@@ -1707,7 +1708,7 @@ router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) =>
     }
 
     const [latestCommit, previousCommit] = commits;
-    
+
     // Get git diff
     const gitDiff = runCommand(
       `git diff ${previousCommit} ${latestCommit}`,
@@ -1728,15 +1729,15 @@ router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) =>
     const maxConcurrent = 5;
     console.log(`Jira: Starting parallel processing of ${diffChunks.length} chunks with max ${maxConcurrent} concurrent requests...`);
     const startTime = Date.now();
-    
+
     const parallelResults = await processChunksInParallel(diffChunks, maxConcurrent);
-    
+
     const endTime = Date.now();
     const processingTime = (endTime - startTime) / 1000;
-    
+
     const successfulChunks = parallelResults.filter(r => r.success).length;
     const failedChunks = parallelResults.filter(r => !r.success).length;
-    
+
     console.log(`Jira: 🚀 Parallel processing complete in ${processingTime.toFixed(2)}s: ${successfulChunks} successful, ${failedChunks} failed`);
 
     // Aggregate all responses into a single summary
@@ -1757,7 +1758,7 @@ router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) =>
 
     res.json({
       success: jiraResult.success,
-      message: jiraResult.success 
+      message: jiraResult.success
         ? `Successfully created ${jiraResult.successfulTickets} Jira tickets`
         : jiraResult.error || "Failed to create Jira tickets",
       projectId,

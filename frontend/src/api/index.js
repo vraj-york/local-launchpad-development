@@ -1,6 +1,7 @@
 import axios from 'axios';
+import config from '../config/index.js';
 
-const API_URL = 'http://43.205.121.85:5000';
+const API_URL = config.API_URL;
 
 // Create axios instance with default config
 const api = axios.create({
@@ -42,11 +43,11 @@ export const loginUser = async (credentials) => {
     try {
         const response = await axios.post(`${API_URL}/api/auth/login`, credentials);
         const { token, user } = response.data;
-        
+
         // Store token and user data
         localStorage.setItem('token', token);
         localStorage.setItem('user', JSON.stringify(user));
-        
+
         return { token, user };
     } catch (error) {
         throw error.response?.data || { error: 'Login failed' };
@@ -112,7 +113,7 @@ export const uploadProjectBuild = async (projectId, file, version = null) => {
         if (version) {
             formData.append('version', version);
         }
-        
+
         const response = await api.post(`/api/projects/${projectId}/upload`, formData, {
             headers: {
                 'Content-Type': 'multipart/form-data',
@@ -204,7 +205,7 @@ export const uploadToRelease = async (releaseId, file, version = null) => {
         if (version) {
             formData.append('version', version);
         }
-        
+
         const response = await api.post(`/api/releases/${releaseId}/upload`, formData, {
             headers: {
                 'Content-Type': 'multipart/form-data',

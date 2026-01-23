@@ -1,6 +1,7 @@
 import app from "./app.js";
+import config from "./config/index.js";
 
-const PORT = process.env.PORT || 5000;
+const PORT = config.PORT;
 
 // Middleware to log all requests
 app.use((req, res, next) => {
@@ -10,5 +11,5 @@ app.use((req, res, next) => {
 
 console.log("Starting server...")
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://43.205.121.85:${PORT}`);
+  console.log(`🚀 Server running on ${config.BASE_URL}`);
 });

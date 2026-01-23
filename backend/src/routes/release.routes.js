@@ -10,6 +10,7 @@ import { exec, execSync } from "child_process";
 import crypto from "crypto";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
+import config from "../config/index.js";
 
 dotenv.config();
 
@@ -55,7 +56,7 @@ function sanitizeCommand(command) {
 
 function runCommand(command, cwd, options = {}) {
     const sanitizedCommand = sanitizeCommand(command);
-    
+
     const defaultOptions = {
         cwd,
         encoding: "utf-8",
@@ -67,20 +68,20 @@ function runCommand(command, cwd, options = {}) {
         timeout: 300000, // 5 min default timeout
         maxBuffer: 10 * 1024 * 1024 // 10MB max buffer to prevent memory issues
     };
-    
+
     const finalOptions = { ...defaultOptions, ...options };
-    
+
     try {
         return execSync(sanitizedCommand, finalOptions);
     } catch (error) {
         console.error(`Command failed: ${sanitizedCommand} - ${error.message}`);
-        
+
         if (error.code === 'TIMEOUT') {
             throw new Error(`Command timed out after ${finalOptions.timeout}ms: ${sanitizedCommand}`);
         } else if (error.message.includes('maxBuffer')) {
             throw new Error(`Command output too large (>10MB): ${sanitizedCommand}`);
         }
-        
+
         throw error;
     }
 }
@@ -218,7 +219,7 @@ router.get("/project/:projectId", authenticateToken, async (req, res) => {
         let hasAccess = false;
         if (role === "admin") hasAccess = true;
         else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
-        
+
         if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
         const releases = await prisma.release.findMany({
@@ -259,7 +260,7 @@ router.post("/", authenticateToken, async (req, res) => {
         let hasAccess = false;
         if (role === "admin") hasAccess = true;
         else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
-        
+
         if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
         if (!name || !name.trim()) {
@@ -315,7 +316,7 @@ router.post("/:releaseId/lock", authenticateToken, async (req, res) => {
         } else if (role === "manager" && release.project.assignedManagerId === userId) {
             hasPermission = true;
         }
-        
+
         if (!hasPermission) {
             return res.status(403).json({ error: "Forbidden: You don't have permission to lock/unlock this release" });
         }
@@ -347,15 +348,15 @@ router.post("/:releaseId/lock", authenticateToken, async (req, res) => {
 // API endpoint to get release info for header display
 router.get("/:releaseId/info", async (req, res) => {
     const releaseId = parseInt(req.params.releaseId, 10);
-    
+
     try {
         // Get release info with project details
         const release = await prisma.release.findUnique({
             where: { id: releaseId },
             include: {
                 project: {
-                    select: { 
-                        id: true, 
+                    select: {
+                        id: true,
                         name: true
                     }
                 },
@@ -367,7 +368,7 @@ router.get("/:releaseId/info", async (req, res) => {
                 }
             }
         });
-        
+
         if (!release) {
             return res.status(404).json({ error: "Release not found" });
         }
@@ -394,13 +395,13 @@ router.get("/:releaseId/info", async (req, res) => {
 router.post("/:releaseId/public-lock", async (req, res) => {
     const releaseId = parseInt(req.params.releaseId, 10);
     const { locked, token } = req.body;
-    
+
     try {
         // Validate required parameters
         if (typeof locked !== 'boolean') {
             return res.status(400).json({ error: "Invalid 'locked' parameter. Must be true or false." });
         }
-        
+
         if (!token || typeof token !== 'string') {
             return res.status(400).json({ error: "Token is required for public lock operations." });
         }
@@ -410,14 +411,14 @@ router.post("/:releaseId/public-lock", async (req, res) => {
             where: { id: releaseId },
             include: {
                 project: {
-                    select: { 
-                        id: true, 
+                    select: {
+                        id: true,
                         name: true
                     }
                 }
             }
         });
-        
+
         if (!release) {
             return res.status(404).json({ error: "Release not found" });
         }
@@ -432,10 +433,10 @@ router.post("/:releaseId/public-lock", async (req, res) => {
         const updatedRelease = await prisma.release.update({
             where: { id: releaseId },
             data: { isLocked: locked },
-            select: { 
-                id: true, 
-                name: true, 
-                isLocked: true 
+            select: {
+                id: true,
+                name: true,
+                isLocked: true
             }
         });
 
@@ -484,7 +485,7 @@ router.post("/:releaseId/upload", authenticateToken, upload.single("project"), a
         let hasAccess = false;
         if (role === "admin") hasAccess = true;
         else if (role === "manager" && release.project.assignedManagerId === userId) hasAccess = true;
-        
+
         if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -500,7 +501,7 @@ router.post("/:releaseId/upload", authenticateToken, upload.single("project"), a
                 orderBy: { createdAt: 'desc' },
                 take: 1
             });
-            
+
             if (existingVersions.length === 0) {
                 versionNumber = "1.0.0";
             } else {
@@ -559,7 +560,7 @@ router.post("/:releaseId/upload", authenticateToken, upload.single("project"), a
 
                 // Validate that it's a React project
                 const packageJsonPath = path.join(actualProjectPath, 'package.json');
-                
+
                 if (!fs.existsSync(packageJsonPath)) {
                     throw new Error(`Not a valid React project: package.json not found at ${packageJsonPath}`);
                 }
@@ -578,7 +579,7 @@ router.post("/:releaseId/upload", authenticateToken, upload.single("project"), a
                 // Find and inject scripts/components into root HTML file
                 const htmlFiles = ['index.html', 'public/index.html', 'src/index.html'];
                 let rootHtmlPath = null;
-                
+
                 for (const htmlFile of htmlFiles) {
                     const potentialPath = path.join(actualProjectPath, htmlFile);
                     if (fs.existsSync(potentialPath)) {
@@ -590,7 +591,7 @@ router.post("/:releaseId/upload", authenticateToken, upload.single("project"), a
                 if (rootHtmlPath) {
                     try {
                         let htmlContent = fs.readFileSync(rootHtmlPath, 'utf-8');
-                        
+
                         // Marker.io script to inject
                         const markerScript = `<script>
 window.markerConfig = {
@@ -754,7 +755,7 @@ window.markerConfig = {
                     path.join(process.cwd(), "projects"),
                     path.join(actualProjectPath, outputDir)
                 );
-                const buildUrl = `http://43.205.121.85:5000/apps/${relativeBuildPath}?releaseId=${releaseId}`;
+                const buildUrl = `${config.BASE_URL}/apps/${relativeBuildPath}?releaseId=${releaseId}`;
 
                 // Deactivate all existing versions for this project
                 await prisma.projectVersion.updateMany({

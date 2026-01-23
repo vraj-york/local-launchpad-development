@@ -1,5 +1,6 @@
 // Header utility functions for project injection
 import dotenv from "dotenv";
+import config from "../config/index.js";
 dotenv.config();
 
 // Generate project header component HTML with improved design matching main.css
@@ -14,6 +15,7 @@ export function generateReleaseHeader() {
 
 // Generate header component HTML with improved design matching main.css
 function generateHeader(type = 'project') {
+  const baseUrl = config.BASE_URL;
   return `
 <style>
   .zip-sync-header {
@@ -252,7 +254,7 @@ function generateHeader(type = 'project') {
       const currentUrl = window.location.href;
       console.log('🔍 Determining API base URL from:', currentUrl);
       if (currentUrl.includes('localhost') || currentUrl.includes('43.205.121.85')) {
-        return 'http://43.205.121.85:5000';
+        return '${baseUrl}';
       } else {
         const urlObj = new URL(currentUrl);
         return \`\${urlObj.protocol}//\${urlObj.hostname}:5000\`;
