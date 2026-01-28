@@ -19,7 +19,6 @@ const DashboardHome = ({ setActiveTab }) => {
         const loadDashboardData = async () => {
             try {
                 const projectsData = await fetchProjects();
-                console.log('Dashboard projects data:', projectsData);
                 setProjects(projectsData);
 
                 // Calculate stats

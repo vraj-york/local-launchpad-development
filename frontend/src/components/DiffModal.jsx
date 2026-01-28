@@ -6,7 +6,6 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
 const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
     const { showSuccess, showError, showInfo } = useToast();
     const [diffData, setDiffData] = useState(null);
-    console.log('🔍 diffData:', diffData);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [jiraLoading, setJiraLoading] = useState(false);
