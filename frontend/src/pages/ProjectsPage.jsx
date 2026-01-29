@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import ProjectList from '../components/ProjectList';
+import ProjectList from '../old-components/ProjectList';
 import { fetchProjects } from '../api/index';
 
 const ProjectsPage = () => {
@@ -50,7 +50,7 @@ const ProjectsPage = () => {
     return (
         <div>
             <h1>Your Projects</h1>
-            
+
             {/* Search Bar */}
             <div style={{ marginBottom: '20px' }}>
                 <input

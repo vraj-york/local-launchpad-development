@@ -101,7 +101,7 @@ body {
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     margin-bottom: 24px;
-    overflow: visible ;
+    overflow: visible;
 }
 
 .card-header {
@@ -208,7 +208,7 @@ body {
     left: 0;
     right: 0;
     height: 4px;
-   
+
     opacity: 0;
     transition: opacity 0.3s ease;
 }
@@ -322,6 +322,7 @@ body {
         opacity: 0;
         transform: translateY(-8px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -470,8 +471,13 @@ body {
 }
 
 @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
 }
 
 /* Mobile Header */
@@ -479,7 +485,8 @@ body {
     display: none;
     align-items: center;
     padding: 16px 20px;
-    background: #ffffff;    border-bottom: 1px solid #e9ecef;
+    background: #ffffff;
+    border-bottom: 1px solid #e9ecef;
     position: fixed;
     top: 0;
     left: 0;
@@ -542,38 +549,38 @@ body {
     .mobile-header {
         display: flex;
     }
-    
+
     .sidebar-close {
         display: block;
     }
-    
+
     .sidebar-overlay {
         display: block;
     }
-    
+
     .sidebar {
         transform: translateX(-100%);
         transition: transform 0.3s ease;
     }
-    
+
     .sidebar.open {
         transform: translateX(0);
     }
-    
+
     .main-content {
         margin-left: 0;
         padding: 80px 16px 16px 16px;
     }
-    
+
     .projects-grid {
         grid-template-columns: 1fr;
         gap: 16px;
     }
-    
+
     .card-body {
         padding: 16px;
     }
-    
+
     .sidebar-header {
         display: flex;
         justify-content: space-between;
@@ -586,11 +593,11 @@ body {
         margin: 20px;
         padding: 30px 20px;
     }
-    
+
     .project-actions {
         flex-direction: column;
     }
-    
+
     .btn {
         width: 100%;
         justify-content: center;
@@ -598,16 +605,45 @@ body {
 }
 
 /* Utility Classes */
-.text-center { text-align: center; }
-.text-right { text-align: right; }
-.mb-0 { margin-bottom: 0; }
-.mb-1 { margin-bottom: 8px; }
-.mb-2 { margin-bottom: 16px; }
-.mb-3 { margin-bottom: 24px; }
-.mt-0 { margin-top: 0; }
-.mt-1 { margin-top: 8px; }
-.mt-2 { margin-top: 16px; }
-.mt-3 { margin-top: 24px; }
+.text-center {
+    text-align: center;
+}
+
+.text-right {
+    text-align: right;
+}
+
+.mb-0 {
+    margin-bottom: 0;
+}
+
+.mb-1 {
+    margin-bottom: 8px;
+}
+
+.mb-2 {
+    margin-bottom: 16px;
+}
+
+.mb-3 {
+    margin-bottom: 24px;
+}
+
+.mt-0 {
+    margin-top: 0;
+}
+
+.mt-1 {
+    margin-top: 8px;
+}
+
+.mt-2 {
+    margin-top: 16px;
+}
+
+.mt-3 {
+    margin-top: 24px;
+}
 
 /* Diff Modal Styles */
 .modal-overlay {
@@ -633,6 +669,7 @@ body {
     max-height: 90vh;
 
 }
+
 /* Git Diff Styles */
 .git-diff-container {
     background: #fff;
@@ -880,8 +917,13 @@ body {
 }
 
 @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
 }
 
 /* Error State */
@@ -1026,34 +1068,35 @@ body {
         margin: 10px;
         max-height: 95vh;
     }
-    
+
     .modal-header {
         padding: 16px 20px;
     }
-    
+
     .modal-body {
         padding: 20px;
     }
-    
+
     .diff-actions {
         flex-direction: column;
     }
-    
+
     .diff-actions .btn {
         width: 100%;
     }
-    
+
     .dropdown-menu {
         right: 0;
         left: auto;
         min-width: 160px;
         top: 100%;
     }
-    
+
     .project-actions {
         justify-content: center;
     }
 }
+
 .diff-viewer {
     height: 100%;
     display: flex;
@@ -1207,43 +1250,44 @@ body {
     .git-diff-files {
         padding: 16px;
     }
-    
+
     .git-diff-header {
         flex-direction: column;
         align-items: flex-start;
         gap: 12px;
         padding: 16px;
     }
-    
+
     .diff-summary {
         flex-wrap: wrap;
     }
-    
+
     .file-header {
         padding: 12px 16px;
     }
-    
+
     .file-header-left {
         gap: 6px;
     }
-    
+
     .file-path-text {
         font-size: 13px;
     }
-    
+
     .file-changes-bar {
         flex-direction: column;
         align-items: flex-end;
         gap: 4px;
     }
-    
+
     .changes-visual {
         order: -1;
     }
 }
 
 /* Error and Empty States for Git Diff */
-.error-state, .empty-state {
+.error-state,
+.empty-state {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1253,7 +1297,8 @@ body {
     min-height: 400px;
 }
 
-.error-icon, .empty-icon {
+.error-icon,
+.empty-icon {
     margin-bottom: 24px;
     color: #6c757d;
 }
@@ -1262,14 +1307,16 @@ body {
     color: #dc3545;
 }
 
-.error-state h3, .empty-state h3 {
+.error-state h3,
+.empty-state h3 {
     margin: 0 0 16px 0;
     font-size: 24px;
     font-weight: 600;
     color: #24292e;
 }
 
-.error-state p, .empty-state p {
+.error-state p,
+.empty-state p {
     margin: 0 0 24px 0;
     color: #586069;
     font-size: 16px;
@@ -1309,8 +1356,13 @@ body {
 }
 
 @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
 }
 
 /* GitHub-style File Components */

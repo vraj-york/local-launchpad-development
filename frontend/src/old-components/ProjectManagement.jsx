@@ -5,9 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import DiffModal from './DiffModal';
 import ProjectActionsDropdown from './ProjectActionsDropdown';
-import ReleaseManagement from './ReleaseManagement';
 
-const ProjectManagement = ({ setActiveTab }) => {
+const ProjectManagement = () => {
     const { user } = useAuth();
     const { showSuccess, showError, showInfo } = useToast();
     const navigate = useNavigate();
@@ -26,7 +25,6 @@ const ProjectManagement = ({ setActiveTab }) => {
         assignedManagerId: user.role === 'manager' ? user.id : null
     });
     const [diffModal, setDiffModal] = useState({ isOpen: false, projectId: null, projectName: '' });
-    const [selectedProject, setSelectedProject] = useState(null);
 
     useEffect(() => {
         loadProjects();
@@ -93,27 +91,6 @@ const ProjectManagement = ({ setActiveTab }) => {
         );
     }
 
-    // If a project is selected, show release management
-    if (selectedProject) {
-        return (
-            <div>
-                <div style={{ marginBottom: '16px' }}>
-                    <button 
-                        className="btn btn-secondary"
-                        onClick={() => setSelectedProject(null)}
-                        style={{ marginBottom: '16px' }}
-                    >
-                        ← Back to Projects
-                    </button>
-                </div>
-                <ReleaseManagement 
-                    projectId={selectedProject.id} 
-                    projectName={selectedProject.name}
-                />
-            </div>
-        );
-    }
-
     return (
         <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -126,12 +103,12 @@ const ProjectManagement = ({ setActiveTab }) => {
                     </p>
                 </div>
                 {canCreateProject && (
-                    <button 
+                    <button
                         className="btn btn-primary"
                         onClick={() => setShowCreateForm(true)}
                     >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
-                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                         </svg>
                         Create Project
                     </button>
@@ -139,11 +116,11 @@ const ProjectManagement = ({ setActiveTab }) => {
             </div>
 
             {error && (
-                <div style={{ 
-                    background: '#f8d7da', 
-                    color: '#721c24', 
-                    padding: '12px 16px', 
-                    borderRadius: '8px', 
+                <div style={{
+                    background: '#f8d7da',
+                    color: '#721c24',
+                    padding: '12px 16px',
+                    borderRadius: '8px',
                     marginBottom: '20px',
                     border: '1px solid #f5c6cb'
                 }}>
@@ -170,7 +147,7 @@ const ProjectManagement = ({ setActiveTab }) => {
                                     required
                                 />
                             </div>
-                            
+
                             <div className="form-group">
                                 <label className="form-label">Description</label>
                                 <textarea
@@ -196,15 +173,15 @@ const ProjectManagement = ({ setActiveTab }) => {
                             )}
 
                             <div style={{ display: 'flex', gap: '12px' }}>
-                                <button 
-                                    type="submit" 
+                                <button
+                                    type="submit"
                                     className="btn btn-primary"
                                     disabled={creating || !newProject.name.trim()}
                                 >
                                     {creating ? 'Creating...' : 'Create Project'}
                                 </button>
-                                <button 
-                                    type="button" 
+                                <button
+                                    type="button"
                                     className="btn btn-secondary"
                                     onClick={() => setShowCreateForm(false)}
                                 >
@@ -271,20 +248,20 @@ const ProjectManagement = ({ setActiveTab }) => {
                         <div className="empty-state">
                             <div className="empty-state-icon">
                                 <svg width="80" height="80" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z"/>
+                                    <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z" />
                                 </svg>
                             </div>
                             <h3>{searchTerm ? 'No Projects Found' : 'No Projects Found'}</h3>
                             <p>{searchTerm ? 'Try adjusting your search terms.' : 'Create your first project to get started.'}</p>
                             {searchTerm ? (
-                                <button 
+                                <button
                                     className="btn btn-secondary"
                                     onClick={() => setSearchTerm('')}
                                 >
                                     Clear Search
                                 </button>
                             ) : canCreateProject && (
-                                <button 
+                                <button
                                     className="btn btn-primary"
                                     onClick={() => setShowCreateForm(true)}
                                 >
@@ -300,10 +277,10 @@ const ProjectManagement = ({ setActiveTab }) => {
                                     <p className="project-description">
                                         {project.description || 'No description provided'}
                                     </p>
-                                    
+
                                     <div className="project-meta">
                                         <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
-                                        <span style={{ 
+                                        <span style={{
                                             color: (project.versions && project.versions.length > 0 && project.versions[0].buildUrl) ? '#00B48B' : '#6c757d',
                                             fontWeight: '500'
                                         }}>
@@ -311,9 +288,9 @@ const ProjectManagement = ({ setActiveTab }) => {
                                         </span>
                                     </div>
 
-                                    <div style={{ 
-                                        fontSize: '12px', 
-                                        color: '#6c757d', 
+                                    <div style={{
+                                        fontSize: '12px',
+                                        color: '#6c757d',
                                         marginBottom: '16px',
                                         padding: '8px',
                                         background: '#f8f9fa',
@@ -329,9 +306,9 @@ const ProjectManagement = ({ setActiveTab }) => {
 
                                     {/* Show recent releases */}
                                     {project.releases && project.releases.length > 0 && (
-                                        <div style={{ 
-                                            fontSize: '12px', 
-                                            color: '#6c757d', 
+                                        <div style={{
+                                            fontSize: '12px',
+                                            color: '#6c757d',
                                             marginBottom: '16px',
                                             padding: '8px',
                                             background: '#e7f3ff',
@@ -354,23 +331,23 @@ const ProjectManagement = ({ setActiveTab }) => {
 
                                     <div className="project-actions">
                                         {project.versions && project.versions.length > 0 && project.versions[0].buildUrl && (
-                                            <a 
-                                                href={project.versions[0].buildUrl} 
-                                                target="_blank" 
+                                            <a
+                                                href={project.versions[0].buildUrl}
+                                                target="_blank"
                                                 rel="noopener noreferrer"
                                                 className="btn btn-primary"
                                             >
                                                 Live
                                             </a>
                                         )}
-                                        
-                                        <button 
+
+                                        <button
                                             className="btn btn-outline"
-                                            onClick={() => setSelectedProject(project)}
+                                            onClick={() => navigate(`/projects/${project.id}`, { state: { projectName: project.name } })}
                                         >
                                             Releases
                                         </button>
-                                        
+
                                         <ProjectActionsDropdown
                                             project={project}
                                             user={user}
@@ -383,7 +360,7 @@ const ProjectManagement = ({ setActiveTab }) => {
                     )}
                 </div>
             </div>
-            
+
             {/* Diff Modal */}
             <DiffModal
                 isOpen={diffModal.isOpen}
