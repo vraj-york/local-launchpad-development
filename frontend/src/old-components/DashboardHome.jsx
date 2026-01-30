@@ -62,8 +62,6 @@ const DashboardHome = () => {
         );
     }
 
-    console.log(stats)
-
     return (
         <div className="max-w-7xl mx-auto">
             <div className="mb-8 flex w-full justify-between">

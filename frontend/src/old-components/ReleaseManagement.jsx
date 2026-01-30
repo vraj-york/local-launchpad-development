@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { fetchReleases, createRelease, toggleReleaseLock, uploadToRelease } from '../api';
 import { useAuth } from '../context/AuthContext';
-import { useToast } from '../context/ToastContext';
+import { toast } from 'sonner';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 
 const ReleaseManagement = ({ projectId, projectName }) => {
     const { user } = useAuth();
-    const { showSuccess, showError, showInfo, showWarning } = useToast();
+
     const [releases, setReleases] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -49,7 +49,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
         try {
             setCreating(true);
-            showInfo('Creating release...');
+            toast.info('Creating release...');
             await createRelease({
                 projectId,
                 name: newRelease.name.trim(),
@@ -58,11 +58,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             setNewRelease({ name: '', description: '' });
             setShowCreateForm(false);
             await loadReleases();
-            showSuccess(`Release "${newRelease.name}" created successfully!`);
+            toast.success(`Release "${newRelease.name}" created successfully!`);
         } catch (err) {
             const errorMessage = err.message || 'Failed to create release';
             setError(errorMessage);
-            showError(`Failed to create release: ${errorMessage}`);
+            toast.error(`Failed to create release: ${errorMessage}`);
         } finally {
             setCreating(false);
         }
@@ -98,7 +98,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             setUploading(true);
             setUploadStatus('Uploading and building project...');
             setUploadProgress(0);
-            showInfo('Uploading and building project...');
+            toast.info('Uploading and building project...');
 
             // Simulate progress
             const progressInterval = setInterval(() => {
@@ -122,11 +122,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             setVersion('');
             document.getElementById('file-input').value = '';
             await loadReleases();
-            showSuccess(`Project uploaded successfully! Version: ${result.version.version}`);
+            toast.success(`Project uploaded successfully! Version: ${result.version.version}`);
         } catch (err) {
             const errorMessage = err.error || err.message || 'Upload failed';
             setUploadStatus(`❌ Upload failed: ${errorMessage}`);
-            showError(`Upload failed: ${errorMessage}`);
+            toast.error(`Upload failed: ${errorMessage}`);
         } finally {
             setUploading(false);
         }
@@ -303,10 +303,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
                             {uploadStatus && (
                                 <div className={`p-3 rounded-lg mb-4 border ${uploadStatus.includes('✅')
-                                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                                        : uploadStatus.includes('❌')
-                                            ? 'bg-red-50 border-red-200 text-red-800'
-                                            : 'bg-blue-50 border-blue-200 text-blue-800'
+                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                                    : uploadStatus.includes('❌')
+                                        ? 'bg-red-50 border-red-200 text-red-800'
+                                        : 'bg-blue-50 border-blue-200 text-blue-800'
                                     }`}>
                                     {uploadStatus}
                                 </div>
@@ -373,8 +373,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                         <h4 className="text-lg font-semibold text-slate-800">{release.name}</h4>
                                         <div className="flex gap-2 items-center">
                                             <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${release.isLocked
-                                                    ? 'bg-red-100 text-red-700'
-                                                    : 'bg-emerald-100 text-emerald-700'
+                                                ? 'bg-red-100 text-red-700'
+                                                : 'bg-emerald-100 text-emerald-700'
                                                 }`}>
                                                 {release.isLocked ? '🔒 Locked' : '🔓 Unlocked'}
                                             </span>

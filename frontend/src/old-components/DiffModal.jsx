@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { fetchProjectDiff, generateJiraTickets } from '../api';
-import { useToast } from '../context/ToastContext';
+import { toast } from 'sonner';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
 import {
     Dialog,
@@ -13,7 +13,7 @@ import {
 import { Button } from "../components/ui/button";
 
 const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
-    const { showSuccess, showError, showInfo } = useToast();
+
     const [diffData, setDiffData] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -26,17 +26,17 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
 
         setLoading(true);
         setError(null);
-        showInfo('Generating git diff summary...');
+        toast.info('Generating git diff summary...');
 
         try {
             const data = await fetchProjectDiff(projectId);
             console.log('🔍 Full API Response:', data);
             setDiffData(data);
-            showSuccess('Git diff summary generated successfully!');
+            toast.success('Git diff summary generated successfully!');
         } catch (err) {
             const errorMessage = err.message || 'Failed to fetch diff summary';
             setError(errorMessage);
-            showError(`Failed to generate summary: ${errorMessage}`);
+            toast.error(`Failed to generate summary: ${errorMessage}`);
         } finally {
             setLoading(false);
         }
@@ -57,7 +57,7 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
         setJiraLoading(true);
         setJiraError(null);
         setJiraResult(null);
-        showInfo('Creating Jira tickets...');
+        toast.info('Creating Jira tickets...');
 
         try {
             const result = await generateJiraTickets(projectId);
@@ -65,15 +65,15 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
             setJiraResult(result);
 
             if (result.success) {
-                showSuccess(`Successfully created ${result.successfulTickets} Jira tickets!`);
+                toast.success(`Successfully created ${result.successfulTickets} Jira tickets!`);
             } else {
-                showError(`Failed to create Jira tickets: ${result.error || result.message}`);
+                toast.error(`Failed to create Jira tickets: ${result.error || result.message}`);
             }
         } catch (err) {
             console.error('❌ Jira Error:', err);
             const errorMessage = err.message || 'Failed to generate Jira tickets';
             setJiraError(errorMessage);
-            showError(`Failed to create Jira tickets: ${errorMessage}`);
+            toast.error(`Failed to create Jira tickets: ${errorMessage}`);
         } finally {
             setJiraLoading(false);
         }
@@ -83,7 +83,7 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
         if (!diffData) return;
 
         try {
-            showInfo('Generating DOCX document...');
+            toast.info('Generating DOCX document...');
             const doc = new Document({
                 sections: [{
                     properties: {},
@@ -164,10 +164,10 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
             link.click();
             document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
-            showSuccess('DOCX document downloaded successfully!');
+            toast.success('DOCX document downloaded successfully!');
         } catch (error) {
             console.error('Error generating DOCX:', error);
-            showError('Failed to generate DOCX file. Please try again.');
+            toast.error('Failed to generate DOCX file. Please try again.');
         }
     };
 

@@ -1,15 +1,15 @@
 
 import { AuthProvider } from './context/AuthContext';
-import { ToastProvider } from './context/ToastContext';
+
 // import './styles/main.css';
+import { Toaster } from "@/components/ui/sonner"
 import { Routes } from './routes/Routes';
 
 const App = () => {
   return (
     <AuthProvider>
-      <ToastProvider>
-        <Routes />
-      </ToastProvider>
+      <Routes />
+      <Toaster />
     </AuthProvider>
   );
 };
