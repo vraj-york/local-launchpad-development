@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { fetchReleases, createRelease, toggleReleaseLock, uploadToRelease } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'sonner';
-import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
 
 const ReleaseManagement = ({ projectId, projectName }) => {
     const { user } = useAuth();

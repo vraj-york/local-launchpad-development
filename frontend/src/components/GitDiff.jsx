@@ -3,9 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Diff, Hunk, parseDiff } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchProjectGitDiff } from '../api';
-import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader } from '../components/ui/card';
-import { Badge } from '../components/ui/badge';
+import { Button } from './ui/button';
+import { Card, CardContent, CardHeader } from './ui/card';
+import { Badge } from './ui/badge';
 import { ChevronRight, Plus, Minus, Check, FileText, AlertCircle, XCircle, ArrowLeft } from 'lucide-react';
 
 const GitDiff = () => {

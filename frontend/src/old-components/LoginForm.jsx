@@ -13,7 +13,7 @@ const LoginForm = () => {
         setError('');
 
         try {
-            await login({email, password});
+            await login({ email, password });
             router.push('/projects');
         } catch (err) {
             setError('Invalid credentials. Please try again.');

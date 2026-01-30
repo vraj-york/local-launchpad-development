@@ -1,6 +1,6 @@
 import React from 'react';
 import { LayoutDashboard, Folder, LogOut, User } from "lucide-react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
     Sidebar,
@@ -25,6 +25,7 @@ import logo from "../assets/york-logo.png";
 export function AppSidebar() {
     const { user, logout } = useAuth();
     const location = useLocation();
+    const navigate = useNavigate();
 
     const items = [
         {
@@ -56,6 +57,7 @@ export function AppSidebar() {
                                     <SidebarMenuButton
                                         asChild
                                         isActive={location.pathname === item.url || location.pathname.startsWith(item.url + '/')}
+                                        className="data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:hover:bg-primary/90 data-[active=true]:hover:text-primary-foreground"
                                     >
                                         <Link to={item.url}>
                                             <item.icon />
@@ -72,7 +74,10 @@ export function AppSidebar() {
                 <SidebarMenu>
                     <SidebarMenuItem>
                         <SidebarMenuButton
-                            onClick={logout}
+                            onClick={() => {
+                                logout();
+                                navigate('/login');
+                            }}
                             size="md"
                             className="cursor-pointer w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50"
                         >
@@ -90,7 +95,7 @@ export function AppSidebar() {
                         >
                             <Avatar className="h-8 w-8 rounded-lg">
                                 <AvatarImage src={user.avatar} alt={user.name} />
-                                <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+                                <AvatarFallback className="rounded-lg">U</AvatarFallback>
                             </Avatar>
                             <div className="grid flex-1 text-left text-sm leading-tight">
                                 <span className="truncate font-medium">{user.name}</span>

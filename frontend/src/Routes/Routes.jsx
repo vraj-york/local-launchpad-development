@@ -2,10 +2,10 @@ import { BrowserRouter, Navigate, Route, Routes as RouterRoutes, } from 'react-r
 import { useAuth } from '../context/AuthContext';
 import LoginPage from '../pages/LoginPage';
 import Dashboard from '../components/Dashboard';
-import GitDiff from '../old-components/GitDiff';
+import GitDiff from '../components/GitDiff';
 import { MainLayout } from '@/layouts/MainLayout';
 import { Projects } from '@/components/Projects';
-import ProjectDetails from '@/old-components/ProjectDetails';
+import ProjectDetails from '@/components/ProjectDetails';
 
 export const Routes = () => {
 

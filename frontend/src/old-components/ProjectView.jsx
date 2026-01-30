@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { fetchProjects } from '../api';
 import { useAuth } from '../context/AuthContext';
-import DiffModal from '../old-components/DiffModal';
-import ProjectActionsDropdown from '../old-components/ProjectActionsDropdown';
+import DiffModal from '../components/DiffModal';
+import ProjectActionsDropdown from '../components/ProjectActionsDropdown';
 
 const ProjectView = ({ setActiveTab, setSelectedProjectForVersions }) => {
     const { user } = useAuth();

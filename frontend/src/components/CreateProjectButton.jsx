@@ -1,0 +1,26 @@
+import React from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Button } from "@/components/ui/button";
+
+export const CreateProjectButton = () => {
+    const navigate = useNavigate();
+    const location = useLocation();
+
+    const handleClick = () => {
+        // Navigate to projects page with create query param
+        // This works whether we are already on the page or not
+        navigate('/projects?create=true');
+    };
+
+    return (
+        <Button
+            className="text-white gap-2"
+            onClick={handleClick}
+        >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+            </svg>
+            Create New Project
+        </Button>
+    );
+};

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import ProjectList from '../old-components/ProjectList';
+import ProjectList from '../components/ProjectList';
 import { fetchProjects } from '../api/index';
+import { Input } from '../components/ui/input';
+import { Search } from 'lucide-react';
 
 const ProjectsPage = () => {
     const [projects, setProjects] = useState([]);
@@ -44,28 +46,38 @@ const ProjectsPage = () => {
         setSearchTerm(e.target.value);
     };
 
-    if (loading) return <div>Loading projects...</div>;
-    if (error) return <div>Error: {error}</div>;
+    if (loading) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-[400px] text-slate-500">
+                <div className="w-8 h-8 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin mb-4"></div>
+                Loading projects...
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-[400px]">
+                <div className="bg-red-50 text-red-700 px-6 py-4 rounded-lg border border-red-200 max-w-md">
+                    <h3 className="font-semibold mb-2">Error Loading Projects</h3>
+                    <p>{error}</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
-        <div>
-            <h1>Your Projects</h1>
+        <div className="space-y-6">
 
             {/* Search Bar */}
-            <div style={{ marginBottom: '20px' }}>
-                <input
+            <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
                     type="text"
-                    placeholder="Search projects..."
+                    placeholder="Search projects by name or description..."
                     value={searchTerm}
                     onChange={handleSearchChange}
-                    style={{
-                        width: '100%',
-                        maxWidth: '400px',
-                        padding: '10px',
-                        border: '1px solid #ddd',
-                        borderRadius: '4px',
-                        fontSize: '16px'
-                    }}
+                    className="pl-10"
                 />
             </div>
 
@@ -73,5 +85,4 @@ const ProjectsPage = () => {
         </div>
     );
 };
-
 export default ProjectsPage;

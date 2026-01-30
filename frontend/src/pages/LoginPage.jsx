@@ -2,15 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { registerUser } from '../api';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Loader2 } from 'lucide-react';
 
 const LoginPage = () => {
     const { user, login } = useAuth();
     const navigate = useNavigate();
-    const [isLogin, setIsLogin] = useState(true);
-    const [credentials, setCredentials] = useState({ 
-        name: '', 
-        email: '', 
-        password: '', 
+    const [activeTab, setActiveTab] = useState("login");
+    const [credentials, setCredentials] = useState({
+        name: '',
+        email: '',
+        password: '',
         confirmPassword: '',
         role: 'manager'
     });
@@ -28,13 +36,15 @@ const LoginPage = () => {
         setLoading(true);
         setError('');
 
+        const isLogin = activeTab === 'login';
+
         try {
             if (isLogin) {
                 const result = await login({
                     email: credentials.email,
                     password: credentials.password
                 });
-                
+
                 if (result.success) {
                     navigate('/dashboard');
                 } else {
@@ -60,7 +70,7 @@ const LoginPage = () => {
                     email: credentials.email,
                     password: credentials.password
                 });
-                
+
                 if (result.success) {
                     navigate('/dashboard');
                 } else {
@@ -70,7 +80,7 @@ const LoginPage = () => {
         } catch (err) {
             setError(err.error || 'An error occurred');
         }
-        
+
         setLoading(false);
     };
 
@@ -81,170 +91,149 @@ const LoginPage = () => {
         });
     };
 
+    const handleSelectChange = (value) => {
+        setCredentials({
+            ...credentials,
+            role: value
+        });
+    };
+
     return (
-        <div className="login-container">
-            <div className="login-card">
-               
-                <div>
-                    <img 
-                        src="/logo.png" 
-                        alt="Zip Sync Logo" 
-                        style={{ width: '200px', display: 'block', margin: '0 auto 10px' }} 
-                    />
-                </div>
-                <p style={{ textAlign: 'center', color: '#6c757d', marginBottom: '30px' }}>
-                    {isLogin ? 'Sign in to your account' : 'Create a new account'}
-                </p>
-
-                {/* Toggle between login and register */}
-                <div style={{ 
-                    display: 'flex', 
-                    marginBottom: '20px', 
-                    background: '#f8f9fa', 
-                    borderRadius: '8px',
-                    padding: '4px'
-                }}>
-                    <button
-                        type="button"
-                        onClick={() => setIsLogin(true)}
-                        style={{
-                            flex: 1,
-                            padding: '8px 16px',
-                            border: 'none',
-                            borderRadius: '6px',
-                            background: isLogin ? '#00B48B' : 'transparent',
-                            color: isLogin ? 'white' : '#6c757d',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease'
-                        }}
-                    >
-                        Login
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setIsLogin(false)}
-                        style={{
-                            flex: 1,
-                            padding: '8px 16px',
-                            border: 'none',
-                            borderRadius: '6px',
-                            background: !isLogin ? '#00B48B' : 'transparent',
-                            color: !isLogin ? 'white' : '#6c757d',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease'
-                        }}
-                    >
-                        Register
-                    </button>
-                </div>
-                
-                {error && (
-                    <div style={{ 
-                        background: '#f8d7da', 
-                        color: '#721c24', 
-                        padding: '12px 16px', 
-                        borderRadius: '8px', 
-                        marginBottom: '20px',
-                        border: '1px solid #f5c6cb'
-                    }}>
-                        {error}
-                    </div>
-                )}
-
-                <form onSubmit={handleSubmit}>
-                    {!isLogin && (
-                        <div className="form-group">
-                            <label className="form-label">Full Name</label>
-                            <input
-                                type="text"
-                                name="name"
-                                className="form-input"
-                                value={credentials.name}
-                                onChange={handleChange}
-                                placeholder="Enter your full name"
-                                required={!isLogin}
-                            />
-                        </div>
-                    )}
-
-                    <div className="form-group">
-                        <label className="form-label">Email</label>
-                        <input
-                            type="email"
-                            name="email"
-                            className="form-input"
-                            value={credentials.email}
-                            onChange={handleChange}
-                            placeholder="Enter your email"
-                            required
+        <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+            <Card className="w-full max-w-md shadow-lg">
+                <CardHeader className="space-y-1 text-center">
+                    <div className="flex justify-center mb-4">
+                        <img
+                            src="/logo.png"
+                            alt="Zip Sync Logo"
+                            className="w-[200px] h-auto block"
                         />
                     </div>
+                    <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
+                    <CardDescription>
+                        {activeTab === 'login' ? 'Enter your credentials to access your account' : 'Create a new account to get started'}
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                        <TabsList className="grid w-full grid-cols-2 mb-6">
+                            <TabsTrigger value="login">Login</TabsTrigger>
+                            <TabsTrigger value="register">Register</TabsTrigger>
+                        </TabsList>
 
-                    <div className="form-group">
-                        <label className="form-label">Password</label>
-                        <input
-                            type="password"
-                            name="password"
-                            className="form-input"
-                            value={credentials.password}
-                            onChange={handleChange}
-                            placeholder="Enter your password"
-                            required
-                        />
-                    </div>
+                        {error && (
+                            <Alert variant="destructive" className="mb-6">
+                                <AlertDescription>{error}</AlertDescription>
+                            </Alert>
+                        )}
 
-                    {!isLogin && (
-                        <>
-                            <div className="form-group">
-                                <label className="form-label">Confirm Password</label>
-                                <input
-                                    type="password"
-                                    name="confirmPassword"
-                                    className="form-input"
-                                    value={credentials.confirmPassword}
-                                    onChange={handleChange}
-                                    placeholder="Confirm your password"
-                                    required={!isLogin}
-                                />
-                            </div>
+                        <form onSubmit={handleSubmit}>
+                            <TabsContent value="login" className="space-y-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="login-email">Email</Label>
+                                    <Input
+                                        id="login-email"
+                                        name="email"
+                                        type="email"
+                                        placeholder="name@example.com"
+                                        value={credentials.email}
+                                        onChange={handleChange}
+                                        required
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="login-password">Password</Label>
+                                    <Input
+                                        id="login-password"
+                                        name="password"
+                                        type="password"
+                                        placeholder="Enter your password"
+                                        value={credentials.password}
+                                        onChange={handleChange}
+                                        required
+                                    />
+                                </div>
+                            </TabsContent>
 
-                            <div className="form-group">
-                                <label className="form-label">Role</label>
-                                <select
-                                    name="role"
-                                    className="form-input"
-                                    value={credentials.role}
-                                    onChange={handleChange}
-                                    required={!isLogin}
-                                >
-                                    <option value="manager">Manager</option>
-                                    <option value="admin">Admin</option>
-                                </select>
-                            </div>
-                        </>
-                    )}
+                            <TabsContent value="register" className="space-y-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="register-name">Full Name</Label>
+                                    <Input
+                                        id="register-name"
+                                        name="name"
+                                        type="text"
+                                        placeholder="John Doe"
+                                        value={credentials.name}
+                                        onChange={handleChange}
+                                        required={activeTab === 'register'}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="register-email">Email</Label>
+                                    <Input
+                                        id="register-email"
+                                        name="email"
+                                        type="email"
+                                        placeholder="name@example.com"
+                                        value={credentials.email}
+                                        onChange={handleChange}
+                                        required
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="register-password">Password</Label>
+                                    <Input
+                                        id="register-password"
+                                        name="password"
+                                        type="password"
+                                        placeholder="Create a password"
+                                        value={credentials.password}
+                                        onChange={handleChange}
+                                        required
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="confirm-password">Confirm Password</Label>
+                                    <Input
+                                        id="confirm-password"
+                                        name="confirmPassword"
+                                        type="password"
+                                        placeholder="Confirm your password"
+                                        value={credentials.confirmPassword}
+                                        onChange={handleChange}
+                                        required={activeTab === 'register'}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="role">Role</Label>
+                                    <Select
+                                        value={credentials.role}
+                                        onValueChange={handleSelectChange}
+                                    >
+                                        <SelectTrigger id="role">
+                                            <SelectValue placeholder="Select a role" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="manager">Manager</SelectItem>
+                                            <SelectItem value="admin">Admin</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </TabsContent>
 
-                    <button 
-                        type="submit" 
-                        className="btn btn-primary"
-                        style={{ width: '100%', marginTop: '10px' }}
-                        disabled={loading}
-                    >
-                        {loading ? (isLogin ? 'Signing in...' : 'Creating account...') : (isLogin ? 'Sign In' : 'Create Account')}
-                    </button>
-                </form>
-
-                <div style={{ 
-                    textAlign: 'center', 
-                    marginTop: '20px', 
-                    fontSize: '14px', 
-                    color: '#6c757d' 
-                }}>
-                    <p>Demo Credentials:</p>
-                    <p><strong>Admin:</strong> admin@example.com / admin123</p>
-                    <p><strong>Manager:</strong> manager@example.com / manager123</p>
-                </div>
-            </div>
+                            <Button className="w-full mt-6" type="submit" disabled={loading}>
+                                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                {activeTab === 'login' ? 'Sign In' : 'Create Account'}
+                            </Button>
+                        </form>
+                    </Tabs>
+                </CardContent>
+                <CardFooter className="flex flex-col justify-center text-center text-sm text-gray-500">
+                    <p className="font-semibold mb-2">Demo Credentials:</p>
+                    <p>Admin: admin@example.com / admin123</p>
+                    <p>Manager: manager@example.com / manager123</p>
+                </CardFooter>
+            </Card>
         </div>
     );
 };

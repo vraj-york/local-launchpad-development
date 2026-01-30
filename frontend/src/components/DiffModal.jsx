@@ -9,8 +9,8 @@ import {
     DialogTitle,
     DialogDescription,
     DialogFooter,
-} from "../components/ui/dialog";
-import { Button } from "../components/ui/button";
+} from "./ui/dialog";
+import { Button } from "./ui/button";
 
 const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
 

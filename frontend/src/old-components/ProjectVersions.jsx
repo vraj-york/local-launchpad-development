@@ -68,7 +68,7 @@ const ProjectVersions = ({ projectId, projectName }) => {
                         <div className="empty-state">
                             <div className="empty-state-icon">
                                 <svg width="80" height="80" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                                    <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z" />
                                 </svg>
                             </div>
                             <h3>No Project Selected</h3>
@@ -92,11 +92,11 @@ const ProjectVersions = ({ projectId, projectName }) => {
             </div>
 
             {error && (
-                <div style={{ 
-                    background: '#f8d7da', 
-                    color: '#721c24', 
-                    padding: '12px 16px', 
-                    borderRadius: '8px', 
+                <div style={{
+                    background: '#f8d7da',
+                    color: '#721c24',
+                    padding: '12px 16px',
+                    borderRadius: '8px',
                     marginBottom: '20px',
                     border: '1px solid #f5c6cb'
                 }}>
@@ -113,7 +113,7 @@ const ProjectVersions = ({ projectId, projectName }) => {
                         <div className="empty-state">
                             <div className="empty-state-icon">
                                 <svg width="80" height="80" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                                    <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
                                 </svg>
                             </div>
                             <h3>No Versions Found</h3>
@@ -122,8 +122,8 @@ const ProjectVersions = ({ projectId, projectName }) => {
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                             {versions.map((version) => (
-                                <div 
-                                    key={version.id} 
+                                <div
+                                    key={version.id}
                                     style={{
                                         padding: '20px',
                                         border: '1px solid #e9ecef',
@@ -134,10 +134,10 @@ const ProjectVersions = ({ projectId, projectName }) => {
                                 >
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                                         <div>
-                                            <h4 style={{ 
-                                                fontSize: '18px', 
-                                                fontWeight: '600', 
-                                                color: '#2c3e50', 
+                                            <h4 style={{
+                                                fontSize: '18px',
+                                                fontWeight: '600',
+                                                color: '#2c3e50',
                                                 margin: '0 0 4px 0',
                                                 display: 'flex',
                                                 alignItems: 'center',
@@ -161,12 +161,12 @@ const ProjectVersions = ({ projectId, projectName }) => {
                                                 Uploaded by {version.uploader.name} on {new Date(version.createdAt).toLocaleDateString()}
                                             </p>
                                         </div>
-                                        
+
                                         <div style={{ display: 'flex', gap: '8px' }}>
                                             {version.buildUrl && (
-                                                <a 
-                                                    href={version.buildUrl} 
-                                                    target="_blank" 
+                                                <a
+                                                    href={version.buildUrl}
+                                                    target="_blank"
                                                     rel="noopener noreferrer"
                                                     className="btn btn-primary"
                                                     style={{ fontSize: '12px', padding: '6px 12px' }}
@@ -174,9 +174,9 @@ const ProjectVersions = ({ projectId, projectName }) => {
                                                     View Live
                                                 </a>
                                             )}
-                                            
+
                                             {canManageVersions && !version.isActive && (
-                                                <button 
+                                                <button
                                                     className="btn btn-outline"
                                                     style={{ fontSize: '12px', padding: '6px 12px' }}
                                                     onClick={() => handleActivateVersion(version.id)}
@@ -189,7 +189,7 @@ const ProjectVersions = ({ projectId, projectName }) => {
                                     </div>
 
                                     {version.buildUrl && (
-                                        <div style={{ 
+                                        <div style={{
                                             marginTop: '12px',
                                             padding: '8px',
                                             background: '#f8f9fa',
@@ -199,8 +199,8 @@ const ProjectVersions = ({ projectId, projectName }) => {
                                             <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>
                                                 Live URL:
                                             </div>
-                                            <div style={{ 
-                                                fontSize: '12px', 
+                                            <div style={{
+                                                fontSize: '12px',
                                                 color: '#0066cc',
                                                 wordBreak: 'break-all',
                                                 fontFamily: 'monospace'
@@ -210,7 +210,7 @@ const ProjectVersions = ({ projectId, projectName }) => {
                                         </div>
                                     )}
 
-                                    <div style={{ 
+                                    <div style={{
                                         marginTop: '12px',
                                         fontSize: '12px',
                                         color: '#6c757d',

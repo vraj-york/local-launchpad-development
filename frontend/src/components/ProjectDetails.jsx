@@ -1,7 +1,7 @@
 import React from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import ReleaseManagement from './ReleaseManagement';
-import { Button } from '../components/ui/button';
+import { Button } from './ui/button';
 
 const ProjectDetails = () => {
     const { projectId } = useParams();

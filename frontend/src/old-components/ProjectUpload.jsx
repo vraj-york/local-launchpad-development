@@ -13,7 +13,7 @@ const ProjectUpload = () => {
                     <div className="empty-state">
                         <div className="empty-state-icon">
                             <svg width="80" height="80" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,16.5L6.5,12L7.91,10.59L11,13.67L16.59,8.09L18,9.5L11,16.5Z"/>
+                                <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,16.5L6.5,12L7.91,10.59L11,13.67L16.59,8.09L18,9.5L11,16.5Z" />
                             </svg>
                         </div>
                         <h3>Access Denied</h3>
@@ -50,10 +50,10 @@ const ProjectUpload = () => {
                             <li style={{ marginBottom: '8px' }}>Lock the release when you're done uploading</li>
                             <li>Create a new release for future uploads</li>
                         </ol>
-                        
-                        <div style={{ 
-                            padding: '12px', 
-                            background: '#d1ecf1', 
+
+                        <div style={{
+                            padding: '12px',
+                            background: '#d1ecf1',
                             borderRadius: '8px',
                             border: '1px solid #bee5eb',
                             color: '#0c5460'

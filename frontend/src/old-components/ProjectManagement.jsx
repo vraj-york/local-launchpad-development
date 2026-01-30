@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { fetchProjects, createProject } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'sonner';
-import DiffModal from './DiffModal';
-import ProjectActionsDropdown from './ProjectActionsDropdown';
+import DiffModal from '../components/DiffModal';
+import ProjectActionsDropdown from '../components/ProjectActionsDropdown';
 
 const ProjectManagement = () => {
     const { user } = useAuth();
