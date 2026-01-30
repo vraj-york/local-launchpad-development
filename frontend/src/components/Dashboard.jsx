@@ -1,13 +1,3 @@
-// import React from 'react';
-// import DashboardHome from './DashboardHome';
-
-// const Dashboard = () => {
-//     return <DashboardHome />;
-// };
-
-// export default Dashboard;
-
-
 import React from 'react';
 import DashboardHome from '../old-components/DashboardHome';
 

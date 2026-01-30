@@ -17,9 +17,7 @@ export const Routes = () => {
 
   const privateRoutes = [
     { path: "/dashboard", element: <Dashboard /> },
-    {
-      path: "/projects", element: <Projects />
-    },
+    { path: "/projects", element: <Projects /> },
     { path: "/projects/:projectId", element: <ProjectDetails /> },
     { path: "/projects/:projectId/diff", element: <GitDiff /> },
   ]

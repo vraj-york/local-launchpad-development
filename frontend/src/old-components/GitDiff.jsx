@@ -3,6 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Diff, Hunk, parseDiff } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchProjectGitDiff } from '../api';
+import { Button } from '../components/ui/button';
+import { Card, CardContent, CardHeader } from '../components/ui/card';
+import { Badge } from '../components/ui/badge';
+import { ChevronRight, Plus, Minus, Check, FileText, AlertCircle, XCircle, ArrowLeft } from 'lucide-react';
 
 const GitDiff = () => {
   const { projectId } = useParams();
@@ -31,18 +35,18 @@ const GitDiff = () => {
     const newValue = file.newValue || '';
     const oldLines = oldValue.split('\n');
     const newLines = newValue.split('\n');
-    
+
     // Simple line-by-line comparison
     let diffLines = [];
     const maxLines = Math.max(oldLines.length, newLines.length);
-    
+
     // Add context lines around changes for better visualization
     let hasChanges = false;
-    
+
     for (let i = 0; i < maxLines; i++) {
       const oldLine = oldLines[i];
       const newLine = newLines[i];
-      
+
       if (oldLine !== undefined && newLine !== undefined) {
         if (oldLine === newLine) {
           diffLines.push(` ${oldLine}`);
@@ -59,14 +63,14 @@ const GitDiff = () => {
         diffLines.push(`+${newLine}`);
       }
     }
-    
+
     if (!hasChanges) {
       return null; // No changes to display
     }
-    
+
     // Create unified diff header
     const header = `--- a/${file.path}\n+++ b/${file.path}\n@@ -1,${oldLines.length} +1,${newLines.length} @@`;
-    
+
     return `${header}\n${diffLines.join('\n')}`;
   };
 
@@ -79,65 +83,57 @@ const GitDiff = () => {
 
     if (tooManyChanges) {
       return (
-        <div className="too-many-changes-message">
-          <div className="too-many-changes-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M11,15H13V17H11V15M11,7H13V13H11V7M12,2C6.47,2 2,6.5 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20Z"/>
-            </svg>
-          </div>
-          <span>Too many changes ({totalChanges} lines changed)</span>
+        <div className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span className="text-sm">Too many changes ({totalChanges} lines changed)</span>
         </div>
       );
     }
 
     if (file.isBinaryFile) {
       return (
-        <div className="binary-file-message">
-          <div className="binary-file-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M13,9H18.5L13,3.5V9M6,2H14L20,8V20A2,2 0 0,1 18,22H6C4.89,22 4,21.1 4,20V4C4,2.89 4.89,2 6,2Z"/>
-            </svg>
-          </div>
-          <span>Binary file not shown</span>
+        <div className="flex items-center gap-3 p-4 bg-slate-50 border border-slate-200 rounded-lg text-slate-600">
+          <FileText className="w-4 h-4 flex-shrink-0" />
+          <span className="text-sm">Binary file not shown</span>
         </div>
       );
     }
 
     try {
       const diffText = createUnifiedDiff(file);
-      
+
       if (!diffText) {
         return (
-          <div className="no-changes-message">
-            <span>No changes to display</span>
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-slate-500 text-sm text-center">
+            No changes to display
           </div>
         );
       }
 
       const parsedDiff = parseDiff(diffText);
-      
+
       if (parsedDiff.length === 0 || !parsedDiff[0].hunks || parsedDiff[0].hunks.length === 0) {
         return (
-          <div className="no-changes-message">
-            <span>No changes to display</span>
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-slate-500 text-sm text-center">
+            No changes to display
           </div>
         );
       }
 
       return (
-        <div className="react-diff-view-wrapper">
+        <div className="overflow-x-auto">
           {parsedDiff.map((diffFile, index) => (
-            <Diff 
-              key={index} 
-              viewType="split" 
+            <Diff
+              key={index}
+              viewType="split"
               diffType={diffFile.type || 'modify'}
               hunks={diffFile.hunks}
             >
-              {(hunks) => 
-                hunks.map((hunk, hunkIndex) => 
-                   (
-                    <Hunk key={hunkIndex} hunk={hunk} />
-                  )
+              {(hunks) =>
+                hunks.map((hunk, hunkIndex) =>
+                (
+                  <Hunk key={hunkIndex} hunk={hunk} />
+                )
                 )
               }
             </Diff>
@@ -146,8 +142,8 @@ const GitDiff = () => {
       );
     } catch (error) {
       return (
-        <div className="diff-error-message">
-          <span>Error displaying diff: {error.message}</span>
+        <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          Error displaying diff: {error.message}
         </div>
       );
     }
@@ -156,38 +152,39 @@ const GitDiff = () => {
   const getStatusIcon = (status) => {
     switch (status) {
       case 'added':
-        return (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-          </svg>
-        );
+        return <Plus className="w-4 h-4" />;
       case 'deleted':
-        return (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M19 13H5v-2h14v2z"/>
-          </svg>
-        );
+        return <Minus className="w-4 h-4" />;
       case 'modified':
-        return (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-          </svg>
-        );
+        return <Check className="w-4 h-4" />;
       default:
         return null;
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'added':
+        return 'text-green-600 bg-green-50';
+      case 'deleted':
+        return 'text-red-600 bg-red-50';
+      case 'modified':
+        return 'text-blue-600 bg-blue-50';
+      default:
+        return 'text-slate-600 bg-slate-50';
     }
   };
 
   useEffect(() => {
     const fetchDiffData = async () => {
       if (!projectId) return;
-      
+
       setLoading(true);
       setError(null);
-      
+
       try {
         const data = await fetchProjectGitDiff(projectId);
-        
+
         setDiffData(data);
       } catch (err) {
         setError(err.error || err.message || 'Failed to fetch git diff data');
@@ -202,21 +199,20 @@ const GitDiff = () => {
   // Render different states based on loading/error/data conditions
   if (loading) {
     return (
-      <div className="git-diff-container">
-        <div className="git-diff-header">
-          <button 
-            className="btn btn-outline"
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="flex items-center justify-between mb-6">
+          <Button
+            variant="outline"
             onClick={() => navigate(-1)}
+            className="gap-2"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
-              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-            </svg>
+            <ArrowLeft className="w-4 h-4" />
             Back
-          </button>
-          <h1>Git Differences</h1>
+          </Button>
+          <h1 className="text-2xl font-bold text-slate-800">Git Differences</h1>
         </div>
-        <div className="loading">
-          <div className="spinner"></div>
+        <div className="flex flex-col items-center justify-center py-16 text-slate-500">
+          <div className="w-10 h-10 border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin mb-4"></div>
           Loading git diff data...
         </div>
       </div>
@@ -225,33 +221,29 @@ const GitDiff = () => {
 
   if (error) {
     return (
-      <div className="git-diff-container">
-        <div className="git-diff-header">
-          <button 
-            className="btn btn-outline"
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="flex items-center justify-between mb-6">
+          <Button
+            variant="outline"
             onClick={() => navigate(-1)}
+            className="gap-2"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
-              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-            </svg>
+            <ArrowLeft className="w-4 h-4" />
             Back
-          </button>
-          <h1>Git Differences</h1>
+          </Button>
+          <h1 className="text-2xl font-bold text-slate-800">Git Differences</h1>
         </div>
-        <div className="error-state">
-          <div className="error-icon">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12,2C17.53,2 22,6.47 22,12C22,17.53 17.53,22 12,22C6.47,22 2,17.53 2,12C2,6.47 6.47,2 12,2M15.59,7L12,10.59L8.41,7L7,8.41L10.59,12L7,15.59L8.41,17L12,13.41L15.59,17L17,15.59L13.41,12L17,8.41L15.59,7Z"/>
-            </svg>
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="bg-red-50 p-4 rounded-full mb-4 text-red-500">
+            <XCircle className="w-12 h-12" />
           </div>
-          <h3>Error Loading Git Diff</h3>
-          <p>{error}</p>
-          <button 
-            className="btn btn-primary"
+          <h3 className="text-lg font-semibold text-slate-800 mb-2">Error Loading Git Diff</h3>
+          <p className="text-red-600 mb-6 max-w-md">{error}</p>
+          <Button
             onClick={() => window.location.reload()}
           >
             Try Again
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -259,31 +251,37 @@ const GitDiff = () => {
 
   if (!diffData || !diffData.files || diffData.files.length === 0) {
     return (
-      <div className="git-diff-container">
-        <div className="git-diff-header">
-          <button 
-            className="btn btn-outline"
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="flex items-center justify-between mb-6">
+          <Button
+            variant="outline"
             onClick={() => navigate(-1)}
+            className="gap-2"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
-              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-            </svg>
+            <ArrowLeft className="w-4 h-4" />
             Back
-          </button>
-          <h1>Git Differences</h1>
+          </Button>
+          <h1 className="text-2xl font-bold text-slate-800">Git Differences</h1>
         </div>
-        <div className="empty-state">
-          <div className="empty-icon">
-            <svg width="80" height="80" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M13,9H18.5L13,3.5V9M6,2H14L20,8V20A2,2 0 0,1 18,22H6C4.89,22 4,21.1 4,20V4C4,2.89 4.89,2 6,2M15,18V16H6V18H15M18,14V12H6V14H18Z"/>
-            </svg>
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="text-slate-300 mb-4">
+            <FileText className="w-20 h-20" />
           </div>
-          <h3>No Changes Found</h3>
-          <p>No git differences available for this project. This could mean:</p>
-          <ul style={{ textAlign: 'left', margin: '16px auto', maxWidth: '400px' }}>
-            <li>The project has no recent commits</li>
-            <li>There are no differences between the last two commits</li>
-            <li>The project doesn't have a git repository</li>
+          <h3 className="text-lg font-semibold text-slate-700 mb-2">No Changes Found</h3>
+          <p className="text-slate-500 mb-4">No git differences available for this project. This could mean:</p>
+          <ul className="text-left text-slate-600 space-y-2 max-w-md">
+            <li className="flex items-start gap-2">
+              <span className="text-slate-400 mt-1">•</span>
+              <span>The project has no recent commits</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-slate-400 mt-1">•</span>
+              <span>There are no differences between the last two commits</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-slate-400 mt-1">•</span>
+              <span>The project doesn't have a git repository</span>
+            </li>
           </ul>
         </div>
       </div>
@@ -293,103 +291,106 @@ const GitDiff = () => {
   // Main render for successful data load
 
   return (
-    <div className="git-diff-container">
-      <div className="git-diff-header">
-        <button 
-          className="btn btn-outline"
+    <div className="max-w-7xl mx-auto p-6">
+      <div className="flex items-center justify-between mb-6">
+        <Button
+          variant="outline"
           onClick={() => navigate(-1)}
+          className="gap-2"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
-            <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-          </svg>
+          <ArrowLeft className="w-4 h-4" />
           Back
-        </button>
-        <div>
-          <h1>Git Differences - {diffData.projectName}</h1>
-          <p className="diff-summary">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '8px' }}>
-              <path d="M13,9H18.5L13,3.5V9M6,2H14L20,8V20A2,2 0 0,1 18,22H6C4.89,22 4,21.1 4,20V4C4,2.89 4.89,2 6,2M15,18V16H6V18H15M18,14V12H6V14H18Z"/>
-            </svg>
-            <strong>{diffData.totalFiles}</strong> file{diffData.totalFiles !== 1 ? 's' : ''} changed
-            <span className="diff-stats">
-              <span className="additions">+{diffData.totalAdditions}</span>
-              <span className="deletions">-{diffData.totalDeletions}</span>
+        </Button>
+        <div className="text-right">
+          <h1 className="text-2xl font-bold text-slate-800 mb-1">Git Differences - {diffData.projectName}</h1>
+          <div className="flex items-center gap-2 text-sm text-slate-600">
+            <FileText className="w-4 h-4" />
+            <span>
+              <strong className="text-slate-800">{diffData.totalFiles}</strong> file{diffData.totalFiles !== 1 ? 's' : ''} changed
             </span>
-            lines changed
-          </p>
+            <span className="text-green-600 font-medium">+{diffData.totalAdditions}</span>
+            <span className="text-red-600 font-medium">-{diffData.totalDeletions}</span>
+            <span>lines changed</span>
+          </div>
         </div>
       </div>
 
       {/* GitHub-style vertical file list */}
-      <div className="git-diff-files">
+      <div className="space-y-4">
         {diffData.files.map((file) => {
           const isCollapsed = collapsedFiles.has(file.id);
           const totalChanges = getFileChanges(file);
           const tooManyChanges = hasTooManyChanges(file);
 
           return (
-            <div key={file.id} className="git-diff-file">
-              <div className="file-header" onClick={() => toggleFileCollapse(file.id)}>
-                <div className="file-header-left">
-                  <button className="file-toggle-btn">
-                    <svg 
-                      width="12" 
-                      height="12" 
-                      viewBox="0 0 24 24" 
-                      fill="currentColor"
-                      style={{ 
-                        transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
-                        transition: 'transform 0.2s ease'
+            <Card key={file.id} className="overflow-hidden">
+              <CardHeader
+                className="p-4 cursor-pointer hover:bg-slate-50 transition-colors"
+                onClick={() => toggleFileCollapse(file.id)}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleFileCollapse(file.id);
                       }}
                     >
-                      <path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/>
-                    </svg>
-                  </button>
-                  
-                  <span 
-                    className={`file-status-indicator ${file.status}`}
-                    title={file.status}
-                  >
-                    {getStatusIcon(file.status)}
-                  </span>
-                  
-                  <span className="file-path-text">{file.path}</span>
-                  
-                  {tooManyChanges && (
-                    <span className="too-many-changes-badge">
-                      Too many changes
+                      <ChevronRight
+                        className={`w-3 h-3 transition-transform ${!isCollapsed ? 'rotate-90' : ''}`}
+                      />
+                    </Button>
+
+                    <span
+                      className={`flex items-center justify-center w-6 h-6 rounded ${getStatusColor(file.status)}`}
+                      title={file.status}
+                    >
+                      {getStatusIcon(file.status)}
                     </span>
-                  )}
-                </div>
-                
-                <div className="file-header-right">
-                  <div className="file-changes-bar">
+
+                    <span className="font-mono text-sm text-slate-700 truncate">{file.path}</span>
+
+                    {tooManyChanges && (
+                      <Badge variant="secondary" className="bg-amber-100 text-amber-800 hover:bg-amber-100">
+                        Too many changes
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3">
                     {file.additions > 0 && (
-                      <>
-                        <span className="additions-text">+{file.additions}</span>
-                        <div className="changes-visual">
-                          {Array.from({length: Math.min(5, Math.ceil((file.additions / totalChanges) * 5))}).map((_, i) => (
-                            <div key={`add-${i}`} className="change-dot addition"></div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs font-medium text-green-600">+{file.additions}</span>
+                        <div className="flex gap-0.5">
+                          {Array.from({ length: Math.min(5, Math.ceil((file.additions / totalChanges) * 5)) }).map((_, i) => (
+                            <div key={`add-${i}`} className="w-2 h-2 bg-green-500 rounded-sm"></div>
                           ))}
                         </div>
-                      </>
+                      </div>
                     )}
                     {file.deletions > 0 && (
-                      <>
-                        <span className="deletions-text">-{file.deletions}</span>
-                        <div className="changes-visual">
-                          {Array.from({length: Math.min(5, Math.ceil((file.deletions / totalChanges) * 5))}).map((_, i) => (
-                            <div key={`del-${i}`} className="change-dot deletion"></div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs font-medium text-red-600">-{file.deletions}</span>
+                        <div className="flex gap-0.5">
+                          {Array.from({ length: Math.min(5, Math.ceil((file.deletions / totalChanges) * 5)) }).map((_, i) => (
+                            <div key={`del-${i}`} className="w-2 h-2 bg-red-500 rounded-sm"></div>
                           ))}
                         </div>
-                      </>
+                      </div>
                     )}
                   </div>
                 </div>
-              </div>
+              </CardHeader>
 
-              <CollapsibleDiffContent file={file} isCollapsed={isCollapsed} />
-            </div>
+              {!isCollapsed && (
+                <CardContent className="p-4 pt-0">
+                  <CollapsibleDiffContent file={file} isCollapsed={isCollapsed} />
+                </CardContent>
+              )}
+            </Card>
           );
         })}
       </div>
