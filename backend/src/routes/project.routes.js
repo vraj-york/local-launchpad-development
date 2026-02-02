@@ -12,7 +12,12 @@ import crypto from "crypto";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
 import config from "../config/index.js";
-
+import { validateProjectName } from "../utils/projectValidation.utils.js";
+import allowRoles from "../middlewares/role.middleware.js";
+import { projectController } from "../controllers/project.controller.js";
+import asyncHandler from "../middlewares/asyncHandler.middleware.js";
+import { createProjectValidation } from "../validators/project.validator.js";
+import { validate } from "../validators/validate.middleware.js";
 dotenv.config();
 
 const router = express.Router();
@@ -31,21 +36,7 @@ const RATE_LIMIT_WINDOW = 60000; // 1 minute
 const MAX_CALLS_PER_WINDOW = 10;
 
 // Helper functions
-function validateProjectName(name) {
-  if (!name || typeof name !== 'string') {
-    throw new Error('Invalid project name: must be a non-empty string');
-  }
-  if (!/^[a-zA-Z0-9-_]+$/.test(name)) {
-    throw new Error('Project name contains invalid characters. Only alphanumeric, hyphens, and underscores allowed.');
-  }
-  if (name.length > 100) {
-    throw new Error('Project name too long. Maximum 100 characters allowed.');
-  }
-  if (name.length < 1) {
-    throw new Error('Project name too short. Minimum 1 character required.');
-  }
-  return name;
-}
+
 
 function sanitizeCommand(command) {
   const dangerousChars = /[;&|`$(){}[\]\\]/g;
@@ -779,76 +770,26 @@ async function checkRepoExists(repoName) {
 
   return response.status === 200;
 }
+router.get(
+  "/",
+  authenticateToken,
+  asyncHandler(projectController.list)
+);
 
-router.get("/", authenticateToken, async (req, res) => {
-  // List projects for user (admin: all, manager: assigned)
-  const { id, role } = req.user;
-  let projects;
-  if (role === "admin") {
-    projects = await prisma.project.findMany({
-      include: {
-        versions: {
-          where: { isActive: true },
-          select: { id: true, version: true, buildUrl: true, createdAt: true }
-        },
-        releases: {
-          include: {
-            versions: {
-              orderBy: { createdAt: 'desc' },
-              take: 1
-            }
-          },
-          orderBy: { createdAt: 'desc' }
-        }
-      }
-    });
-  } else if (role === "manager") {
-    projects = await prisma.project.findMany({
-      where: { assignedManagerId: id },
-      include: {
-        versions: {
-          where: { isActive: true },
-          select: { id: true, version: true, buildUrl: true, createdAt: true }
-        },
-        releases: {
-          include: {
-            versions: {
-              orderBy: { createdAt: 'desc' },
-              take: 1
-            }
-          },
-          orderBy: { createdAt: 'desc' }
-        }
-      }
-    });
-  } else {
-    return res.status(403).json({ error: "Forbidden" });
-  }
-  res.json(projects);
-});
 
-router.post("/", authenticateToken, async (req, res) => {
-  const { name, description, assignedManagerId } = req.body;
-  const { id, role } = req.user;
 
-  if (role !== "admin" && role !== "manager") {
-    return res.status(403).json({ error: "Forbidden" });
-  }
 
-  try {
-    const project = await prisma.project.create({
-      data: {
-        name,
-        description,
-        createdById: id,
-        assignedManagerId,
-      },
-    });
-    res.status(201).json(project);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
+/** Create project */
+router.post(
+  "/",
+  authenticateToken,
+  allowRoles("admin", "manager"),
+  createProjectValidation,
+  validate,
+  asyncHandler(projectController.create)
+);
+
+
 
 const upload = multer({
   dest: path.join(process.cwd(), "uploads"),
@@ -1194,94 +1135,161 @@ window.markerConfig = {
   }
 });
 
-router.get("/:id/live-url", authenticateToken, async (req, res) => {
-  const projectId = parseInt(req.params.id, 10);
-  const { id: userId, role } = req.user;
+/**
+ * @swagger
+ * tags:
+ *   name: Projects
+ *   description: Project management API
+ */
 
-  // Fetch project and check access
-  const project = await prisma.project.findUnique({ where: { id: projectId } });
-  if (!project) return res.status(404).json({ error: "Project not found" });
+/**
+ * @swagger
+ * /projects:
+ *   get:
+ *     summary: Get all projects
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.get(
+  "/",
+  authenticateToken,
+  asyncHandler(projectController.list)
+);
 
-  // Only admin or assigned manager can access
-  let hasAccess = false;
-  if (role === "admin") hasAccess = true;
-  else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
-  if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
+/**
+ * @swagger
+ * /projects:
+ *   post:
+ *     summary: Create a new project
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.post(
+  "/",
+  authenticateToken,
+  allowRoles("admin", "manager"),
+  createProjectValidation,
+  validate,
+  asyncHandler(projectController.create)
+);
+/**
+ * @swagger
+ * /projects/{id}/live-url:
+ *   get:
+ *     summary: Get project live URL
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.get(
+  "/:id/live-url",
+  authenticateToken,
+  asyncHandler(projectController.getLiveUrl)
+);
 
-  // Get active version
-  const activeVersion = await prisma.projectVersion.findFirst({
-    where: { projectId, isActive: true }
-  });
+/**
+ * @swagger
+ * /projects/{id}/versions:
+ *   get:
+ *     summary: Get all project versions
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.get(
+  "/:id/versions",
+  authenticateToken,
+  asyncHandler(projectController.listVersions)
+);
 
-  if (!activeVersion) {
-    return res.status(404).json({ error: "No live build found for this project" });
-  }
+/**
+ * @swagger
+ * /projects/{id}/versions/{versionId}/activate:
+ *   post:
+ *     summary: Activate a specific project version
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *       - in: path
+ *         name: versionId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.post(
+  "/:id/versions/:versionId/activate",
+  authenticateToken,
+  asyncHandler(projectController.activateVersion)
+);
 
-  res.json({ liveUrl: activeVersion.buildUrl, version: activeVersion.version });
-});
 
-// Get all versions for a project
-router.get("/:id/versions", authenticateToken, async (req, res) => {
-  const projectId = parseInt(req.params.id, 10);
-  const { id: userId, role } = req.user;
-
-  // Check access
-  const project = await prisma.project.findUnique({ where: { id: projectId } });
-  if (!project) return res.status(404).json({ error: "Project not found" });
-
-  let hasAccess = false;
-  if (role === "admin") hasAccess = true;
-  else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
-  if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
-
-  const versions = await prisma.projectVersion.findMany({
-    where: { projectId },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      uploader: {
-        select: { id: true, name: true, email: true }
-      }
-    }
-  });
-
-  res.json(versions);
-});
-
-// Activate a specific version
-router.post("/:id/versions/:versionId/activate", authenticateToken, async (req, res) => {
-  const projectId = parseInt(req.params.id, 10);
-  const versionId = parseInt(req.params.versionId, 10);
-  const { id: userId, role } = req.user;
-
-  // Check access
-  const project = await prisma.project.findUnique({ where: { id: projectId } });
-  if (!project) return res.status(404).json({ error: "Project not found" });
-
-  let hasAccess = false;
-  if (role === "admin") hasAccess = true;
-  else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
-  if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
-
-  // Check if version exists
-  const version = await prisma.projectVersion.findFirst({
-    where: { id: versionId, projectId }
-  });
-  if (!version) return res.status(404).json({ error: "Version not found" });
-
-  // Deactivate all versions
-  await prisma.projectVersion.updateMany({
-    where: { projectId },
-    data: { isActive: false }
-  });
-
-  // Activate the selected version
-  await prisma.projectVersion.update({
-    where: { id: versionId },
-    data: { isActive: true }
-  });
-
-  res.json({ message: "Version activated successfully" });
-});
+/**
+ * @swagger
+ * /projects/{projectId}:
+ *   get:
+ *     summary: Get project by ID
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.get('/:projectId', authenticateToken, projectController.getById);
 
 // Get diff summary for a project
 router.get("/:id/diff-summary", authenticateToken, async (req, res) => {
@@ -1629,43 +1637,10 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
   }
 });
 
-
-// API endpoint to get project info for header display
-router.get("/:id/info", async (req, res) => {
-  const projectId = parseInt(req.params.id, 10);
-
-  try {
-    // Get project basic info
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: {
-        id: true,
-        name: true
-      }
-    });
-
-    if (!project) {
-      return res.status(404).json({ error: "Project not found" });
-    }
-
-    // Get active version
-    const activeVersion = await prisma.projectVersion.findFirst({
-      where: { projectId, isActive: true },
-      select: { version: true, createdAt: true }
-    });
-
-    res.json({
-      id: project.id,
-      name: project.name,
-      version: activeVersion?.version || "1.0.0",
-      lastUpdated: activeVersion?.createdAt || null
-    });
-  } catch (error) {
-    console.error('Error fetching project info:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
+router.get(
+  "/:id/info",
+  asyncHandler(projectController.info)
+);
 // API endpoint to generate Jira tickets from git diff summary
 router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) => {
   const projectId = parseInt(req.params.id, 10);

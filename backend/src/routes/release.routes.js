@@ -206,7 +206,31 @@ async function checkRepoExists(repoName) {
     return response.status === 200;
 }
 
-// Get all releases for a project
+/**
+ * @swagger
+ * tags:
+ *   name: Releases
+ *   description: Release management API
+ */
+
+/**
+ * @swagger
+ * /releases/project/{projectId}:
+ *   get:
+ *     summary: Get all releases for a project
+ *     tags: [Releases]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Success
+ */
 router.get("/project/:projectId", authenticateToken, async (req, res) => {
     const projectId = parseInt(req.params.projectId, 10);
     const { id: userId, role } = req.user;
@@ -247,7 +271,34 @@ router.get("/project/:projectId", authenticateToken, async (req, res) => {
     }
 });
 
-// Create a new release
+/**
+ * @swagger
+ * /releases:
+ *   post:
+ *     summary: Create a new release
+ *     tags: [Releases]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - projectId
+ *               - name
+ *             properties:
+ *               projectId:
+ *                 type: integer
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Created
+ */
 router.post("/", authenticateToken, async (req, res) => {
     const { projectId, name, description } = req.body;
     const { id: userId, role } = req.user;
@@ -288,7 +339,35 @@ router.post("/", authenticateToken, async (req, res) => {
     }
 });
 
-// Lock/Unlock a release
+/**
+ * @swagger
+ * /releases/{releaseId}/lock:
+ *   post:
+ *     summary: Lock or unlock a release
+ *     tags: [Releases]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: releaseId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - locked
+ *             properties:
+ *               locked:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Success
+ */
 router.post("/:releaseId/lock", authenticateToken, async (req, res) => {
     const releaseId = parseInt(req.params.releaseId, 10);
     const { locked } = req.body;
@@ -345,7 +424,22 @@ router.post("/:releaseId/lock", authenticateToken, async (req, res) => {
     }
 });
 
-// API endpoint to get release info for header display
+/**
+ * @swagger
+ * /releases/{releaseId}/info:
+ *   get:
+ *     summary: Get release info for header display
+ *     tags: [Releases]
+ *     parameters:
+ *       - in: path
+ *         name: releaseId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Success
+ */
 router.get("/:releaseId/info", async (req, res) => {
     const releaseId = parseInt(req.params.releaseId, 10);
 
@@ -391,7 +485,36 @@ router.get("/:releaseId/info", async (req, res) => {
     }
 });
 
-// Public API endpoint to lock/unlock a release (for clients without authentication)
+/**
+ * @swagger
+ * /releases/{releaseId}/public-lock:
+ *   post:
+ *     summary: Lock/unlock a release (public)
+ *     tags: [Releases]
+ *     parameters:
+ *       - in: path
+ *         name: releaseId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - locked
+ *               - token
+ *             properties:
+ *               locked:
+ *                 type: boolean
+ *               token:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ */
 router.post("/:releaseId/public-lock", async (req, res) => {
     const releaseId = parseInt(req.params.releaseId, 10);
     const { locked, token } = req.body;
@@ -458,6 +581,36 @@ const upload = multer({
     limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
 });
 
+/**
+ * @swagger
+ * /releases/{releaseId}/upload:
+ *   post:
+ *     summary: Upload ZIP to a release
+ *     tags: [Releases]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: releaseId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               project:
+ *                 type: string
+ *                 format: binary
+ *               version:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ */
 router.post("/:releaseId/upload", authenticateToken, upload.single("project"), async (req, res) => {
     const releaseId = parseInt(req.params.releaseId, 10);
     const { role, id: userId } = req.user;

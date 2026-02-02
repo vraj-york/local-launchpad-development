@@ -6,6 +6,71 @@ import { PrismaClient } from "@prisma/client";
 const router = express.Router();
 const prisma = new PrismaClient();
 
+
+/**
+ * @swagger
+ * tags:
+ *   name: Auth
+ *   description: Authentication API
+ */
+
+/**
+ * @swagger
+ * /auth/managers:
+ *   get:
+ *     summary: Get list of managers
+ *     tags: [Auth]
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.get("/managers", async (req, res) => {
+  try {
+    const managers = await prisma.user.findMany({
+      where: { role: "manager" },
+      select: {
+        id: true,
+        name: true,
+        email: true
+      }
+    });
+    res.json(managers);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * @swagger
+ * /auth/register:
+ *   post:
+ *     summary: Register a new user
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - email
+ *               - password
+ *               - role
+ *             properties:
+ *               name:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               role:
+ *                 type: string
+ *                 enum: [admin, manager, developer]
+ *     responses:
+ *       200:
+ *         description: Success
+ */
 router.post("/register", async (req, res) => {
   const { name, email, password, role } = req.body;
   const hashedPassword = await bcrypt.hash(password, 10);
@@ -19,6 +84,30 @@ router.post("/register", async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /auth/login:
+ *   post:
+ *     summary: Login user
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ */
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
   const user = await prisma.user.findUnique({ where: { email } });
@@ -34,5 +123,6 @@ router.post("/login", async (req, res) => {
   );
   res.json({ token, user });
 });
+
 
 export default router;
