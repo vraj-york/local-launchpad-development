@@ -17,7 +17,6 @@ const ProjectList = ({ projects }) => {
         );
     }
 
-    console.log(projects);
     return (
         <div className="space-y-4">
             <div className="flex items-center gap-2 text-sm text-slate-500">

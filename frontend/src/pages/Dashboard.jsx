@@ -1,15 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { fetchProjects } from '../api';
 import { useNavigate } from 'react-router-dom';
-import { Button } from './ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import ProjectCard from './ProjectCard';
-import { CreateProjectButton } from './CreateProjectButton';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import ProjectCard from '../components/ProjectCard';
+import { CreateProjectButton } from '../components/CreateProjectButton';
 
 const Dashboard = () => {
     const [projects, setProjects] = useState([]);
     const [loading, setLoading] = useState(true);
-    const navigate = useNavigate();
     const [stats, setStats] = useState({
         totalProjects: 0,
         activeProjects: 0,

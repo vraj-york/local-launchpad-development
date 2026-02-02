@@ -5,13 +5,11 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Settings, History, FileText, MoreVertical } from 'lucide-react';
+import { History, FileText, MoreVertical } from 'lucide-react';
 
-const ProjectActionsDropdown = ({ project, onGitDiff, onManage }) => {
+const ProjectActionsDropdown = ({ project, onGitDiff }) => {
     const navigate = useNavigate();
 
     return (
@@ -26,12 +24,6 @@ const ProjectActionsDropdown = ({ project, onGitDiff, onManage }) => {
                     <FileText className="mr-2 h-4 w-4" />
                     <span>View Git Diff</span>
                 </DropdownMenuItem>
-                {/* {onManage && (
-                    <DropdownMenuItem onClick={onManage}>
-                        <Settings className="mr-2 h-4 w-4" />
-                        <span>Manage Details</span>
-                    </DropdownMenuItem>
-                )} */}
 
                 {project.versions && project.versions.length > 0 && project.versions[0].buildUrl && (
                     <DropdownMenuItem onClick={() => navigate(`/projects/${project.id}/diff`)}>

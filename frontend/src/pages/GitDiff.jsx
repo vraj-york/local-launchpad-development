@@ -3,10 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Diff, Hunk, parseDiff } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchProjectGitDiff } from '../api';
-import { Button } from './ui/button';
-import { Card, CardContent, CardHeader } from './ui/card';
-import { Badge } from './ui/badge';
-import { ChevronRight, Plus, Minus, Check, FileText, AlertCircle, XCircle, ArrowLeft } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { AlertCircle, ArrowLeft, ChevronRight, FileText, XCircle } from 'lucide-react';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+
 
 const GitDiff = () => {
   const { projectId } = useParams();
@@ -183,7 +184,9 @@ const GitDiff = () => {
       setError(null);
 
       try {
+        console.log("started to fetch git diffrence")
         const data = await fetchProjectGitDiff(projectId);
+        console.log(data, "GitDiffData")
 
         setDiffData(data);
       } catch (err) {

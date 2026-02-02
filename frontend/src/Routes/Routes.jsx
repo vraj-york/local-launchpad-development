@@ -1,11 +1,12 @@
 import { BrowserRouter, Navigate, Route, Routes as RouterRoutes, } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext';
 import LoginPage from '../pages/LoginPage';
-import Dashboard from '../components/Dashboard';
-import GitDiff from '../components/GitDiff';
 import { MainLayout } from '@/layouts/MainLayout';
-import { Projects } from '@/components/Projects';
-import ProjectDetails from '@/components/ProjectDetails';
+import ProjectDetails from '@/pages/ProjectDetails';
+import Dashboard from '@/pages/Dashboard';
+import GitDiff from '@/pages/GitDiff';
+import Projects from '@/pages/Projects';
+import CreateProject from '@/pages/CreateProject';
 
 export const Routes = () => {
 
@@ -18,6 +19,7 @@ export const Routes = () => {
   const privateRoutes = [
     { path: "/dashboard", element: <Dashboard /> },
     { path: "/projects", element: <Projects /> },
+    { path: "/projects/new", element: <CreateProject /> },
     { path: "/projects/:projectId", element: <ProjectDetails /> },
     { path: "/projects/:projectId/diff", element: <GitDiff /> },
   ]

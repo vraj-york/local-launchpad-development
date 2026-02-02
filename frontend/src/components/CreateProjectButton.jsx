@@ -1,15 +1,12 @@
 import React from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 
 export const CreateProjectButton = () => {
     const navigate = useNavigate();
-    const location = useLocation();
 
     const handleClick = () => {
-        // Navigate to projects page with create query param
-        // This works whether we are already on the page or not
-        navigate('/projects?create=true');
+        navigate('/projects/new');
     };
 
     return (

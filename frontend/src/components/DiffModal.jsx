@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
 import { fetchProjectDiff, generateJiraTickets } from '../api';
 import { toast } from 'sonner';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
+import { Document, Packer, Paragraph, HeadingLevel } from 'docx';
 import {
     Dialog,
     DialogContent,
     DialogHeader,
     DialogTitle,
     DialogDescription,
-    DialogFooter,
 } from "./ui/dialog";
 import { Button } from "./ui/button";
 
@@ -23,20 +22,18 @@ const DiffModal = ({ isOpen, onClose, projectId, projectName }) => {
 
     const handleFetchDiff = async () => {
         if (!projectId) return;
-
         setLoading(true);
         setError(null);
-        toast.info('Generating git diff summary...');
-
         try {
             const data = await fetchProjectDiff(projectId);
             console.log('🔍 Full API Response:', data);
             setDiffData(data);
             toast.success('Git diff summary generated successfully!');
         } catch (err) {
-            const errorMessage = err.message || 'Failed to fetch diff summary';
+            console.log(err, "Git Summary error message")
+            const errorMessage = err.error || 'Failed to fetch diff summary';
             setError(errorMessage);
-            toast.error(`Failed to generate summary: ${errorMessage}`);
+            toast.error(errorMessage);
         } finally {
             setLoading(false);
         }
