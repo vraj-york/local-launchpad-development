@@ -4,7 +4,7 @@ import { Diff, Hunk, parseDiff } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchProjectGitDiff } from '../api';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, ArrowLeft, ChevronRight, FileText, XCircle } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Check, ChevronRight, FileText, Minus, Plus, XCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 

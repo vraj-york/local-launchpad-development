@@ -12,7 +12,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNavigate } from 'react-router-dom';
 import { Loader2 } from "lucide-react";
 
@@ -26,42 +26,34 @@ const CreateProject = () => {
     const [managers, setManagers] = useState([]);
     const [selectedManager, setSelectedManager] = useState('');
 
+    // GitHub Config State
+    const [githubToken, setGithubToken] = useState('');
+    const [githubUsername, setGithubUsername] = useState('');
+
+    // Jira Config State
+    const [jiraBaseUrl, setJiraBaseUrl] = useState('');
+    const [jiraUsername, setJiraUsername] = useState('');
+    const [jiraApiToken, setJiraApiToken] = useState('');
+    const [jiraProjectKey, setJiraProjectKey] = useState('');
+    const [jiraIssueType, setJiraIssueType] = useState('');
+
+    const data = {
+        name: projectName,
+        description: projectDescription,
+        githubToken,
+        githubUsername,
+        jiraBaseUrl,
+        jiraUsername,
+        jiraApiToken,
+        jiraProjectKey,
+        jiraIssueType,
+    }
+
+    console.log("Form Data", data)
     // UI State
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [managersLoading, setManagersLoading] = useState(false);
-    const [draftFound, setDraftFound] = useState(false);
-
-    // Load draft on mount
-    useEffect(() => {
-        const draft = localStorage.getItem('project_creation_draft');
-        if (draft) {
-            try {
-                const parsedDraft = JSON.parse(draft);
-                if (parsedDraft.name || parsedDraft.description || parsedDraft.manager) {
-                    setProjectName(parsedDraft.name || '');
-                    setProjectDescription(parsedDraft.description || '');
-                    setSelectedManager(parsedDraft.manager || '');
-                    setDraftFound(true);
-                }
-            } catch (e) {
-                console.error("Failed to parse draft", e);
-            }
-        }
-    }, []);
-
-    // Save draft on change
-    useEffect(() => {
-        const draft = {
-            name: projectName,
-            description: projectDescription,
-            manager: selectedManager
-        };
-        // Only save if there's actually something to save
-        if (projectName || projectDescription || selectedManager) {
-            localStorage.setItem('project_creation_draft', JSON.stringify(draft));
-        }
-    }, [projectName, projectDescription, selectedManager]);
 
     // Load managers if admin
     useEffect(() => {
@@ -82,14 +74,6 @@ const CreateProject = () => {
         }
     }, [user]);
 
-    const handleClearDraft = () => {
-        localStorage.removeItem('project_creation_draft');
-        setProjectName('');
-        setProjectDescription('');
-        setSelectedManager('');
-        setDraftFound(false);
-    };
-
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
@@ -104,7 +88,7 @@ const CreateProject = () => {
         try {
             const projectData = {
                 name: projectName,
-                description: projectDescription
+                description: projectDescription,
             };
 
             if (user?.role === 'admin') {
@@ -114,9 +98,6 @@ const CreateProject = () => {
             }
 
             const response = await createProject(projectData);
-
-            // Clear draft on success
-            localStorage.removeItem('project_creation_draft');
 
             // Navigate to the new project or dashboard (for now dashboard as requested)
             // Ideally we'd go to `/projects/${response.id}` but let's stick to simple flow first
@@ -141,79 +122,175 @@ const CreateProject = () => {
                     </p>
                 </div>
             </div>
-            <Card className="border-slate-200">
-                <form onSubmit={handleSubmit}>
-                    <CardContent className="space-y-6">
+            <form onSubmit={handleSubmit} className="space-y-6">
+                <Card className="border-slate-200">
+                    <CardContent className="space-y-6 pt-6">
                         {error && (
                             <div className="bg-destructive/15 text-destructive text-sm p-3 rounded-md">
                                 {error}
                             </div>
                         )}
 
-                        <div className="space-y-2">
-                            <Label htmlFor="name">Project Name <span className="text-destructive">*</span></Label>
-                            <Input
-                                id="name"
-                                placeholder="e.g. Website Redesign"
-                                value={projectName}
-                                onChange={(e) => setProjectName(e.target.value)}
-                                required
-                                className="text-lg"
-                            />
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label htmlFor="description">Description</Label>
-                            <Textarea
-                                id="description"
-                                placeholder="What is this project about?"
-                                value={projectDescription}
-                                onChange={(e) => setProjectDescription(e.target.value)}
-                                rows={4}
-                                className="resize-y min-h-[100px]"
-                            />
-                        </div>
-
-                        {user?.role === 'admin' && (
+                        <div className="space-y-4">
                             <div className="space-y-2">
-                                <Label htmlFor="manager">Assigned Manager <span className="text-destructive">*</span></Label>
-                                <Select
-                                    value={selectedManager}
-                                    onValueChange={setSelectedManager}
+                                <Label htmlFor="name">Project Name <span className="text-destructive">*</span></Label>
+                                <Input
+                                    id="name"
+                                    placeholder="e.g. Website Redesign"
+                                    value={projectName}
+                                    onChange={(e) => setProjectName(e.target.value)}
                                     required
-                                    disabled={managersLoading}
-                                >
-                                    <SelectTrigger>
-                                        <SelectValue placeholder={managersLoading ? "Loading managers..." : "Select a manager"} />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {managers.map((manager) => (
-                                            <SelectItem key={manager.id} value={manager.id.toString()}>
-                                                {manager.name} ({manager.email})
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                {managersLoading && <p className="text-xs text-muted-foreground">Fetching list of managers...</p>}
+                                    className="text-lg"
+                                />
                             </div>
-                        )}
-                        <Button
-                            type="submit"
-                            disabled={loading || (user?.role === 'admin' && managersLoading)}
-                            className="px-8"
-                        >
-                            {loading ? (
-                                <>
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Creating...
-                                </>
-                            ) : (
-                                'Create Project'
+
+                            <div className="space-y-2">
+                                <Label htmlFor="description">Description</Label>
+                                <Textarea
+                                    id="description"
+                                    placeholder="What is this project about?"
+                                    value={projectDescription}
+                                    onChange={(e) => setProjectDescription(e.target.value)}
+                                    rows={4}
+                                    className="resize-y min-h-[100px]"
+                                />
+                            </div>
+
+                            {user?.role === 'admin' && (
+                                <div className="space-y-2">
+                                    <Label htmlFor="manager">Assigned Manager <span className="text-destructive">*</span></Label>
+                                    <Select
+                                        value={selectedManager}
+                                        onValueChange={setSelectedManager}
+                                        required
+                                        disabled={managersLoading}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder={managersLoading ? "Loading managers..." : "Select a manager"} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {managers.map((manager) => (
+                                                <SelectItem key={manager.id} value={manager.id.toString()}>
+                                                    {manager.name} ({manager.email})
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    {managersLoading && <p className="text-xs text-muted-foreground">Fetching list of managers...</p>}
+                                </div>
                             )}
-                        </Button>
+                        </div>
                     </CardContent>
-                </form>
-            </Card>
+                </Card>
+
+                {/* GitHub Configuration Card */}
+                <Card className="border-slate-200">
+                    <CardHeader>
+                        <CardTitle className="text-lg font-semibold text-slate-800">GitHub Configuration (Optional)</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="githubUsername">GitHub Username</Label>
+                                <Input
+                                    id="githubUsername"
+                                    placeholder="test-user"
+                                    value={githubUsername}
+                                    onChange={(e) => setGithubUsername(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="githubToken">GitHub Personal Access Token</Label>
+                                <Input
+                                    id="githubToken"
+                                    type="password"
+                                    placeholder="ghp_..."
+                                    value={githubToken}
+                                    onChange={(e) => setGithubToken(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* Jira Configuration Card */}
+                <Card className="border-slate-200">
+                    <CardHeader>
+                        <CardTitle className="text-lg font-semibold text-slate-800">Jira Configuration (Optional)</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="jiraBaseUrl">Jira Base URL</Label>
+                                <Input
+                                    id="jiraBaseUrl"
+                                    placeholder="e.g. https://your-domain.atlassian.net"
+                                    value={jiraBaseUrl}
+                                    onChange={(e) => setJiraBaseUrl(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="jiraUsername">Jira Username (Email)</Label>
+                                <Input
+                                    id="jiraUsername"
+                                    placeholder="user@example.com"
+                                    value={jiraUsername}
+                                    onChange={(e) => setJiraUsername(e.target.value)}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="jiraProjectKey">Project Key</Label>
+                                <Input
+                                    id="jiraProjectKey"
+                                    placeholder="e.g. PROJ"
+                                    value={jiraProjectKey}
+                                    onChange={(e) => setJiraProjectKey(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="jiraIssueType">Default Issue Type</Label>
+                                <Input
+                                    id="jiraIssueType"
+                                    placeholder="e.g. Bug"
+                                    value={jiraIssueType}
+                                    onChange={(e) => setJiraIssueType(e.target.value)}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="jiraApiToken">Jira API Token</Label>
+                            <Input
+                                id="jiraApiToken"
+                                type="password"
+                                placeholder="Jira API Token"
+                                value={jiraApiToken}
+                                onChange={(e) => setJiraApiToken(e.target.value)}
+                            />
+                        </div>
+                    </CardContent>
+                </Card>
+
+
+                <Button
+                    type="submit"
+                    disabled={loading || (user?.role === 'admin' && managersLoading)}
+                    className="px-8"
+                >
+                    {loading ? (
+                        <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Creating...
+                        </>
+                    ) : (
+                        'Create Project'
+                    )}
+                </Button>
+
+            </form>
         </div>
     );
 };

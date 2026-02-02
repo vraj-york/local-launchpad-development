@@ -67,7 +67,7 @@ export const registerUser = async (userData) => {
 // Function to fetch all managers
 export const fetchManagers = async () => {
     try {
-        const response = await api.get('/api/users/managers');
+        const response = await api.get('/api/auth/managers');
         return response.data;
     } catch (error) {
         throw error.response?.data || { error: 'Failed to fetch managers' };
@@ -99,7 +99,6 @@ export const fetchProjects = async () => {
 export const fetchProjectById = async (projectId) => {
     try {
         const response = await api.get(`/api/projects/${projectId}`);
-        console.log(response.data);
         return response.data;
     } catch (error) {
         throw error.response?.data || { error: 'Failed to fetch project' };

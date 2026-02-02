@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import ReleaseManagement from '../components/ReleaseManagement';
 import { RoadMapManagement } from '../components/RoadMapManagement';
@@ -7,6 +7,7 @@ import { Badge } from '../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { ArrowLeft, GitCommit, FileDiff } from 'lucide-react';
 import DiffModal from '../components/DiffModal';
+import { fetchProjectById } from '@/api';
 
 const ProjectDetails = () => {
     const { projectId } = useParams();
@@ -14,33 +15,34 @@ const ProjectDetails = () => {
     const navigate = useNavigate();
 
     // State
-    // const [project, setProject] = useState(location.state?.project || null);
-    // const [loading, setLoading] = useState(!location.state?.project);
-    const [loading, setLoading] = useState(false);
+    const [project, setProject] = useState(location.state?.project || null);
+    const [loading, setLoading] = useState(!location.state?.project);
+    // const [loading, setLoading] = useState(false);
     const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('releases');
 
 
     // Fetch project details if not passed in state or to get fresh data
-    // useEffect(() => {
-    //     const loadProject = async () => {
-    //         try {
-    //             if (!project) setLoading(true); // Only show loading if we don't have project data yet
-    //             const data = await fetchProjectById(projectId);
-    //             setProject(data);
-    //         } catch (error) {
-    //             console.error("Failed to load project:", error);
-    //         } finally {
-    //             setLoading(false);
-    //         }
-    //     };
+    useEffect(() => {
+        const loadProject = async () => {
+            try {
+                if (!project) setLoading(true); // Only show loading if we don't have project data yet
+                const data = await fetchProjectById(projectId);
+                console.log("Selected Project Data", data);
+                setProject(data);
+            } catch (error) {
+                console.error("Failed to load project:", error);
+            } finally {
+                setLoading(false);
+            }
+        };
 
-    //     loadProject();
-    // }, [projectId]);
+        loadProject();
+    }, [projectId]);
 
-    const projectName = 'Project';
-    const projectDescription = 'This is Testing Project';
-    const projectStatus = 'Active';
+    const projectName = project?.name || 'Project';
+    const projectDescription = project?.description || 'This is Testing Project';
+    const projectStatus = project?.status || 'Active';
 
     // Status badge color logic (reused from ProjectCard for consistency)
     const getStatusColor = (status) => {
@@ -61,6 +63,7 @@ const ProjectDetails = () => {
         );
     }
 
+    console.log("Project Detail is rendered")
     return (
         <div className="max-w-7xl mx-auto space-y-6">
             {/* Header Section */}
