@@ -304,3 +304,74 @@ export async function getProjectInfoService(projectId) {
         lastUpdated: activeVersion?.createdAt ?? null,
     };
 }
+const roadmapData = (r) => ({
+    title: r.title,
+    description: r.description,
+    status: r.status,
+    timelineStart: new Date(r.timelineStart),
+    timelineEnd: new Date(r.timelineEnd),
+});
+
+const itemData = (i) => ({
+    title: i.title,
+    description: i.description,
+    status: i.status,
+    priority: i.priority,
+    startDate: new Date(i.startDate),
+    endDate: new Date(i.endDate),
+});
+
+
+export const updateProjectService = async ({ projectId, userId, roadmap }) => {
+
+    return prisma.$transaction(async (tx) => {
+
+        // 2️⃣ Upsert roadmap (only one allowed)
+        let roadmapId;
+
+        if (roadmap.id) {
+            const updated = await tx.roadmap.update({
+                where: { id: roadmap.id },
+                data: roadmapData(roadmap),
+            });
+            roadmapId = updated.id;
+        } else {
+            const created = await tx.roadmap.create({
+                data: {
+                    ...roadmapData(roadmap),
+                    projectId: Number(projectId),
+                },
+            });
+            roadmapId = created.id;
+        }
+
+        // 3️⃣ Split items
+        const existingItems = roadmap.items.filter(i => i.id);
+        const newItems = roadmap.items.filter(i => !i.id);
+
+        // 4️⃣ Update existing items (parallel)
+        await Promise.all(
+            existingItems.map(item =>
+                tx.roadmapItem.update({
+                    where: { id: item.id },
+                    data: itemData(item),
+                })
+            )
+        );
+
+        // 5️⃣ Create new items (bulk)
+        if (newItems.length) {
+            await tx.roadmapItem.createMany({
+                data: newItems.map(i => ({
+                    ...itemData(i),
+                    roadmapId,
+                })),
+            });
+        }
+
+        return {
+            message: "Project updated successfully",
+        };
+    });
+};
+

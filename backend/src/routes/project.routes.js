@@ -771,8 +771,6 @@ async function checkRepoExists(repoName) {
   return response.status === 200;
 }
 
-
-
 const upload = multer({
   dest: path.join(process.cwd(), "uploads"),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
@@ -1760,5 +1758,51 @@ router.get("/jira/test-connection", authenticateToken, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+/**
+ * Update project (single roadmap + items)
+ */
+/**
+ * @swagger
+ * /projects/{projectId}:
+ *   put:
+ *     summary: Update project roadmap and items
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [roadmap]
+ *             properties:
+ *               roadmap:
+ *                 type: object
+ *                 description: Single roadmap with editable items
+ *     responses:
+ *       200:
+ *         description: Roadmap updated successfully
+ *       400:
+ *         description: Validation error
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Project not found
+ */
+
+router.put(
+  "/:projectId",
+  authenticateToken,
+  createProjectValidation, // reuse same validations
+  projectController.update
+);
 
 export default router;

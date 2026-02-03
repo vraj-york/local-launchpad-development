@@ -9,6 +9,7 @@ import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { PageHeader } from "./PageHeader";
 
 const ReleaseManagement = ({ projectId, projectName }) => {
   const { user } = useAuth();
@@ -158,25 +159,19 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800 mb-2">
-            Release Management - {projectName}
-          </h2>
-          <p className="text-slate-500">Manage releases and upload ZIP files</p>
-        </div>
-        {canManageReleases && (
-          <Button
-            className="text-white gap-2"
-            onClick={() => setShowCreateForm(true)}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-            </svg>
-            Create Release
-          </Button>
-        )}
-      </div>
+      <PageHeader title="Release Management" description="Manage releases and upload ZIP files">{canManageReleases && (
+        <Button
+          className="text-white gap-2"
+          onClick={() => setShowCreateForm(true)}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+          </svg>
+          Create Release
+        </Button>
+      )}</PageHeader>
+
+
 
       {error && (
         <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg border border-red-200 mb-6">

@@ -67,7 +67,6 @@ export const validateRoadmapItems = (roadmap, items = []) => {
 
 
 export const validateRoadmapTimelines = (roadmaps) => {
-    console.log("Validating roadmap timelines...", roadmaps);
     const sorted = roadmaps
         .map(r => ({
             ...r,

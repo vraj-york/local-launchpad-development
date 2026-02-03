@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import ReleaseManagement from '../components/ReleaseManagement';
-import { RoadMapManagement } from '../components/RoadMapManagement';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { ArrowLeft, GitCommit, FileDiff } from 'lucide-react';
 import DiffModal from '../components/DiffModal';
 import { fetchProjectById } from '@/api';
+import RoadMapManagement from '@/components/RoadMapManagement';
+import ReleaseManagement from '@/components/ReleaseManagement';
+import { PageHeader } from '@/components/PageHeader';
 
 const ProjectDetails = () => {
     const { projectId } = useParams();
@@ -63,11 +64,10 @@ const ProjectDetails = () => {
         );
     }
 
-    console.log("Project Detail is rendered")
     return (
-        <div className="max-w-7xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto">
             {/* Header Section */}
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-0">
                 <div className="mb-2">
                     <Button
                         variant="ghost"
@@ -79,20 +79,8 @@ const ProjectDetails = () => {
                     </Button>
                 </div>
 
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                    <div className="space-y-1">
-                        <div className="flex items-center gap-3">
-                            <h1 className="text-3xl font-bold text-slate-900">{projectName}</h1>
-                            <Badge className={getStatusColor(projectStatus)} variant="secondary">
-                                {projectStatus}
-                            </Badge>
-                        </div>
-                        {projectDescription && (
-                            <p className="text-slate-500 max-w-2xl">{projectDescription}</p>
-                        )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
+                <PageHeader title={projectName} description={projectDescription} >
+                    <div className='flex gap-2'>
                         <Button
                             variant="outline"
                             className="gap-2"
@@ -108,9 +96,10 @@ const ProjectDetails = () => {
                         >
                             <FileDiff className="w-4 h-4" />
                             View Changes
-                        </Button>
-                    </div>
-                </div>
+                        </Button></div>
+                </PageHeader>
+
+
             </div>
 
             {/* Tabs Section */}
@@ -139,7 +128,11 @@ const ProjectDetails = () => {
                     </TabsContent>
 
                     <TabsContent value="roadmap" className="m-0 focus-visible:outline-none">
-                        <RoadMapManagement />
+                        <RoadMapManagement
+                            value={project?.roadmaps || []}
+                            onChange={(newRoadmaps) => setProject(prev => ({ ...prev, roadmaps: newRoadmaps }))}
+                            isEmbedded={true}
+                        />
                     </TabsContent>
                 </div>
             </Tabs>

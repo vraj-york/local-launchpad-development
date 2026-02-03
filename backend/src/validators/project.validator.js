@@ -1,7 +1,75 @@
-import ApiError from "../utils/apiError.js";
-import { body } from "express-validator";
+import { body, param } from "express-validator";
 
+/**
+ * Shared enums
+ */
+const ROADMAP_STATUS = ["DRAFT", "ACTIVE", "COMPLETED"];
+const TSHIRT_SIZES = ["XS", "S", "M", "L", "XL"];
+const ITEM_TYPES = ["FEATURE", "BUG", "TASK"];
+const ITEM_STATUS = ["PLANNED", "IN_PROGRESS", "DONE"];
+const ITEM_PRIORITY = ["LOW", "MEDIUM", "HIGH"];
 
+/**
+ * Reusable roadmap item validators
+ */
+const roadmapItemValidators = (base) => [
+    body(`${base}.items`)
+        .isArray({ min: 1 })
+        .withMessage("At least one roadmap item is required"),
+
+    body(`${base}.items.*.title`)
+        .trim()
+        .isLength({ min: 3 })
+        .withMessage("Roadmap item title must be at least 3 characters"),
+
+    body(`${base}.items.*.startDate`)
+        .isISO8601()
+        .withMessage("Roadmap item startDate must be a valid ISO date"),
+
+    body(`${base}.items.*.endDate`)
+        .isISO8601()
+        .withMessage("Roadmap item endDate must be a valid ISO date"),
+
+    body(`${base}.items.*.type`)
+        .optional()
+        .isIn(ITEM_TYPES),
+
+    body(`${base}.items.*.status`)
+        .optional()
+        .isIn(ITEM_STATUS),
+
+    body(`${base}.items.*.priority`)
+        .optional()
+        .isIn(ITEM_PRIORITY),
+];
+
+/**
+ * Reusable roadmap validators
+ */
+const roadmapValidators = (base) => [
+    body(`${base}.title`)
+        .trim()
+        .isLength({ min: 3, max: 100 })
+        .withMessage("Roadmap title must be between 3 and 100 characters"),
+
+    body(`${base}.timelineStart`)
+        .isISO8601()
+        .withMessage("timelineStart must be a valid ISO date"),
+
+    body(`${base}.timelineEnd`)
+        .isISO8601()
+        .withMessage("timelineEnd must be a valid ISO date"),
+
+    body(`${base}.status`)
+        .optional()
+        .isIn(ROADMAP_STATUS),
+
+    body(`${base}.tshirtSize`)
+        .optional()
+        .isIn(TSHIRT_SIZES),
+
+    ...roadmapItemValidators(base),
+];
 
 
 export const createProjectValidation = [
@@ -15,49 +83,19 @@ export const createProjectValidation = [
         .withMessage("Assigned manager ID must be an integer"),
 
     body("roadmaps")
-        .isArray({ min: 1 }).withMessage("At least one roadmap is required"),
+        .isArray({ min: 1 })
+        .withMessage("At least one roadmap is required"),
 
-    body("roadmaps.*.title")
-        .trim()
-        .isLength({ min: 3, max: 100 }).withMessage("Roadmap title must be between 3 and 100 characters"),
-
-    body("roadmaps.*.timelineStart")
-        .isISO8601().withMessage("Roadmap timelineStart must be a valid date"),
-
-    body("roadmaps.*.timelineEnd")
-        .isISO8601().withMessage("Roadmap timelineEnd must be a valid date"),
-
-    body("roadmaps.*.status")
-        .optional()
-        .isIn(["DRAFT", "ACTIVE", "COMPLETED"]),
-
-    body("roadmaps.*.tshirtSize")
-        .optional()
-        .isIn(["XS", "S", "M", "L", "XL"]),
-
-    body("roadmaps.*.items")
-        .isArray({ min: 1 }).withMessage("At least one roadmap item is required"),
-
-    body("roadmaps.*.items.*.title")
-        .trim()
-        .isLength({ min: 3 }).withMessage("Roadmap item title must be at least 3 characters"),
-
-    body("roadmaps.*.items.*.startDate")
-        .isISO8601().withMessage("Roadmap item startDate must be a valid date"),
-
-    body("roadmaps.*.items.*.endDate")
-        .isISO8601().withMessage("Roadmap item endDate must be a valid date"),
-
-    body("roadmaps.*.items.*.type")
-        .optional()
-        .isIn(["FEATURE", "BUG", "TASK"]),
-
-    body("roadmaps.*.items.*.status")
-        .optional()
-        .isIn(["PLANNED", "IN_PROGRESS", "DONE"]),
-
-    body("roadmaps.*.items.*.priority")
-        .optional()
-        .isIn(["LOW", "MEDIUM", "HIGH"])
+    ...roadmapValidators("roadmaps.*"),
 ];
+export const updateProjectValidation = [
+    param("projectId")
+        .isInt()
+        .withMessage("Invalid project id"),
 
+    body("roadmap")
+        .notEmpty()
+        .withMessage("Roadmap is required"),
+
+    ...roadmapValidators("roadmap"),
+];

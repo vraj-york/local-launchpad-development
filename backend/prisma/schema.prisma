@@ -29,8 +29,14 @@ model Project {
   createdById       Int
   assignedManagerId Int
 
-  githubToken   String?
-  jiraToken     String?
+  githubUsername   String?
+  githubToken      String?
+
+  jiraBaseUrl      String?
+  jiraProjectKey   String?
+  jiraAccessToken  String?
+  jiraAccessKey    String?
+  jiraIssueType    String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

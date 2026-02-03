@@ -15,6 +15,9 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNavigate } from 'react-router-dom';
 import { Loader2 } from "lucide-react";
+import { PageHeader } from '@/components/PageHeader';
+import RoadMapManagement from '@/components/RoadMapManagement';
+import { toast } from 'sonner';
 
 const CreateProject = () => {
     const { user } = useAuth();
@@ -37,19 +40,9 @@ const CreateProject = () => {
     const [jiraProjectKey, setJiraProjectKey] = useState('');
     const [jiraIssueType, setJiraIssueType] = useState('');
 
-    const data = {
-        name: projectName,
-        description: projectDescription,
-        githubToken,
-        githubUsername,
-        jiraBaseUrl,
-        jiraUsername,
-        jiraApiToken,
-        jiraProjectKey,
-        jiraIssueType,
-    }
+    // Roadmap State
+    const [roadmaps, setRoadmaps] = useState([]);
 
-    console.log("Form Data", data)
     // UI State
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -86,9 +79,36 @@ const CreateProject = () => {
         setLoading(true);
 
         try {
+            // Process roadmaps: remove UI IDs and format dates
+            const processedRoadmaps = roadmaps.map(roadmap => {
+                const { id, ...roadmapRest } = roadmap;
+                return {
+                    ...roadmapRest,
+                    timelineStart: roadmap.timelineStart ? new Date(roadmap.timelineStart).toISOString() : null,
+                    timelineEnd: roadmap.timelineEnd ? new Date(roadmap.timelineEnd).toISOString() : null,
+                    items: (roadmap.items || []).map(item => {
+                        const { id: itemId, ...itemRest } = item;
+                        return {
+                            ...itemRest,
+                            startDate: item.startDate ? new Date(item.startDate).toISOString() : null,
+                            endDate: item.endDate ? new Date(item.endDate).toISOString() : null,
+                            priority: item.priority || "MEDIUM" // Ensure priority exists
+                        };
+                    })
+                };
+            });
+
             const projectData = {
                 name: projectName,
                 description: projectDescription,
+                roadmaps: processedRoadmaps,
+                // githubToken,
+                // githubUsername,
+                // jiraBaseUrl,
+                // jiraUsername,
+                // jiraApiToken,
+                // jiraProjectKey,
+                // jiraIssueType,
             };
 
             if (user?.role === 'admin') {
@@ -97,13 +117,17 @@ const CreateProject = () => {
                 projectData.assignedManagerId = user.id;
             }
 
+            console.log("Submitting Project Data:", projectData);
             const response = await createProject(projectData);
+            console.log("Project  response:", response);
+            toast.success("Project created successfully");
 
-            // Navigate to the new project or dashboard (for now dashboard as requested)
-            // Ideally we'd go to `/projects/${response.id}` but let's stick to simple flow first
+            // Navigate to the new project or dashboard
             navigate('/dashboard');
 
         } catch (err) {
+            console.error(err);
+            toast.error(err.error || 'Failed to create project. Please try again.');
             setError(err.error || 'Failed to create project. Please try again.');
         } finally {
             setLoading(false);
@@ -112,16 +136,7 @@ const CreateProject = () => {
 
     return (
         <div className="container mx-auto">
-            <div className="mb-8 flex w-full justify-between">
-                <div>
-                    <h1 className="text-xl font-bold text-slate-800 tracking-tight">
-                        Create New Project
-                    </h1>
-                    <p className="text-muted-foreground text-sm">
-                        Start a new project workspace.
-                    </p>
-                </div>
-            </div>
+            <PageHeader title="Create New Project" description="Start a new project workspace." />
             <form onSubmit={handleSubmit} className="space-y-6">
                 <Card className="border-slate-200">
                     <CardContent className="space-y-6 pt-6">
@@ -184,7 +199,7 @@ const CreateProject = () => {
                 </Card>
 
                 {/* GitHub Configuration Card */}
-                <Card className="border-slate-200">
+                {/* <Card className="border-slate-200">
                     <CardHeader>
                         <CardTitle className="text-lg font-semibold text-slate-800">GitHub Configuration (Optional)</CardTitle>
                     </CardHeader>
@@ -211,10 +226,10 @@ const CreateProject = () => {
                             </div>
                         </div>
                     </CardContent>
-                </Card>
+                </Card> */}
 
                 {/* Jira Configuration Card */}
-                <Card className="border-slate-200">
+                {/* <Card className="border-slate-200">
                     <CardHeader>
                         <CardTitle className="text-lg font-semibold text-slate-800">Jira Configuration (Optional)</CardTitle>
                     </CardHeader>
@@ -272,8 +287,22 @@ const CreateProject = () => {
                             />
                         </div>
                     </CardContent>
-                </Card>
+                </Card> */}
 
+
+                {/* Roadmap Configuration */}
+                <Card className="border-slate-200">
+                    <CardHeader>
+                        <CardTitle className="text-lg font-semibold text-slate-800">Project Roadmap</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <RoadMapManagement
+                            value={roadmaps}
+                            onChange={setRoadmaps}
+                            isEmbedded={true}
+                        />
+                    </CardContent>
+                </Card>
 
                 <Button
                     type="submit"

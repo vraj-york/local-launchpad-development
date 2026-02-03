@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import ProjectCard from '../components/ProjectCard';
 import { CreateProjectButton } from '../components/CreateProjectButton';
+import { PageHeader } from '@/components/PageHeader';
 
 const Dashboard = () => {
     const [projects, setProjects] = useState([]);
@@ -61,17 +62,10 @@ const Dashboard = () => {
 
     return (
         <div className="max-w-7xl mx-auto">
-            <div className="mb-8 flex w-full justify-between">
-                <div>
-                    <h1 className="text-xl font-bold text-slate-800 tracking-tight">
-                        Welcome to Zip Sync Dashboard
-                    </h1>
-                    <p className="text-muted-foreground text-sm">
-                        Manage your projects, upload builds, and track progress all in one place.
-                    </p>
-                </div>
+
+            <PageHeader title="Welcome to Zip Sync Dashboard" description="Manage your projects, upload builds, and track progress all in one place.">
                 <CreateProjectButton />
-            </div>
+            </PageHeader>
 
             {/* Stats Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
