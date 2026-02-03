@@ -28,6 +28,9 @@ model Project {
   description       String?
   createdById       Int
   assignedManagerId Int
+
+  githubToken   String?
+  jiraToken     String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

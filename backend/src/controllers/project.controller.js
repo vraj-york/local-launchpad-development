@@ -2,20 +2,21 @@
 import {
     createProjectService, listProjectsService, activateProjectVersionService,
     getProjectLiveUrlService,
-    listProjectVersionsService, getProjectByIdService
+    listProjectVersionsService, getProjectByIdService, getProjectInfoService
 } from "../services/project.service.js";
 import ApiError from "../utils/apiError.js";
+import asyncHandler from "../middlewares/asyncHandler.middleware.js";
 
 import { validateRoadmapTimelines, validateRoadmapItemsTimeline } from "../validators/roadmap.validator.js";
 
 export const projectController = {
-    list: async (req, res) => {
+    list: asyncHandler(async (req, res) => {
         const projects = await listProjectsService(req.user);
         res.json(projects);
-    },
+    }),
 
     // GET /api/projects/:projectId
-    getById: async (req, res) => {
+    getById: asyncHandler(async (req, res) => {
         const projectId = Number(req.params.projectId);
 
         const project = await getProjectByIdService(projectId, req.user);
@@ -26,9 +27,9 @@ export const projectController = {
         }
 
         res.json(project);
-    },
+    }),
 
-    create: async (req, res) => {
+    create: asyncHandler(async (req, res) => {
         const { roadmaps } = req.body;
         if (!Array.isArray(roadmaps) || roadmaps.length === 0) {
             throw new ApiError(400, "roadmap is required");
@@ -49,8 +50,8 @@ export const projectController = {
         });
 
         res.status(201).json(project);
-    },
-    activateVersion: async (req, res) => {
+    }),
+    activateVersion: asyncHandler(async (req, res) => {
         const projectId = Number(req.params.id);
         const versionId = Number(req.params.versionId);
 
@@ -61,8 +62,8 @@ export const projectController = {
         });
 
         res.json({ message: "Version activated successfully" });
-    },
-    getLiveUrl: async (req, res) => {
+    }),
+    getLiveUrl: asyncHandler(async (req, res) => {
         const data = await getProjectLiveUrlService({
             projectId: Number(req.params.id),
             user: req.user,
@@ -72,18 +73,20 @@ export const projectController = {
             liveUrl: data.buildUrl,
             version: data.version,
         });
-    },
+    }),
 
-    listVersions: async (req, res) => {
+    listVersions: asyncHandler(async (req, res) => {
         const versions = await listProjectVersionsService({
             projectId: Number(req.params.id),
             user: req.user,
         });
 
         res.json(versions);
-    }, info: async (req, res) => {
+    }),
+
+    info: asyncHandler(async (req, res) => {
         const projectId = Number(req.params.id);
         const data = await getProjectInfoService(projectId);
         res.json(data);
-    },
+    }),
 };

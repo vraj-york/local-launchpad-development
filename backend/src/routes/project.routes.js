@@ -770,24 +770,6 @@ async function checkRepoExists(repoName) {
 
   return response.status === 200;
 }
-router.get(
-  "/",
-  authenticateToken,
-  asyncHandler(projectController.list)
-);
-
-
-
-
-/** Create project */
-router.post(
-  "/",
-  authenticateToken,
-  allowRoles("admin", "manager"),
-  createProjectValidation,
-  validate,
-  asyncHandler(projectController.create)
-);
 
 
 
@@ -1157,7 +1139,7 @@ window.markerConfig = {
 router.get(
   "/",
   authenticateToken,
-  asyncHandler(projectController.list)
+  projectController.list
 );
 
 /**
@@ -1191,7 +1173,7 @@ router.post(
   allowRoles("admin", "manager"),
   createProjectValidation,
   validate,
-  asyncHandler(projectController.create)
+  projectController.create
 );
 /**
  * @swagger
@@ -1214,7 +1196,7 @@ router.post(
 router.get(
   "/:id/live-url",
   authenticateToken,
-  asyncHandler(projectController.getLiveUrl)
+  projectController.getLiveUrl
 );
 
 /**
@@ -1238,7 +1220,7 @@ router.get(
 router.get(
   "/:id/versions",
   authenticateToken,
-  asyncHandler(projectController.listVersions)
+  projectController.listVersions
 );
 
 /**
@@ -1267,7 +1249,7 @@ router.get(
 router.post(
   "/:id/versions/:versionId/activate",
   authenticateToken,
-  asyncHandler(projectController.activateVersion)
+  projectController.activateVersion
 );
 
 
@@ -1639,7 +1621,7 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
 
 router.get(
   "/:id/info",
-  asyncHandler(projectController.info)
+  projectController.info
 );
 // API endpoint to generate Jira tickets from git diff summary
 router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) => {

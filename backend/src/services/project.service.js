@@ -39,10 +39,11 @@ export const createProjectService = async ({ userId, body }) => {
     const {
         name,
         description,
+        jiraToken,
+        githubToken,
         assignedManagerId,
         roadmaps
     } = body;
-    console.log("Creating project inside service");
     /**
   * Validate assigned manager exists
   */
@@ -65,6 +66,8 @@ export const createProjectService = async ({ userId, body }) => {
             data: {
                 name,
                 description,
+                jiraToken,
+                githubToken,
                 assignedManagerId: Number(assignedManagerId),
                 createdById: userId
             }
