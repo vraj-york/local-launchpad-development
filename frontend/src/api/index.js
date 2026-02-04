@@ -247,3 +247,13 @@ export const testJiraConnection = async () => {
         throw error.response?.data || { error: 'Failed to test Jira connection' };
     }
 };
+
+// Function to update a project
+export const updateProject = async (projectId, projectData) => {
+    try {
+        const response = await api.put(`/api/projects/${projectId}`, projectData);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to update project' };
+    }
+};

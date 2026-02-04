@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
-import { Badge } from '../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { ArrowLeft, GitCommit, FileDiff } from 'lucide-react';
 import DiffModal from '../components/DiffModal';
-import { fetchProjectById } from '@/api';
+import { fetchProjectById, updateProject } from '@/api';
 import RoadMapManagement from '@/components/RoadMapManagement';
 import ReleaseManagement from '@/components/ReleaseManagement';
 import { PageHeader } from '@/components/PageHeader';
+import { toast } from 'sonner';
 
 const ProjectDetails = () => {
     const { projectId } = useParams();
@@ -23,6 +23,17 @@ const ProjectDetails = () => {
     const [activeTab, setActiveTab] = useState('releases');
 
 
+    // Helper to refresh project data
+    const refreshProject = async () => {
+        try {
+            const data = await fetchProjectById(projectId);
+            setProject(data);
+        } catch (error) {
+            console.error("Failed to refresh project:", error);
+        }
+    };
+
+    // Fetch project details if not passed in state or to get fresh data
     // Fetch project details if not passed in state or to get fresh data
     useEffect(() => {
         const loadProject = async () => {
@@ -66,7 +77,7 @@ const ProjectDetails = () => {
 
     return (
         <div className="max-w-7xl mx-auto">
-            {/* Header Section */}
+            {/* Header */}
             <div className="flex flex-col gap-0">
                 <div className="mb-2">
                     <Button
@@ -132,6 +143,19 @@ const ProjectDetails = () => {
                             value={project?.roadmaps || []}
                             onChange={(newRoadmaps) => setProject(prev => ({ ...prev, roadmaps: newRoadmaps }))}
                             isEmbedded={true}
+                            onRoadmapUpdate={async (roadmap) => {
+                                // We use updateProject endpoint which expects { roadmap: ... }
+                                try {
+                                    console.log(roadmap, "road map payload")
+                                    const updatedProject = await updateProject(project.id, { roadmap });
+                                    toast.success("Roadmap updated successfully");
+                                } catch (error) {
+                                    toast.error(error.error || "Failed to update roadmap");
+                                }
+
+                                refreshProject();
+                                return null; // Signal to RoadMapManagement that we handled it but no direct object return to sync immediately via return (refresh does it).
+                            }}
                         />
                     </TabsContent>
                 </div>

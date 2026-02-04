@@ -14,19 +14,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { PageHeader } from "./PageHeader";
 
 
+function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdate, validationErrors = {}, initialEditingId = null }) {
 
-function RoadMapManagement({ value, onChange, isEmbedded = false }) {
-    // If controlled (onChange provided), use value directly. 
-    // Otherwise use internal state (legacy/standalone mode support, though we might not need it if we fully switch).
-    // For now, let's assume if onChange is present, we are in "controlled" mode.
+    const [localErrors, setLocalErrors] = useState({});
 
-    // Actually, to keep it simple, let's stick to internal state if value is undefined, 
-    // but if value is provided, we use it. 
-    // However, typical pattern is: 
-    // const [internalState, setInternalState] = useState(defaultRoadmaps);
-    // const roadmaps = value || internalState;
-    // const updateRoadmaps = (newRoadmaps) => { if (onChange) onChange(newRoadmaps); else setInternalState(newRoadmaps); }
-
+    // ... (internalRoadmaps state remains same)
     const [internalRoadmaps, setInternalRoadmaps] = useState([
         {
             id: "1",
@@ -47,7 +39,6 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                     startDate: "2026-01-01",
                     endDate: "2026-01-15",
                 },
-                // ... (truncated for brevity in default state if needed, but keeping existing default is fine for standalone)
             ],
         },
     ]);
@@ -61,17 +52,51 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
             setInternalRoadmaps(newRoadmaps);
         }
     };
-    const [editingId, setEditingId] = useState(null);
+    // Helper to format ISO date to YYYY-MM-DD for input
+    const toInputDate = (isoString) => {
+        if (!isoString) return "";
+        try {
+            return new Date(isoString).toISOString().split('T')[0];
+        } catch (e) {
+            return "";
+        }
+    };
 
-    const [editForm, setEditForm] = useState({
-        title: "",
-        description: "",
-        status: "DRAFT",
-        tshirtSize: "M",
-        timelineStart: "",
-        timelineEnd: "",
-        items: [],
-    });
+    // Initialize editingId with prop
+    const [editingId, setEditingId] = useState(initialEditingId);
+
+    // Initialize form state if editingId is provided
+    const getInitialEditForm = () => {
+        if (initialEditingId) {
+            const initialRoadmap = roadmaps.find(r => r.id === initialEditingId);
+            if (initialRoadmap) {
+                return {
+                    title: initialRoadmap.title,
+                    description: initialRoadmap.description || "",
+                    status: initialRoadmap.status || "DRAFT",
+                    tshirtSize: initialRoadmap.tshirtSize || "M",
+                    timelineStart: toInputDate(initialRoadmap.timelineStart),
+                    timelineEnd: toInputDate(initialRoadmap.timelineEnd),
+                    items: initialRoadmap.items.map(item => ({
+                        ...item,
+                        startDate: toInputDate(item.startDate),
+                        endDate: toInputDate(item.endDate)
+                    }))
+                };
+            }
+        }
+        return {
+            title: "",
+            description: "",
+            status: "DRAFT",
+            tshirtSize: "M",
+            timelineStart: "",
+            timelineEnd: "",
+            items: [],
+        };
+    };
+
+    const [editForm, setEditForm] = useState(getInitialEditForm());
 
 
     const calculateProgress = (items) => {
@@ -82,7 +107,32 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
         return (completed / items.length) * 100;
     };
 
+
+
+    const hasRoadmapErrors = (roadmap) => {
+        if (!validationErrors) return false;
+        // Check roadmap specific errors
+        if (validationErrors[`roadmap-${roadmap.id}-title`] ||
+            validationErrors[`roadmap-${roadmap.id}-timelineStart`] ||
+            validationErrors[`roadmap-${roadmap.id}-timelineEnd`] ||
+            localErrors[`roadmap-${roadmap.id}-title`] ||
+            localErrors[`roadmap-${roadmap.id}-timelineStart`] ||
+            localErrors[`roadmap-${roadmap.id}-timelineEnd`]) {
+            return true;
+        }
+        // Check item errors
+        if (roadmap.items?.some(item =>
+            validationErrors[`item-${item.id}-title`] ||
+            validationErrors[`item-${item.id}-startDate`] ||
+            validationErrors[`item-${item.id}-endDate`]
+        )) {
+            return true;
+        }
+        return false;
+    };
+
     const handleAddRoadmap = () => {
+        setLocalErrors({});
         const newRoadmap = {
             id: Date.now().toString(),
             title: "New Roadmap",
@@ -99,50 +149,138 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                 },
             ],
         };
+        // No change here, raw object added to roadmaps
         setRoadmaps([...roadmaps, newRoadmap]);
         setEditingId(newRoadmap.id);
+        // Map to form format
         setEditForm({
             title: newRoadmap.title,
             description: newRoadmap.description || "",
             status: newRoadmap.status || "DRAFT",
             tshirtSize: newRoadmap.tshirtSize || "M",
-            timelineStart: newRoadmap.timelineStart || "",
-            timelineEnd: newRoadmap.timelineEnd || "",
-            items: [...newRoadmap.items],
+            timelineStart: toInputDate(newRoadmap.timelineStart),
+            timelineEnd: toInputDate(newRoadmap.timelineEnd),
+            items: newRoadmap.items.map(item => ({
+                ...item,
+                startDate: toInputDate(item.startDate),
+                endDate: toInputDate(item.endDate)
+            })),
         });
     };
 
     const handleEditClick = (roadmap) => {
+        setLocalErrors({});
         setEditingId(roadmap.id);
         setEditForm({
             title: roadmap.title,
             description: roadmap.description || "",
             status: roadmap.status || "DRAFT",
             tshirtSize: roadmap.tshirtSize || "M",
-            timelineStart: roadmap.timelineStart || "",
-            timelineEnd: roadmap.timelineEnd || "",
-            items: [...roadmap.items],
+            timelineStart: toInputDate(roadmap.timelineStart),
+            timelineEnd: toInputDate(roadmap.timelineEnd),
+            items: roadmap.items.map(item => ({
+                ...item,
+                startDate: toInputDate(item.startDate),
+                endDate: toInputDate(item.endDate)
+            })),
         });
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (!editingId) return;
-        setRoadmaps(
-            roadmaps.map((roadmap) =>
-                roadmap.id === editingId
-                    ? {
-                        ...roadmap,
-                        title: editForm.title,
-                        description: editForm.description,
-                        status: editForm.status,
-                        tshirtSize: editForm.tshirtSize,
-                        timelineStart: editForm.timelineStart,
-                        timelineEnd: editForm.timelineEnd,
-                        items: editForm.items,
-                    }
-                    : roadmap,
-            ),
+
+        // Validation
+        const newErrors = {};
+        if (!editForm.title?.trim()) newErrors[`roadmap-${editingId}-title`] = "Title is required";
+        if (!editForm.timelineStart) newErrors[`roadmap-${editingId}-timelineStart`] = "Start date is required";
+        if (!editForm.timelineEnd) newErrors[`roadmap-${editingId}-timelineEnd`] = "End date is required";
+
+        editForm.items.forEach(item => {
+            if (!item.title?.trim()) newErrors[`item-${item.id}-title`] = "Title is required";
+            if (!item.startDate) newErrors[`item-${item.id}-startDate`] = "Start date is required";
+            if (!item.endDate) newErrors[`item-${item.id}-endDate`] = "End date is required";
+        });
+
+        if (Object.keys(newErrors).length > 0) {
+            setLocalErrors(newErrors);
+            return;
+        }
+        setLocalErrors({});
+
+        // Convert dates back to ISO string for backend/storage
+        const toISO = (dateStr) => {
+            if (!dateStr) return null;
+            return new Date(dateStr).toISOString();
+        };
+
+        // Create the updated version of the edited roadmap
+        let updatedRoadmap = null;
+        const newRoadmaps = roadmaps.map((roadmap) => {
+            if (roadmap.id === editingId) {
+                updatedRoadmap = {
+                    ...roadmap,
+                    title: editForm.title,
+                    description: editForm.description,
+                    status: editForm.status,
+                    tshirtSize: editForm.tshirtSize,
+                    timelineStart: toISO(editForm.timelineStart),
+                    timelineEnd: toISO(editForm.timelineEnd),
+                    items: editForm.items.map(item => ({
+                        ...item,
+                        startDate: toISO(item.startDate),
+                        endDate: toISO(item.endDate)
+                    })),
+                };
+                return updatedRoadmap;
+            }
+            return roadmap;
+        });
+
+        // Trigger external update handler if provided
+        if (onRoadmapUpdate && updatedRoadmap) {
+            try {
+                // Sanitize payload: Remove temporary IDs (strings) from roadmap and items
+                // Real IDs from backend are numbers. Temp IDs are strings (Date.now().toString()).
+                const payload = { ...updatedRoadmap };
+
+                // If roadmap ID is a string (temporary ID from frontend), it's a new roadmap -> remove ID so backend generates a new one.
+                // Assuming backend uses integer IDs or different format for real IDs. If backend uses UUID strings, we might need a better check (e.g. isNaN).
+                // For now, our temp IDs are `Date.now().toString()` which are numeric strings.
+                if (typeof payload.id === 'string') {
+                    delete payload.id;
+                }
+
+                // Sanitize items
+                if (payload.items && Array.isArray(payload.items)) {
+                    payload.items = payload.items.map(item => {
+                        const newItem = { ...item };
+                        // Same check for items: if ID is string (temp), remove it.
+                        if (typeof newItem.id === 'string') {
+                            delete newItem.id;
+                        }
+                        return newItem;
+                    });
+                }
+
+                // Determine if we should send items formatted or as-is.
+                // Backend expects items in the payload.
+                const serverRoadmap = await onRoadmapUpdate(payload);
+                if (serverRoadmap) {
+                    updatedRoadmap = serverRoadmap;
+                }
+            } catch (error) {
+                console.error("Failed to update roadmap:", error);
+                // Optionally show error to user/prevent closing
+                return; // Prevent closing on error
+            }
+        }
+
+        // Re-calculate newRoadmaps with potentially updated data (e.g. real IDs)
+        const finalRoadmaps = roadmaps.map((roadmap) =>
+            roadmap.id === editingId ? updatedRoadmap : roadmap
         );
+
+        setRoadmaps(finalRoadmaps);
         setEditingId(null);
     };
 
@@ -196,6 +334,8 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                     status: "PLANNED",
                     type: "FEATURE",
                     priority: "MEDIUM",
+                    startDate: "",
+                    endDate: "",
                 },
             ],
         });
@@ -305,7 +445,9 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                                         <div
                                             className={`bg-white rounded-lg border transition-all ${editingId === roadmap.id
                                                 ? "border-emerald-500 shadow-lg"
-                                                : "border-gray-200 hover:border-gray-300 shadow-sm"
+                                                : hasRoadmapErrors(roadmap)
+                                                    ? "border-destructive shadow-sm"
+                                                    : "border-gray-200 hover:border-gray-300 shadow-sm"
                                                 }`}
                                         >
                                             <div className="p-6">
@@ -331,7 +473,13 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                                                                         }
                                                                         placeholder="Q1 2026 Roadmap"
                                                                         autoFocus
+                                                                        className={(validationErrors[`roadmap-${editingId}-title`] || localErrors[`roadmap-${editingId}-title`]) ? "border-destructive" : ""}
                                                                     />
+                                                                    {(validationErrors[`roadmap-${editingId}-title`] || localErrors[`roadmap-${editingId}-title`]) && (
+                                                                        <span className="text-xs text-destructive mt-1">
+                                                                            {validationErrors[`roadmap-${editingId}-title`] || localErrors[`roadmap-${editingId}-title`]}
+                                                                        </span>
+                                                                    )}
                                                                 </div>
 
                                                                 <div className="col-span-2">
@@ -394,7 +542,7 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                                                                 </div>
 
                                                                 <div>
-                                                                    <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                                                                    <label className="text-xs font-medium text-slate-600 mb-1.5 flex justify-between">
                                                                         Timeline Start
                                                                     </label>
                                                                     <Input
@@ -406,11 +554,17 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                                                                                 timelineStart: e.target.value,
                                                                             })
                                                                         }
+                                                                        className={(validationErrors[`roadmap-${editingId}-timelineStart`] || localErrors[`roadmap-${editingId}-timelineStart`]) ? "border-destructive" : ""}
                                                                     />
+                                                                    {(validationErrors[`roadmap-${editingId}-timelineStart`] || localErrors[`roadmap-${editingId}-timelineStart`]) && (
+                                                                        <span className="text-xs text-destructive mt-1">
+                                                                            {validationErrors[`roadmap-${editingId}-timelineStart`] || localErrors[`roadmap-${editingId}-timelineStart`]}
+                                                                        </span>
+                                                                    )}
                                                                 </div>
 
                                                                 <div>
-                                                                    <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                                                                    <label className="text-xs font-medium text-slate-600 mb-1.5 flex justify-between">
                                                                         Timeline End
                                                                     </label>
                                                                     <Input
@@ -422,7 +576,13 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                                                                                 timelineEnd: e.target.value,
                                                                             })
                                                                         }
+                                                                        className={(validationErrors[`roadmap-${editingId}-timelineEnd`] || localErrors[`roadmap-${editingId}-timelineEnd`]) ? "border-destructive" : ""}
                                                                     />
+                                                                    {(validationErrors[`roadmap-${editingId}-timelineEnd`] || localErrors[`roadmap-${editingId}-timelineEnd`]) && (
+                                                                        <span className="text-xs text-destructive mt-1">
+                                                                            {validationErrors[`roadmap-${editingId}-timelineEnd`] || localErrors[`roadmap-${editingId}-timelineEnd`]}
+                                                                        </span>
+                                                                    )}
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -466,7 +626,7 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
 
                                                                             <div className="space-y-2.5">
                                                                                 <div>
-                                                                                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                                                                                    <label className="text-xs font-medium text-slate-600 mb-1 flex justify-between">
                                                                                         Title
                                                                                     </label>
                                                                                     <Input
@@ -479,7 +639,13 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                                                                                             )
                                                                                         }
                                                                                         placeholder="Feature or task title"
+                                                                                        className={(validationErrors[`item-${item.id}-title`] || localErrors[`item-${item.id}-title`]) ? "border-destructive" : ""}
                                                                                     />
+                                                                                    {(validationErrors[`item-${item.id}-title`] || localErrors[`item-${item.id}-title`]) && (
+                                                                                        <span className="text-xs text-destructive mt-1">
+                                                                                            {validationErrors[`item-${item.id}-title`] || localErrors[`item-${item.id}-title`]}
+                                                                                        </span>
+                                                                                    )}
                                                                                 </div>
 
                                                                                 <div>
@@ -593,7 +759,7 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
 
                                                                                 <div className="grid grid-cols-2 gap-2">
                                                                                     <div>
-                                                                                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                                                                                        <label className="text-xs font-medium text-slate-600 mb-1 flex justify-between">
                                                                                             Start Date
                                                                                         </label>
                                                                                         <Input
@@ -606,11 +772,17 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                                                                                                     e.target.value,
                                                                                                 )
                                                                                             }
+                                                                                            className={(validationErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-startDate`]) ? "border-destructive" : ""}
                                                                                         />
+                                                                                        {(validationErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-startDate`]) && (
+                                                                                            <span className="text-xs text-destructive mt-1">
+                                                                                                {validationErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-startDate`]}
+                                                                                            </span>
+                                                                                        )}
                                                                                     </div>
 
                                                                                     <div>
-                                                                                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                                                                                        <label className="text-xs font-medium text-slate-600 mb-1 flex justify-between">
                                                                                             End Date
                                                                                         </label>
                                                                                         <Input
@@ -623,7 +795,13 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                                                                                                     e.target.value,
                                                                                                 )
                                                                                             }
+                                                                                            className={(validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-endDate`]) ? "border-destructive" : ""}
                                                                                         />
+                                                                                        {(validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-endDate`]) && (
+                                                                                            <span className="text-xs text-destructive mt-1">
+                                                                                                {validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-endDate`]}
+                                                                                            </span>
+                                                                                        )}
                                                                                     </div>
                                                                                 </div>
                                                                             </div>
@@ -815,8 +993,8 @@ function RoadMapManagement({ value, onChange, isEmbedded = false }) {
                         })}
                     </div>
                 </div>
-            </div>
-        </div>
+            </div >
+        </div >
     );
 }
 

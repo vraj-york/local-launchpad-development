@@ -41,10 +41,32 @@ const CreateProject = () => {
     const [jiraIssueType, setJiraIssueType] = useState('');
 
     // Roadmap State
-    const [roadmaps, setRoadmaps] = useState([]);
+    // Use a fixed ID for the default roadmap to easily trigger edit mode
+    const [defaultRoadmapId] = useState(Date.now().toString());
+
+    const [roadmaps, setRoadmaps] = useState([{
+        id: defaultRoadmapId,
+        title: "",
+        description: "",
+        status: "DRAFT",
+        tshirtSize: "M",
+        timelineStart: "",
+        timelineEnd: "",
+        items: [{
+            id: `${Date.now()}-1`,
+            title: "",
+            description: "",
+            status: "PLANNED",
+            type: "FEATURE",
+            priority: "MEDIUM",
+            startDate: "",
+            endDate: ""
+        }]
+    }]);
 
     // UI State
     const [error, setError] = useState('');
+    const [validationErrors, setValidationErrors] = useState({});
     const [loading, setLoading] = useState(false);
     const [managersLoading, setManagersLoading] = useState(false);
 
@@ -67,12 +89,45 @@ const CreateProject = () => {
         }
     }, [user]);
 
+    const validateForm = () => {
+        const errors = {};
+
+        // Project Validation
+        if (!projectName.trim()) errors.projectName = "Project name is required";
+        if (user?.role === 'admin' && !selectedManager) errors.manager = "Manager is required";
+
+        // Roadmap Validation
+        if (roadmaps.length === 0) {
+            errors.roadmaps = "At least one roadmap is required";
+        } else {
+            roadmaps.forEach(roadmap => {
+                if (!roadmap.title.trim()) errors[`roadmap-${roadmap.id}-title`] = "Roadmap title is required";
+                if (!roadmap.timelineStart) errors[`roadmap-${roadmap.id}-timelineStart`] = "Start date is required";
+                if (!roadmap.timelineEnd) errors[`roadmap-${roadmap.id}-timelineEnd`] = "End date is required";
+
+                if (roadmap.items.length === 0) {
+                    errors[`roadmap-${roadmap.id}-items`] = "At least one item is required";
+                } else {
+                    roadmap.items.forEach(item => {
+                        if (!item.title.trim()) errors[`item-${item.id}-title`] = "Item title is required";
+                        if (!item.startDate) errors[`item-${item.id}-startDate`] = "Start date is required";
+                        if (!item.endDate) errors[`item-${item.id}-endDate`] = "End date is required";
+                    });
+                }
+            });
+        }
+
+        setValidationErrors(errors);
+        return Object.keys(errors).length === 0;
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
+        setValidationErrors({});
 
-        if (user?.role === 'admin' && !selectedManager) {
-            setError('Please select a manager');
+        if (!validateForm()) {
+            toast.error("Please fix the validation errors");
             return;
         }
 
@@ -84,14 +139,14 @@ const CreateProject = () => {
                 const { id, ...roadmapRest } = roadmap;
                 return {
                     ...roadmapRest,
-                    timelineStart: roadmap.timelineStart ? new Date(roadmap.timelineStart).toISOString() : null,
-                    timelineEnd: roadmap.timelineEnd ? new Date(roadmap.timelineEnd).toISOString() : null,
+                    timelineStart: new Date(roadmap.timelineStart).toISOString(),
+                    timelineEnd: new Date(roadmap.timelineEnd).toISOString(),
                     items: (roadmap.items || []).map(item => {
                         const { id: itemId, ...itemRest } = item;
                         return {
                             ...itemRest,
-                            startDate: item.startDate ? new Date(item.startDate).toISOString() : null,
-                            endDate: item.endDate ? new Date(item.endDate).toISOString() : null,
+                            startDate: new Date(item.startDate).toISOString(),
+                            endDate: new Date(item.endDate).toISOString(),
                             priority: item.priority || "MEDIUM" // Ensure priority exists
                         };
                     })
@@ -102,13 +157,6 @@ const CreateProject = () => {
                 name: projectName,
                 description: projectDescription,
                 roadmaps: processedRoadmaps,
-                // githubToken,
-                // githubUsername,
-                // jiraBaseUrl,
-                // jiraUsername,
-                // jiraApiToken,
-                // jiraProjectKey,
-                // jiraIssueType,
             };
 
             if (user?.role === 'admin') {
@@ -147,16 +195,47 @@ const CreateProject = () => {
                         )}
 
                         <div className="space-y-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="name">Project Name <span className="text-destructive">*</span></Label>
-                                <Input
-                                    id="name"
-                                    placeholder="e.g. Website Redesign"
-                                    value={projectName}
-                                    onChange={(e) => setProjectName(e.target.value)}
-                                    required
-                                    className="text-lg"
-                                />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="name">Project Name <span className="text-destructive">*</span></Label>
+                                    <Input
+                                        id="name"
+                                        placeholder="e.g. Website Redesign"
+                                        value={projectName}
+                                        onChange={(e) => setProjectName(e.target.value)}
+                                        className={`text-lg ${validationErrors.projectName ? "border-destructive" : ""}`}
+                                    />
+                                    {validationErrors.projectName && (
+                                        <p className="text-sm text-destructive mt-1">{validationErrors.projectName}</p>
+                                    )}
+                                </div>
+                                {user?.role === 'admin' && (
+                                    <div className="space-y-2">
+                                        <Label htmlFor="manager">Assigned Manager <span className="text-destructive">*</span></Label>
+                                        <Select
+                                            value={selectedManager}
+                                            onValueChange={setSelectedManager}
+                                            required
+                                            disabled={managersLoading}
+
+                                        >
+                                            <SelectTrigger className={validationErrors.manager ? "border-destructive w-full" : "w-full"}>
+                                                <SelectValue placeholder={managersLoading ? "Loading managers..." : "Select a manager"} />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {managers.map((manager) => (
+                                                    <SelectItem key={manager.id} value={manager.id.toString()}>
+                                                        {manager.name} ({manager.email})
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        {validationErrors.manager && (
+                                            <p className="text-sm text-destructive mt-1">{validationErrors.manager}</p>
+                                        )}
+                                        {managersLoading && <p className="text-xs text-muted-foreground">Fetching list of managers...</p>}
+                                    </div>
+                                )}
                             </div>
 
                             <div className="space-y-2">
@@ -171,29 +250,7 @@ const CreateProject = () => {
                                 />
                             </div>
 
-                            {user?.role === 'admin' && (
-                                <div className="space-y-2">
-                                    <Label htmlFor="manager">Assigned Manager <span className="text-destructive">*</span></Label>
-                                    <Select
-                                        value={selectedManager}
-                                        onValueChange={setSelectedManager}
-                                        required
-                                        disabled={managersLoading}
-                                    >
-                                        <SelectTrigger>
-                                            <SelectValue placeholder={managersLoading ? "Loading managers..." : "Select a manager"} />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {managers.map((manager) => (
-                                                <SelectItem key={manager.id} value={manager.id.toString()}>
-                                                    {manager.name} ({manager.email})
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    {managersLoading && <p className="text-xs text-muted-foreground">Fetching list of managers...</p>}
-                                </div>
-                            )}
+
                         </div>
                     </CardContent>
                 </Card>
@@ -300,6 +357,8 @@ const CreateProject = () => {
                             value={roadmaps}
                             onChange={setRoadmaps}
                             isEmbedded={true}
+                            validationErrors={validationErrors}
+                            initialEditingId={defaultRoadmapId}
                         />
                     </CardContent>
                 </Card>
