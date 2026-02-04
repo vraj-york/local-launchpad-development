@@ -257,3 +257,23 @@ export const updateProject = async (projectId, projectData) => {
         throw error.response?.data || { error: 'Failed to update project' };
     }
 };
+
+// Function to delete a roadmap
+export const deleteRoadmap = async (roadmapId) => {
+    try {
+        const response = await api.delete(`/api/roadmaps/${roadmapId}`);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to delete roadmap' };
+    }
+};
+
+// Function to delete a roadmap item
+export const deleteRoadmapItem = async (roadmapId, itemId) => {
+    try {
+        const response = await api.delete(`/api/roadmaps/${roadmapId}/items/${itemId}`);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to delete roadmap item' };
+    }
+};

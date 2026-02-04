@@ -14,7 +14,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { PageHeader } from "./PageHeader";
 
 
-function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdate, validationErrors = {}, initialEditingId = null }) {
+function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdate, onRoadmapDelete, onItemDelete, validationErrors = {}, initialEditingId = null }) {
 
     const [localErrors, setLocalErrors] = useState({});
 
@@ -288,10 +288,14 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
         setEditingId(null);
     };
 
-    const handleDelete = (id) => {
-        setRoadmaps(
-            roadmaps.filter((roadmap) => roadmap.id !== id),
-        );
+    const handleDelete = async (id) => {
+        if (onRoadmapDelete) {
+            await onRoadmapDelete(id);
+        } else {
+            setRoadmaps(
+                roadmaps.filter((roadmap) => roadmap.id !== id),
+            );
+        }
     };
 
     const toggleItemStatus = (
@@ -354,7 +358,16 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
         });
     };
 
-    const removeItem = (itemId) => {
+    const removeItem = async (itemId) => {
+        if (onItemDelete) {
+            const originalRoadmap = roadmaps.find(r => r.id === editingId);
+            const originalItem = originalRoadmap?.items.find(i => i.id === itemId);
+
+            if (originalItem) {
+                await onItemDelete(editingId, itemId);
+            }
+        }
+
         setEditForm({
             ...editForm,
             items: editForm.items.filter(
@@ -614,14 +627,15 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                                 <span className="text-xs font-medium text-slate-500">
                                                                                     Item {idx + 1}
                                                                                 </span>
-                                                                                <button
+                                                                                <Button
                                                                                     onClick={() =>
                                                                                         removeItem(item.id)
                                                                                     }
-                                                                                    className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                                                                                    className=" text-slate-400 hover:text-red-600 transition-colors"
+                                                                                    variant="ghost"
                                                                                 >
                                                                                     <X className="w-4 h-4" />
-                                                                                </button>
+                                                                                </Button>
                                                                             </div>
 
                                                                             <div className="space-y-2.5">
@@ -883,9 +897,9 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                 </div>
                                                                 <DropdownMenu>
                                                                     <DropdownMenuTrigger asChild>
-                                                                        <button className="p-1 hover:bg-slate-100 rounded transition-colors">
+                                                                        <Button className="p-1 hover:bg-slate-100 rounded transition-colors" variant="ghost">
                                                                             <MoreVertical className="w-5 h-5 text-slate-400" />
-                                                                        </button>
+                                                                        </Button>
                                                                     </DropdownMenuTrigger>
                                                                     <DropdownMenuContent align="end">
                                                                         <DropdownMenuItem onClick={() => handleEditClick(roadmap)}>
@@ -915,7 +929,7 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                                 item.id,
                                                                             )
                                                                         }
-                                                                        className="flex-shrink-0 mt-0.5"
+                                                                        className="shrink-0 mt-0.5"
                                                                     >
                                                                         {item.status ===
                                                                             "COMPLETED" ? (

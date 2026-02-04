@@ -4,7 +4,7 @@ import { Button } from '../components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { ArrowLeft, GitCommit, FileDiff } from 'lucide-react';
 import DiffModal from '../components/DiffModal';
-import { fetchProjectById, updateProject } from '@/api';
+import { fetchProjectById, updateProject, deleteRoadmap, deleteRoadmapItem } from '@/api';
 import RoadMapManagement from '@/components/RoadMapManagement';
 import ReleaseManagement from '@/components/ReleaseManagement';
 import { PageHeader } from '@/components/PageHeader';
@@ -154,7 +154,29 @@ const ProjectDetails = () => {
                                 }
 
                                 refreshProject();
-                                return null; // Signal to RoadMapManagement that we handled it but no direct object return to sync immediately via return (refresh does it).
+                                return null;
+                            }}
+                            onRoadmapDelete={async (roadmapId) => {
+                                try {
+                                    await deleteRoadmap(roadmapId);
+                                    toast.success("Roadmap deleted successfully");
+                                    refreshProject();
+                                } catch (error) {
+                                    console.error("Failed to delete roadmap:", error);
+                                    toast.error("Failed to delete roadmap");
+                                }
+                            }}
+                            onItemDelete={async (roadmapId, itemId) => {
+                                try {
+                                    await deleteRoadmapItem(roadmapId, itemId);
+                                    toast.success("Roadmap item deleted");
+                                    refreshProject();
+                                } catch (error) {
+                                    console.error("Failed to delete item:", error);
+                                    if (error.status !== 404) {
+                                        toast.error("Failed to delete item from server");
+                                    }
+                                }
                             }}
                         />
                     </TabsContent>
