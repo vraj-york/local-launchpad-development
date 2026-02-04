@@ -1,4 +1,4 @@
-import asyncHandler from "../middlewares/asyncHandler.middleware.js";
+import asyncHandler from "../middleware/asyncHandler.middleware.js";
 import {
     createReleaseService,
     getReleaseByIdService,

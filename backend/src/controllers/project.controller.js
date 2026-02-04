@@ -6,7 +6,7 @@ import {
     updateProjectService
 } from "../services/project.service.js";
 import ApiError from "../utils/apiError.js";
-import asyncHandler from "../middlewares/asyncHandler.middleware.js";
+import asyncHandler from "../middleware/asyncHandler.middleware.js";
 
 import { validateRoadmapTimelines, validateRoadmapItemsTimeline } from "../validators/roadmap.validator.js";
 

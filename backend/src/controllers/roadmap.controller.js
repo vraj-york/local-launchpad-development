@@ -1,5 +1,5 @@
 import { deleteRoadmap, deleteRoadmapItem } from "../services/roadmap.service.js";
-import asyncHandler from "../middlewares/asyncHandler.middleware.js";
+import asyncHandler from "../middleware/asyncHandler.middleware.js";
 
 export const roadmapController = {
     /**

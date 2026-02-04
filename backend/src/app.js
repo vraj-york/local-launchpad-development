@@ -5,7 +5,7 @@ import path from "path";
 import authRoutes from "./routes/auth.routes.js";
 import projectRoutes from "./routes/project.routes.js";
 import releaseRoutes from "./routes/release.routes.js";
-import errorMiddleware from "./middlewares/error.middleware.js";
+import errorMiddleware from "./middleware/error.middleware.js";
 import roadmapRoutes from "./routes/roadmap.route.js";
 dotenv.config();
 

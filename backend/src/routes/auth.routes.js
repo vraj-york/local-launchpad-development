@@ -7,12 +7,6 @@ const router = express.Router();
 const prisma = new PrismaClient();
 
 
-/**
- * @swagger
- * tags:
- *   name: Auth
- *   description: Authentication API
- */
 
 /**
  * @swagger
