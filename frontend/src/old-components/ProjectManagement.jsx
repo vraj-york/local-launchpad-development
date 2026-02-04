@@ -137,7 +137,7 @@ const ProjectManagement = () => {
                     <div className="card-body">
                         <form onSubmit={handleCreateProject}>
                             <div className="form-group">
-                                <label className="form-label">Project Name *</label>
+                                <label className="form-label">Project Name</label>
                                 <input
                                     type="text"
                                     className="form-input"

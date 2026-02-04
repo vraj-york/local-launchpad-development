@@ -197,7 +197,7 @@ const CreateProject = () => {
                         <div className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
-                                    <Label htmlFor="name">Project Name <span className="text-destructive">*</span></Label>
+                                    <Label htmlFor="name">Project Name</Label>
                                     <Input
                                         id="name"
                                         placeholder="e.g. Website Redesign"
@@ -211,11 +211,10 @@ const CreateProject = () => {
                                 </div>
                                 {user?.role === 'admin' && (
                                     <div className="space-y-2">
-                                        <Label htmlFor="manager">Assigned Manager <span className="text-destructive">*</span></Label>
+                                        <Label htmlFor="manager">Assigned Manager</Label>
                                         <Select
                                             value={selectedManager}
                                             onValueChange={setSelectedManager}
-                                            required
                                             disabled={managersLoading}
 
                                         >

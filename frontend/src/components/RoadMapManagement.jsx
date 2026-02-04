@@ -929,7 +929,7 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                                 item.id,
                                                                             )
                                                                         }
-                                                                        className="shrink-0 mt-0.5"
+                                                                        className="shrink-0 mt-0.5 cursor-pointer"
                                                                     >
                                                                         {item.status ===
                                                                             "COMPLETED" ? (
