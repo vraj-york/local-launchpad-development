@@ -39,8 +39,13 @@ export const createProjectService = async ({ userId, body }) => {
     const {
         name,
         description,
-        jiraToken,
+        githubUsername,
         githubToken,
+        jiraBaseUrl,
+        jiraProjectKey,
+        jiraAccessToken,
+        jiraAccessKey,
+        jiraIssueType,
         assignedManagerId,
         roadmaps
     } = body;
@@ -66,8 +71,13 @@ export const createProjectService = async ({ userId, body }) => {
             data: {
                 name,
                 description,
-                jiraToken,
+                githubUsername,
                 githubToken,
+                jiraBaseUrl,
+                jiraProjectKey,
+                jiraAccessToken,
+                jiraAccessKey,
+                jiraIssueType,
                 assignedManagerId: Number(assignedManagerId),
                 createdById: userId
             }
@@ -190,7 +200,11 @@ export const getProjectByIdService = async (projectId, user) => {
                     }
                 }
             },
-            releases: true
+            releases: {
+                include: {
+                    versions: true
+                }
+            }
         }
     });
 };

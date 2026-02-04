@@ -3,20 +3,11 @@ import { authenticateToken } from "../middleware/auth.middleware.js";
 import { releaseController } from "../controllers/release.controller.js";
 import multer from "multer";
 import path from "path";
-
-import fs from "fs-extra";
-import { execSync } from "child_process";
-import fetch from "node-fetch";
 import dotenv from "dotenv";
-import { PrismaClient } from "@prisma/client";
 
 dotenv.config();
 
 const router = express.Router();
-
-
-
-
 
 /**
  * @swagger

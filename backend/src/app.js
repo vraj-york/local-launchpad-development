@@ -6,8 +6,7 @@ import authRoutes from "./routes/auth.routes.js";
 import projectRoutes from "./routes/project.routes.js";
 import releaseRoutes from "./routes/release.routes.js";
 import errorMiddleware from "./middlewares/error.middleware.js";
-
-//import roadMapRoutes from './routes/roadmap.routes.js';
+import roadmapRoutes from "./routes/roadmap.route.js";
 dotenv.config();
 
 const app = express();
@@ -19,7 +18,7 @@ app.use("/apps", express.static(path.join(process.cwd(), "projects")));
 app.use("/api/auth", authRoutes);
 // app.use("/api/projects", projectRoutes);
 app.use("/api/releases", releaseRoutes);
-// app.use('/api/roadmaps', roadMapRoutes)
+app.use('/api/roadmaps', roadmapRoutes)
 app.use("/api/projects", projectRoutes);
 
 // MUST be last
