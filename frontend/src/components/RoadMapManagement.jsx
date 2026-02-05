@@ -12,6 +12,10 @@ import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { PageHeader } from "./PageHeader";
+import { DatePickerWithRange } from "./ui/date-range-picker";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { format } from "date-fns";
+
 
 
 function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdate, onRoadmapDelete, onItemDelete, validationErrors = {}, initialEditingId = null }) {
@@ -135,6 +139,7 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
         setLocalErrors({});
         const newRoadmap = {
             id: Date.now().toString(),
+            isTemp: true,
             title: "New Roadmap",
             description: "Add description...",
             status: "DRAFT",
@@ -231,6 +236,8 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                         endDate: toISO(item.endDate)
                     })),
                 };
+                // Remove internal flags
+                if (updatedRoadmap.isTemp) delete updatedRoadmap.isTemp;
                 return updatedRoadmap;
             }
             return roadmap;
@@ -285,10 +292,23 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
     };
 
     const handleCancel = () => {
+        // If canceling a temporary roadmap, remove it from the list
+        const currentRoadmap = roadmaps.find(r => r.id === editingId);
+        if (currentRoadmap?.isTemp) {
+            setRoadmaps(roadmaps.filter(r => r.id !== editingId));
+        }
         setEditingId(null);
     };
 
     const handleDelete = async (id) => {
+        if (typeof id === 'string') {
+            console.log("String id found", id)
+            setRoadmaps(
+                roadmaps.filter((roadmap) => roadmap.id !== id),
+            );
+            return;
+        }
+
         if (onRoadmapDelete) {
             await onRoadmapDelete(id);
         } else {
@@ -359,11 +379,13 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
     };
 
     const removeItem = async (itemId) => {
+        console.log(itemId, "item id")
         if (onItemDelete) {
             const originalRoadmap = roadmaps.find(r => r.id === editingId);
             const originalItem = originalRoadmap?.items.find(i => i.id === itemId);
 
-            if (originalItem) {
+            // Only call backend if both roadmap and item are persisted (have number IDs)
+            if (originalItem && typeof editingId === 'number' && typeof itemId === 'number') {
                 await onItemDelete(editingId, itemId);
             }
         }
@@ -472,27 +494,55 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                             <h4 className="font-semibold text-slate-800">Roadmap Details</h4>
 
                                                             <div className="grid grid-cols-2 gap-3">
-                                                                <div className="col-span-2">
-                                                                    <label className="block text-xs font-medium text-slate-600 mb-1.5">
-                                                                        Title
-                                                                    </label>
-                                                                    <Input
-                                                                        value={editForm.title}
-                                                                        onChange={(e) =>
-                                                                            setEditForm({
-                                                                                ...editForm,
-                                                                                title: e.target.value,
-                                                                            })
-                                                                        }
-                                                                        placeholder="Q1 2026 Roadmap"
-                                                                        autoFocus
-                                                                        className={(validationErrors[`roadmap-${editingId}-title`] || localErrors[`roadmap-${editingId}-title`]) ? "border-destructive" : ""}
-                                                                    />
-                                                                    {(validationErrors[`roadmap-${editingId}-title`] || localErrors[`roadmap-${editingId}-title`]) && (
-                                                                        <span className="text-xs text-destructive mt-1">
-                                                                            {validationErrors[`roadmap-${editingId}-title`] || localErrors[`roadmap-${editingId}-title`]}
-                                                                        </span>
-                                                                    )}
+
+                                                                <div className="grid grid-cols-2 col-span-2 gap-4">
+                                                                    <div className="w-full">
+                                                                        <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                                                                            Title
+                                                                        </label>
+                                                                        <Input
+                                                                            value={editForm.title}
+                                                                            onChange={(e) =>
+                                                                                setEditForm({
+                                                                                    ...editForm,
+                                                                                    title: e.target.value,
+                                                                                })
+                                                                            }
+                                                                            placeholder="Q1 2026 Roadmap"
+                                                                            autoFocus
+                                                                            className={(validationErrors[`roadmap-${editingId}-title`] || localErrors[`roadmap-${editingId}-title`]) ? "border-destructive w-full" : "w-full"}
+                                                                        />
+                                                                        {(validationErrors[`roadmap-${editingId}-title`] || localErrors[`roadmap-${editingId}-title`]) && (
+                                                                            <span className="text-xs text-destructive mt-1">
+                                                                                {validationErrors[`roadmap-${editingId}-title`] || localErrors[`roadmap-${editingId}-title`]}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+
+                                                                    <div className="w-full">
+                                                                        <label className="text-xs font-medium text-slate-600 mb-1.5 flex justify-between">
+                                                                            Timeline (Start - End)
+                                                                        </label>
+                                                                        <DatePickerWithRange
+                                                                            date={{
+                                                                                from: editForm.timelineStart ? new Date(editForm.timelineStart) : undefined,
+                                                                                to: editForm.timelineEnd ? new Date(editForm.timelineEnd) : undefined,
+                                                                            }}
+                                                                            setDate={(range) => {
+                                                                                setEditForm({
+                                                                                    ...editForm,
+                                                                                    timelineStart: range?.from ? format(range.from, 'yyyy-MM-dd') : "",
+                                                                                    timelineEnd: range?.to ? format(range.to, 'yyyy-MM-dd') : "",
+                                                                                })
+                                                                            }}
+                                                                            className={(validationErrors[`roadmap-${editingId}-timelineStart`] || validationErrors[`roadmap-${editingId}-timelineEnd`] || localErrors[`roadmap-${editingId}-timelineStart`] || localErrors[`roadmap-${editingId}-timelineEnd`]) ? "border-destructive w-full" : "w-full"}
+                                                                        />
+                                                                        {(validationErrors[`roadmap-${editingId}-timelineStart`] || validationErrors[`roadmap-${editingId}-timelineEnd`] || localErrors[`roadmap-${editingId}-timelineStart`] || localErrors[`roadmap-${editingId}-timelineEnd`]) && (
+                                                                            <p className="text-xs text-destructive mt-1">
+                                                                                {validationErrors[`roadmap-${editingId}-timelineStart`] || localErrors[`roadmap-${editingId}-timelineStart`] || validationErrors[`roadmap-${editingId}-timelineEnd`] || localErrors[`roadmap-${editingId}-timelineEnd`]}
+                                                                            </p>
+                                                                        )}
+                                                                    </div>
                                                                 </div>
 
                                                                 <div className="col-span-2">
@@ -516,87 +566,53 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                     <label className="block text-xs font-medium text-slate-600 mb-1.5">
                                                                         Status
                                                                     </label>
-                                                                    <select
+                                                                    <Select
                                                                         value={editForm.status}
-                                                                        onChange={(e) =>
+                                                                        onValueChange={(value) =>
                                                                             setEditForm({
                                                                                 ...editForm,
-                                                                                status: e.target.value,
+                                                                                status: value,
                                                                             })
                                                                         }
-                                                                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                                                     >
-                                                                        <option value="DRAFT">Draft</option>
-                                                                        <option value="ACTIVE">Active</option>
-                                                                        <option value="COMPLETED">Completed</option>
-                                                                    </select>
+                                                                        <SelectTrigger className="w-full">
+                                                                            <SelectValue placeholder="Select status" />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            <SelectItem value="DRAFT">Draft</SelectItem>
+                                                                            <SelectItem value="ACTIVE">Active</SelectItem>
+                                                                            <SelectItem value="COMPLETED">Completed</SelectItem>
+                                                                        </SelectContent>
+                                                                    </Select>
                                                                 </div>
 
                                                                 <div>
                                                                     <label className="block text-xs font-medium text-slate-600 mb-1.5">
                                                                         T-Shirt Size
                                                                     </label>
-                                                                    <select
+                                                                    <Select
                                                                         value={editForm.tshirtSize}
-                                                                        onChange={(e) =>
+                                                                        onValueChange={(value) =>
                                                                             setEditForm({
                                                                                 ...editForm,
-                                                                                tshirtSize: e.target.value,
+                                                                                tshirtSize: value,
                                                                             })
                                                                         }
-                                                                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                                                     >
-                                                                        <option value="XS">XS</option>
-                                                                        <option value="S">S</option>
-                                                                        <option value="M">M</option>
-                                                                        <option value="L">L</option>
-                                                                        <option value="XL">XL</option>
-                                                                    </select>
+                                                                        <SelectTrigger className="w-full">
+                                                                            <SelectValue placeholder="Select size" />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            <SelectItem value="XS">XS</SelectItem>
+                                                                            <SelectItem value="S">S</SelectItem>
+                                                                            <SelectItem value="M">M</SelectItem>
+                                                                            <SelectItem value="L">L</SelectItem>
+                                                                            <SelectItem value="XL">XL</SelectItem>
+                                                                        </SelectContent>
+                                                                    </Select>
                                                                 </div>
 
-                                                                <div>
-                                                                    <label className="text-xs font-medium text-slate-600 mb-1.5 flex justify-between">
-                                                                        Timeline Start
-                                                                    </label>
-                                                                    <Input
-                                                                        type="date"
-                                                                        value={editForm.timelineStart}
-                                                                        onChange={(e) =>
-                                                                            setEditForm({
-                                                                                ...editForm,
-                                                                                timelineStart: e.target.value,
-                                                                            })
-                                                                        }
-                                                                        className={(validationErrors[`roadmap-${editingId}-timelineStart`] || localErrors[`roadmap-${editingId}-timelineStart`]) ? "border-destructive" : ""}
-                                                                    />
-                                                                    {(validationErrors[`roadmap-${editingId}-timelineStart`] || localErrors[`roadmap-${editingId}-timelineStart`]) && (
-                                                                        <span className="text-xs text-destructive mt-1">
-                                                                            {validationErrors[`roadmap-${editingId}-timelineStart`] || localErrors[`roadmap-${editingId}-timelineStart`]}
-                                                                        </span>
-                                                                    )}
-                                                                </div>
 
-                                                                <div>
-                                                                    <label className="text-xs font-medium text-slate-600 mb-1.5 flex justify-between">
-                                                                        Timeline End
-                                                                    </label>
-                                                                    <Input
-                                                                        type="date"
-                                                                        value={editForm.timelineEnd}
-                                                                        onChange={(e) =>
-                                                                            setEditForm({
-                                                                                ...editForm,
-                                                                                timelineEnd: e.target.value,
-                                                                            })
-                                                                        }
-                                                                        className={(validationErrors[`roadmap-${editingId}-timelineEnd`] || localErrors[`roadmap-${editingId}-timelineEnd`]) ? "border-destructive" : ""}
-                                                                    />
-                                                                    {(validationErrors[`roadmap-${editingId}-timelineEnd`] || localErrors[`roadmap-${editingId}-timelineEnd`]) && (
-                                                                        <span className="text-xs text-destructive mt-1">
-                                                                            {validationErrors[`roadmap-${editingId}-timelineEnd`] || localErrors[`roadmap-${editingId}-timelineEnd`]}
-                                                                        </span>
-                                                                    )}
-                                                                </div>
                                                             </div>
                                                         </div>
 
@@ -621,45 +637,81 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                     (item, idx) => (
                                                                         <div
                                                                             key={item.id}
-                                                                            className="border border-slate-200 rounded-lg p-4 space-y-3 bg-slate-50"
+                                                                            className="border border-slate-200 rounded-lg p-4 space-y-3 bg-primary-foreground"
                                                                         >
                                                                             <div className="flex items-center justify-between mb-2">
                                                                                 <span className="text-xs font-medium text-slate-500">
                                                                                     Item {idx + 1}
                                                                                 </span>
-                                                                                <Button
-                                                                                    onClick={() =>
-                                                                                        removeItem(item.id)
-                                                                                    }
-                                                                                    className=" text-slate-400 hover:text-red-600 transition-colors"
-                                                                                    variant="ghost"
-                                                                                >
-                                                                                    <X className="w-4 h-4" />
-                                                                                </Button>
+                                                                                {editForm.items.length > 1 && (
+                                                                                    <Button
+                                                                                        onClick={() =>
+                                                                                            removeItem(item.id)
+                                                                                        }
+                                                                                        className=" text-slate-400 hover:text-red-600 transition-colors"
+                                                                                        variant="ghost"
+                                                                                    >
+                                                                                        <X className="w-4 h-4" />
+                                                                                    </Button>
+                                                                                )}
                                                                             </div>
 
                                                                             <div className="space-y-2.5">
-                                                                                <div>
-                                                                                    <label className="text-xs font-medium text-slate-600 mb-1 flex justify-between">
-                                                                                        Title
-                                                                                    </label>
-                                                                                    <Input
-                                                                                        value={item.title}
-                                                                                        onChange={(e) =>
-                                                                                            updateItem(
-                                                                                                item.id,
-                                                                                                "title",
-                                                                                                e.target.value,
-                                                                                            )
-                                                                                        }
-                                                                                        placeholder="Feature or task title"
-                                                                                        className={(validationErrors[`item-${item.id}-title`] || localErrors[`item-${item.id}-title`]) ? "border-destructive" : ""}
-                                                                                    />
-                                                                                    {(validationErrors[`item-${item.id}-title`] || localErrors[`item-${item.id}-title`]) && (
-                                                                                        <span className="text-xs text-destructive mt-1">
-                                                                                            {validationErrors[`item-${item.id}-title`] || localErrors[`item-${item.id}-title`]}
-                                                                                        </span>
-                                                                                    )}
+
+                                                                                <div className="grid grid-cols-2 col-span-2 gap-4">
+                                                                                    <div>
+                                                                                        <label className="text-xs font-medium text-slate-600 mb-1 flex justify-between">
+                                                                                            Title
+                                                                                        </label>
+                                                                                        <Input
+                                                                                            value={item.title}
+                                                                                            onChange={(e) =>
+                                                                                                updateItem(
+                                                                                                    item.id,
+                                                                                                    "title",
+                                                                                                    e.target.value,
+                                                                                                )
+                                                                                            }
+                                                                                            placeholder="Feature or task title"
+                                                                                            className={(validationErrors[`item-${item.id}-title`] || localErrors[`item-${item.id}-title`]) ? "border-destructive" : ""}
+                                                                                        />
+                                                                                        {(validationErrors[`item-${item.id}-title`] || localErrors[`item-${item.id}-title`]) && (
+                                                                                            <span className="text-xs text-destructive mt-1">
+                                                                                                {validationErrors[`item-${item.id}-title`] || localErrors[`item-${item.id}-title`]}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div>
+                                                                                        <label className="text-xs font-medium text-slate-600 mb-1 flex justify-between">
+                                                                                            Date Range
+                                                                                        </label>
+                                                                                        <DatePickerWithRange
+                                                                                            date={{
+                                                                                                from: item.startDate ? new Date(item.startDate) : undefined,
+                                                                                                to: item.endDate ? new Date(item.endDate) : undefined,
+                                                                                            }}
+                                                                                            setDate={(range) => {
+                                                                                                // Manually updating both fields
+                                                                                                const from = range?.from ? format(range.from, 'yyyy-MM-dd') : "";
+                                                                                                const to = range?.to ? format(range.to, 'yyyy-MM-dd') : "";
+
+                                                                                                // We need to update items array, so we can't use updateItem helper easily for two fields at once without triggering 2 renders or modifying helper. 
+                                                                                                // Easier to replicate update logic here for batch update.
+                                                                                                setEditForm(prev => ({
+                                                                                                    ...prev,
+                                                                                                    items: prev.items.map(i =>
+                                                                                                        i.id === item.id ? { ...i, startDate: from, endDate: to } : i
+                                                                                                    )
+                                                                                                }));
+                                                                                            }}
+                                                                                            className={(validationErrors[`item-${item.id}-startDate`] || validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-endDate`]) ? "border-destructive w-full" : "w-full"}
+                                                                                        />
+                                                                                        {(validationErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-startDate`] || validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-endDate`]) && (
+                                                                                            <p className="text-xs text-destructive mt-1">
+                                                                                                {validationErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-startDate`] || validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-endDate`]}
+                                                                                            </p>
+                                                                                        )}
+                                                                                    </div>
                                                                                 </div>
 
                                                                                 <div>
@@ -687,137 +739,85 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                                         <label className="block text-xs font-medium text-slate-600 mb-1">
                                                                                             Type
                                                                                         </label>
-                                                                                        <select
+                                                                                        <Select
                                                                                             value={
                                                                                                 item.type ||
                                                                                                 "FEATURE"
                                                                                             }
-                                                                                            onChange={(e) =>
+                                                                                            onValueChange={(value) =>
                                                                                                 updateItem(
                                                                                                     item.id,
                                                                                                     "type",
-                                                                                                    e.target.value,
+                                                                                                    value,
                                                                                                 )
                                                                                             }
-                                                                                            className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                                                                         >
-                                                                                            <option value="FEATURE">
-                                                                                                Feature
-                                                                                            </option>
-                                                                                            <option value="BUG">
-                                                                                                Bug
-                                                                                            </option>
-                                                                                            <option value="IMPROVEMENT">
-                                                                                                Improvement
-                                                                                            </option>
-                                                                                        </select>
+                                                                                            <SelectTrigger className="w-full h-8 text-xs">
+                                                                                                <SelectValue placeholder="Type" />
+                                                                                            </SelectTrigger>
+                                                                                            <SelectContent>
+                                                                                                <SelectItem value="FEATURE">Feature</SelectItem>
+                                                                                                <SelectItem value="BUG">Bug</SelectItem>
+                                                                                                <SelectItem value="IMPROVEMENT">Improvement</SelectItem>
+                                                                                            </SelectContent>
+                                                                                        </Select>
                                                                                     </div>
 
                                                                                     <div>
                                                                                         <label className="block text-xs font-medium text-slate-600 mb-1">
                                                                                             Priority
                                                                                         </label>
-                                                                                        <select
+                                                                                        <Select
                                                                                             value={
                                                                                                 item.priority ||
                                                                                                 "MEDIUM"
                                                                                             }
-                                                                                            onChange={(e) =>
+                                                                                            onValueChange={(value) =>
                                                                                                 updateItem(
                                                                                                     item.id,
                                                                                                     "priority",
-                                                                                                    e.target.value,
+                                                                                                    value,
                                                                                                 )
                                                                                             }
-                                                                                            className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                                                                         >
-                                                                                            <option value="LOW">
-                                                                                                Low
-                                                                                            </option>
-                                                                                            <option value="MEDIUM">
-                                                                                                Medium
-                                                                                            </option>
-                                                                                            <option value="HIGH">
-                                                                                                High
-                                                                                            </option>
-                                                                                        </select>
+                                                                                            <SelectTrigger className="w-full h-8 text-xs">
+                                                                                                <SelectValue placeholder="Priority" />
+                                                                                            </SelectTrigger>
+                                                                                            <SelectContent>
+                                                                                                <SelectItem value="LOW">Low</SelectItem>
+                                                                                                <SelectItem value="MEDIUM">Medium</SelectItem>
+                                                                                                <SelectItem value="HIGH">High</SelectItem>
+                                                                                            </SelectContent>
+                                                                                        </Select>
                                                                                     </div>
 
                                                                                     <div>
                                                                                         <label className="block text-xs font-medium text-slate-600 mb-1">
                                                                                             Status
                                                                                         </label>
-                                                                                        <select
+                                                                                        <Select
                                                                                             value={item.status}
-                                                                                            onChange={(e) =>
+                                                                                            onValueChange={(value) =>
                                                                                                 updateItem(
                                                                                                     item.id,
                                                                                                     "status",
-                                                                                                    e.target.value,
+                                                                                                    value,
                                                                                                 )
                                                                                             }
-                                                                                            className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                                                                         >
-                                                                                            <option value="PLANNED">
-                                                                                                Planned
-                                                                                            </option>
-                                                                                            <option value="IN_PROGRESS">
-                                                                                                In Progress
-                                                                                            </option>
-                                                                                            <option value="COMPLETED">
-                                                                                                Completed
-                                                                                            </option>
-                                                                                        </select>
+                                                                                            <SelectTrigger className="w-full h-8 text-xs">
+                                                                                                <SelectValue placeholder="Status" />
+                                                                                            </SelectTrigger>
+                                                                                            <SelectContent>
+                                                                                                <SelectItem value="PLANNED">Planned</SelectItem>
+                                                                                                <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
+                                                                                                <SelectItem value="COMPLETED">Completed</SelectItem>
+                                                                                            </SelectContent>
+                                                                                        </Select>
                                                                                     </div>
                                                                                 </div>
 
-                                                                                <div className="grid grid-cols-2 gap-2">
-                                                                                    <div>
-                                                                                        <label className="text-xs font-medium text-slate-600 mb-1 flex justify-between">
-                                                                                            Start Date
-                                                                                        </label>
-                                                                                        <Input
-                                                                                            type="date"
-                                                                                            value={item.startDate || ""}
-                                                                                            onChange={(e) =>
-                                                                                                updateItem(
-                                                                                                    item.id,
-                                                                                                    "startDate",
-                                                                                                    e.target.value,
-                                                                                                )
-                                                                                            }
-                                                                                            className={(validationErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-startDate`]) ? "border-destructive" : ""}
-                                                                                        />
-                                                                                        {(validationErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-startDate`]) && (
-                                                                                            <span className="text-xs text-destructive mt-1">
-                                                                                                {validationErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-startDate`]}
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </div>
 
-                                                                                    <div>
-                                                                                        <label className="text-xs font-medium text-slate-600 mb-1 flex justify-between">
-                                                                                            End Date
-                                                                                        </label>
-                                                                                        <Input
-                                                                                            type="date"
-                                                                                            value={item.endDate || ""}
-                                                                                            onChange={(e) =>
-                                                                                                updateItem(
-                                                                                                    item.id,
-                                                                                                    "endDate",
-                                                                                                    e.target.value,
-                                                                                                )
-                                                                                            }
-                                                                                            className={(validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-endDate`]) ? "border-destructive" : ""}
-                                                                                        />
-                                                                                        {(validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-endDate`]) && (
-                                                                                            <span className="text-xs text-destructive mt-1">
-                                                                                                {validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-endDate`]}
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </div>
-                                                                                </div>
                                                                             </div>
                                                                         </div>
                                                                     ),
