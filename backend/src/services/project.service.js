@@ -134,6 +134,10 @@ export async function listProjectsService(user) {
                         orderBy: { createdAt: "desc" },
                         take: 1,
                     },
+                    roadmapItems: {
+                        orderBy: { createdAt: "desc" },
+                        take: 1,
+                    },
                 },
             },
 
@@ -194,6 +198,9 @@ export const getProjectByIdService = async (projectId, user) => {
                 select: { id: true, name: true, email: true }
             },
             roadmaps: {
+                orderBy: {
+                    id: "asc"   // ✅ roadmap order by id ASC
+                },
                 include: {
                     items: {
                         orderBy: { createdAt: 'asc' }
@@ -202,7 +209,11 @@ export const getProjectByIdService = async (projectId, user) => {
             },
             releases: {
                 include: {
-                    versions: true
+                    versions: true,
+                    roadmapItems: {
+                        orderBy: { createdAt: "desc" },
+                        take: 1,
+                    },
                 }
             }
         }
