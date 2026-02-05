@@ -41,7 +41,6 @@ const CreateProject = () => {
     const [jiraIssueType, setJiraIssueType] = useState('');
 
     // Roadmap State
-    // Use a fixed ID for the default roadmap to easily trigger edit mode
     const [defaultRoadmapId] = useState(Date.now().toString());
 
     const [roadmaps, setRoadmaps] = useState([{
@@ -255,7 +254,7 @@ const CreateProject = () => {
                 </Card>
 
                 {/* GitHub Configuration Card */}
-                {/* <Card className="border-slate-200">
+                <Card className="border-slate-200">
                     <CardHeader>
                         <CardTitle className="text-lg font-semibold text-slate-800">GitHub Configuration (Optional)</CardTitle>
                     </CardHeader>
@@ -282,10 +281,10 @@ const CreateProject = () => {
                             </div>
                         </div>
                     </CardContent>
-                </Card> */}
+                </Card>
 
                 {/* Jira Configuration Card */}
-                {/* <Card className="border-slate-200">
+                <Card className="border-slate-200">
                     <CardHeader>
                         <CardTitle className="text-lg font-semibold text-slate-800">Jira Configuration (Optional)</CardTitle>
                     </CardHeader>
@@ -343,7 +342,7 @@ const CreateProject = () => {
                             />
                         </div>
                     </CardContent>
-                </Card> */}
+                </Card>
 
 
                 {/* Roadmap Configuration */}
