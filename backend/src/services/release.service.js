@@ -298,6 +298,19 @@ export const createReleaseService = async (data, user) => {
 
     if (!hasAccess) throw new ApiError(403, "Forbidden");
 
+    const latestRelease = await prisma.release.findFirst({
+        where: { projectId },
+        orderBy: { id: "desc" },
+        select: { isLocked: true }
+    });
+
+    if (latestRelease && !latestRelease.isLocked) {
+        throw new ApiError(
+            400,
+            "Lock the latest release before creating a new one"
+        );
+    }
+
     if (!name || !name.trim()) {
         throw new ApiError(400, "Release name is required");
     }
@@ -347,7 +360,7 @@ export const createReleaseService = async (data, user) => {
 /**
  * Lock or unlock a release
  */
-export const lockReleaseService = async (releaseId, locked, user) => {
+export const lockReleaseService_old = async (releaseId, locked, user) => {
     const { id: userId, role } = user;
 
     const release = await prisma.release.findUnique({
@@ -384,6 +397,87 @@ export const lockReleaseService = async (releaseId, locked, user) => {
 
     return updatedRelease;
 };
+
+export const lockReleaseService = async (releaseId, locked, user) => {
+    const { id: userId, role } = user;
+
+    // 1️⃣ Fetch target release + latest release in ONE go
+    const release = await prisma.release.findUnique({
+        where: { id: releaseId },
+        select: {
+            id: true,
+            isLocked: true,
+            projectId: true,
+            project: {
+                select: { assignedManagerId: true }
+            }
+        }
+    });
+
+    if (!release) {
+        throw new ApiError(404, "Release not found");
+    }
+
+    /** ---------------- Permission ---------------- */
+    const hasPermission =
+        role === "admin" ||
+        (role === "manager" && release.project.assignedManagerId === userId);
+
+    if (!hasPermission) {
+        throw new ApiError(403, "Forbidden");
+    }
+
+    // 2️⃣ Fetch latest release for the project
+    const latestRelease = await prisma.release.findFirst({
+        where: { projectId: release.projectId },
+        orderBy: { id: "desc" },
+        select: { id: true, isLocked: true }
+    });
+
+    /** ---------------- Locked release cannot be changed ---------------- */
+    if (release.isLocked && locked === true) {
+        throw new ApiError(400, "Locked release cannot be modified");
+    }
+
+    /** ---------------- Unlock rules ---------------- */
+    if (locked === false) {
+        if (!release.isLocked) {
+            throw new ApiError(400, "Release is already unlocked");
+        }
+
+        if (release.id !== latestRelease.id) {
+            throw new ApiError(
+                400,
+                "Only the latest release can be unlocked"
+            );
+        }
+    }
+
+    /** ---------------- Lock rules ---------------- */
+    if (locked === true) {
+        // Allow locking any unlocked release (typically latest)
+        // No sequence restriction needed anymore
+        // Already locked → no-op or error
+        if (release.isLocked) {
+            throw new ApiError(400, "Release is already locked");
+        }
+
+        // Only latest release can be locked
+        if (release.id !== latestRelease.id) {
+            throw new ApiError(
+                400,
+                "Only the latest release can be locked"
+            );
+        }
+    }
+
+    /** ---------------- Update ---------------- */
+    return prisma.release.update({
+        where: { id: releaseId },
+        data: { isLocked: locked }
+    });
+};
+
 
 /**
  * Upload ZIP to a release
