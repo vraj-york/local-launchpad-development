@@ -34,7 +34,6 @@ const ProjectDetails = () => {
     };
 
     // Fetch project details if not passed in state or to get fresh data
-    // Fetch project details if not passed in state or to get fresh data
     useEffect(() => {
         const loadProject = async () => {
             try {
