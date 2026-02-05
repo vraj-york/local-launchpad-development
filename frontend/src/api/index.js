@@ -277,3 +277,13 @@ export const deleteRoadmapItem = async (roadmapId, itemId) => {
         throw error.response?.data || { error: 'Failed to delete roadmap item' };
     }
 };
+
+//Get Roadmap Items by projectID
+export const getRoadmapItemsByProjectId = async (projectId) => {
+    try {
+        const response = await api.get(`/api/roadmaps/project/${projectId}/items`);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to fetch roadmap items' };
+    }
+};
