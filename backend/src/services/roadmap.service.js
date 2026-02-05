@@ -100,7 +100,60 @@ export const deleteRoadmapItemTx = async (tx, roadmapId, itemId) => {
     return { message: "Roadmap item deleted successfully" };
 };
 
-export const deleteRoadmapItem = async (roadmapId, itemId) =>
+export const deleteRoadmapItem = async (roadmapId, itemId) => {
     prisma.$transaction((tx) => deleteRoadmapItemTx(tx, roadmapId, itemId));
+};
 
+export const listRoadmapItemsByProjectService = async (projectId, user) => {
+    const { role, id: userId } = user;
 
+    /**
+     * Access control
+     */
+    const project = await prisma.project.findUnique({
+        where: { id: projectId },
+        select: { assignedManagerId: true }
+    });
+
+    if (!project) {
+        throw new ApiError(404, "Project not found");
+    }
+
+    if (role !== "admin" && project.assignedManagerId !== userId) {
+        throw new ApiError(403, "Forbidden");
+    }
+
+    /**
+     * Fetch roadmaps + items
+     */
+    const roadmaps = await prisma.roadmap.findMany({
+        where: { projectId },
+        orderBy: { timelineStart: "asc" },
+        select: {
+            id: true,
+            title: true,
+            items: {
+                orderBy: { startDate: "asc" },
+                select: {
+                    id: true,
+                    title: true,
+                    description: true,
+                    type: true,
+                    status: true,
+                    priority: true,
+                    startDate: true,
+                    endDate: true,
+                    releaseId: true,
+                    release: {
+                        select: {
+                            id: true,
+                            name: true
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    return roadmaps;
+};

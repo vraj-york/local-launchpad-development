@@ -1,4 +1,4 @@
-import { deleteRoadmap, deleteRoadmapItem } from "../services/roadmap.service.js";
+import { deleteRoadmap, deleteRoadmapItem, listRoadmapItemsByProjectService } from "../services/roadmap.service.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
 
 export const roadmapController = {
@@ -23,6 +23,19 @@ export const roadmapController = {
         const result = await deleteRoadmapItem(roadmapId, roadmapItemId);
 
         res.status(200).json(result);
+    }),
+    /**
+     * List roadmap items by project
+     */
+    listItemsByProject: asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.projectId);
+
+        const data = await listRoadmapItemsByProjectService(
+            projectId,
+            req.user
+        );
+
+        res.json(data);
     }),
 };
 
