@@ -360,43 +360,7 @@ export const createReleaseService = async (data, user) => {
 /**
  * Lock or unlock a release
  */
-export const lockReleaseService_old = async (releaseId, locked, user) => {
-    const { id: userId, role } = user;
 
-    const release = await prisma.release.findUnique({
-        where: { id: releaseId },
-        include: {
-            project: {
-                select: { id: true, name: true, assignedManagerId: true }
-            }
-        }
-    });
-
-    if (!release) {
-        throw new ApiError(404, "Release not found");
-    }
-
-    // Check permissions
-    let hasPermission = false;
-    if (role === "admin") hasPermission = true;
-    else if (role === "manager" && release.project.assignedManagerId === userId) hasPermission = true;
-
-    if (!hasPermission) {
-        throw new ApiError(403, "Forbidden: You don't have permission to lock/unlock this release");
-    }
-
-    const updatedRelease = await prisma.release.update({
-        where: { id: releaseId },
-        data: { isLocked: locked },
-        include: {
-            creator: {
-                select: { id: true, name: true, email: true }
-            }
-        }
-    });
-
-    return updatedRelease;
-};
 
 export const lockReleaseService = async (releaseId, locked, user) => {
     const { id: userId, role } = user;
