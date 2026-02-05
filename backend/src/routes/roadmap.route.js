@@ -2,6 +2,7 @@ import express from "express";
 const router = express.Router();
 import { roadmapController } from "../controllers/roadmap.controller.js";
 import { param } from "express-validator";
+import { authenticateToken } from "../middleware/auth.middleware.js";
 
 /**
  * @swagger
@@ -27,6 +28,7 @@ import { param } from "express-validator";
  */
 router.delete(
     "/:roadmapId",
+    authenticateToken,
     param("roadmapId").isInt(),
     roadmapController.delete
 );
@@ -61,10 +63,40 @@ router.delete(
 
 router.delete(
     "/:roadmapId/items/:itemId",
+    authenticateToken,
     [
         param("roadmapId").isInt(),
         param("itemId").isInt()
     ],
     roadmapController.deleteItem
+);
+
+/**
+ * GET roadmap items by project
+ */
+/**
+ * @swagger
+ * /roadmaps/project/{projectId}/items:
+ *   get:
+ *     summary: Get roadmap items by project
+ *     tags: [Roadmaps]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: List of roadmaps with items
+ */
+
+router.get(
+    "/project/:projectId/items",
+    authenticateToken,
+    param("projectId").isInt(),
+    roadmapController.listItemsByProject
 );
 export default router;
