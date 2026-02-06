@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { addDays, format } from "date-fns"
+import { endOfDay, format, startOfDay } from "date-fns"
 import { CalendarIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -17,7 +17,18 @@ export function DatePickerWithRange({
     className,
     date,
     setDate,
+    minDate,
+    maxDate,
 }) {
+    const min = React.useMemo(
+        () => (minDate ? startOfDay(minDate) : undefined),
+        [minDate],
+    )
+    const max = React.useMemo(
+        () => (maxDate ? endOfDay(maxDate) : undefined),
+        [maxDate],
+    )
+
     return (
         <Popover>
             <PopoverTrigger asChild>
@@ -52,6 +63,13 @@ export function DatePickerWithRange({
                     defaultMonth={date?.from}
                     selected={date}
                     onSelect={setDate}
+                    fromDate={min}
+                    toDate={max}
+                    disabled={(day) => {
+                        if (min && day < min) return true
+                        if (max && day > max) return true
+                        return false
+                    }}
                     numberOfMonths={2}
                 />
             </PopoverContent>

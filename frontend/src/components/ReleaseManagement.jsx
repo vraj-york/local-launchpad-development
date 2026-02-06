@@ -4,6 +4,7 @@ import {
   createRelease,
   toggleReleaseLock,
   uploadToRelease,
+  getRoadmapItemsByProjectId,
 } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -11,7 +12,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PageHeader } from "./PageHeader";
 import { Spinner } from "./ui/spinner";
-import { Lock, Unlock } from "lucide-react";
+import { ChevronDown, Lock, Unlock } from "lucide-react";
 import { Badge } from "./ui/badge";
 import {
   Select,
@@ -20,6 +21,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 const ReleaseManagement = ({ projectId, projectName }) => {
   const { user } = useAuth();
 
@@ -35,6 +44,12 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState("");
 
+  const [roadmaps, setRoadmaps] = useState([]);
+  const [roadmapsLoading, setRoadmapsLoading] = useState(false);
+  const [roadmapError, setRoadmapError] = useState("");
+  const [selectedRoadmapItemIds, setSelectedRoadmapItemIds] = useState([]);
+
+
   const [newRelease, setNewRelease] = useState({
     name: "",
     description: "",
@@ -43,6 +58,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   useEffect(() => {
     if (projectId) {
       loadReleases();
+      loadRoadmaps();
     }
   }, [projectId]);
 
@@ -55,6 +71,20 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       setError(err.message || "Failed to load releases");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadRoadmaps = async () => {
+    try {
+      setRoadmapsLoading(true);
+      setRoadmapError("");
+      const data = await getRoadmapItemsByProjectId(projectId);
+      setRoadmaps(data || []);
+    } catch (err) {
+      setRoadmapError(err.error || err.message || "Failed to load roadmaps");
+      setRoadmaps([]);
+    } finally {
+      setRoadmapsLoading(false);
     }
   };
 
@@ -86,7 +116,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     try {
       const res = await toggleReleaseLock(releaseId, !currentLockStatus);
       toast.success(res.message)
-      console.log("toggle release response", res)
       await loadReleases();
     } catch (err) {
       toast.error(err.error || "Failed to toggle release lock");
@@ -109,9 +138,26 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
   const handleUpload = async (e) => {
     e.preventDefault();
+
     if (!selectedRelease || !uploadFile) return;
+    if (roadmaps.length > 0) {
+      if (selectedRoadmapItemIds.length === 0) {
+        const message = "Please select at least one roadmap item.";
+        setUploadStatus(message);
+        toast.error(message);
+        return;
+      }
+    }
 
     try {
+      const selectedRoadmapIds = Array.from(
+        new Set(
+          selectedRoadmapItemIds
+            .map((itemId) => getRoadmapIdForItem(itemId))
+            .filter(Boolean),
+        ),
+      );
+
       setUploading(true);
       setUploadStatus("Uploading and building project...");
       setUploadProgress(0);
@@ -132,6 +178,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
         selectedRelease,
         uploadFile,
         version || null,
+        // selectedRoadmapItemIds --> here we will pass the selected roadmapItemIds to connect it with uploaded release version
       );
 
       clearInterval(progressInterval);
@@ -143,6 +190,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       setUploadFile(null);
       setSelectedRelease("");
       setVersion("");
+      setSelectedRoadmapItemIds([]);
       document.getElementById("file-input").value = "";
       await loadReleases();
       toast.success(
@@ -150,7 +198,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       );
     } catch (err) {
       const errorMessage = err.error || err.message || "Upload failed";
-      console.log(err, "upload error")
       setUploadStatus(`Upload failed: ${errorMessage}`);
       toast.error(`Upload failed: ${errorMessage}`);
     } finally {
@@ -159,6 +206,37 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   };
 
   const canManageReleases = user?.role === "admin" || user?.role === "manager";
+  const getRoadmapIdForItem = (itemId) => {
+    for (const roadmap of roadmaps) {
+      if (roadmap.items?.some((item) => item.id.toString() === itemId)) {
+        return roadmap.id;
+      }
+    }
+    return null;
+  };
+
+  const selectedItems = selectedRoadmapItemIds
+    .map((itemId) => {
+      for (const roadmap of roadmaps) {
+        const item = roadmap.items?.find(
+          (roadmapItem) => roadmapItem.id === itemId,
+        );
+        if (item) {
+          return {
+            id: itemId,
+            title: item.title,
+            roadmapTitle: roadmap.title,
+          };
+        }
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  const removeSelectedItem = (itemId, event) => {
+    event.stopPropagation();
+    setSelectedRoadmapItemIds((prev) => prev.filter((id) => id !== itemId));
+  };
 
   if (loading) {
     return (
@@ -258,57 +336,149 @@ const ReleaseManagement = ({ projectId, projectName }) => {
           </div>
           <div className="p-6">
             <form onSubmit={handleUpload}>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Select Release
-                </label>
+
+              <div className="grid md:grid-cols-2 grid-cols-1 gap-4">
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Select Release
+                  </label>
 
 
-                <Select
-                  value={selectedRelease}
-                  onValueChange={(value) => {
-                    if (value === "CREATE_NEW") {
-                      setShowCreateForm(true);
-                      setSelectedRelease("");
-                    } else {
-                      setSelectedRelease(value);
-                    }
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Choose a release..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {!releases.some((r) => !r.isLocked) && (
-                      <SelectItem value="CREATE_NEW" className="text-emerald-600 font-medium">
-                        + Create New Release
-                      </SelectItem>
-                    )}
-                    {releases.map((release) => (
-                      <SelectItem
-                        key={release.id}
-                        value={release.id.toString()}
-                        disabled={release.isLocked}
-                      >
-                        {release.name} {release.isLocked ? "(Locked)" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <Select
+                    value={selectedRelease}
+                    onValueChange={(value) => {
+                      if (value === "CREATE_NEW") {
+                        setShowCreateForm(true);
+                        setSelectedRelease("");
+                      } else {
+                        setSelectedRelease(value);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choose a release..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {!releases.some((r) => !r.isLocked) && (
+                        <SelectItem value="CREATE_NEW" className="text-emerald-600 font-medium">
+                          + Create New Release
+                        </SelectItem>
+                      )}
+                      {releases.map((release) => (
+                        <SelectItem
+                          key={release.id}
+                          value={release.id.toString()}
+                          disabled={release.isLocked}
+                        >
+                          {release.name} {release.isLocked ? "(Locked)" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Version (Optional)
+                  </label>
+                  <Input
+                    type="text"
+                    value={version}
+                    onChange={(e) => setVersion(e.target.value)}
+                    placeholder="e.g., 1.0.0, 1.1.0, 2.0.0"
+                  />
+                  <div className="text-xs text-slate-500 mt-1">
+                    Leave empty for auto-increment
+                  </div>
+                </div>
               </div>
 
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Version (Optional)
+                  Roadmap Items Included
                 </label>
-                <Input
-                  type="text"
-                  value={version}
-                  onChange={(e) => setVersion(e.target.value)}
-                  placeholder="e.g., 1.0.0, 1.1.0, 2.0.0"
-                />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full justify-between gap-2 p-2 hover:bg-transparent"
+                      disabled={roadmapsLoading || roadmaps.length === 0}
+                    >
+                      {roadmapsLoading ? (
+                        "Loading roadmaps..."
+                      ) : roadmaps.length === 0 ? (
+                        "No roadmaps found"
+                      ) : selectedItems.length > 0 ? (
+                        <span className="flex flex-wrap gap-2">
+                          {selectedItems.map((item) => (
+                            <span
+                              key={item.id}
+                              className="inline-flex items-center gap-1 rounded-sm bg-secondary px-2 py-1 text-sm"
+                            >
+                              <span className="font-medium">{item.title}</span>
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        "Select roadmap items"
+                      )}
+                      <ChevronDown className="h-4 w-4 text-slate-500" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-80">
+                    <DropdownMenuLabel>Roadmaps</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {roadmaps.map((roadmap) => (
+                      <div key={roadmap.id}>
+                        <DropdownMenuLabel className="text-primary">
+                          {roadmap.title}
+                        </DropdownMenuLabel>
+                        {roadmap.items?.length ? (
+                          roadmap.items.map((item) => {
+                            const itemId = item.id
+                            const isChecked =
+                              selectedRoadmapItemIds.includes(itemId);
+                            return (
+                              <DropdownMenuCheckboxItem
+                                key={item.id}
+                                checked={isChecked}
+                                onSelect={(event) => event.preventDefault()}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setSelectedRoadmapItemIds((prev) => [
+                                      ...prev,
+                                      itemId,
+                                    ]);
+                                  } else {
+                                    setSelectedRoadmapItemIds((prev) =>
+                                      prev.filter((id) => id !== itemId),
+                                    );
+                                  }
+                                }}
+                              >
+                                <span className="text-sm">
+                                  {item.title}
+                                </span>
+                              </DropdownMenuCheckboxItem>
+                            );
+                          })
+                        ) : (
+                          <div className="px-2 py-1.5 text-sm text-slate-500">
+                            No items found for this roadmap.
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                {roadmapError && (
+                  <div className="text-xs text-red-600 mt-1">
+                    {roadmapError}
+                  </div>
+                )}
                 <div className="text-xs text-slate-500 mt-1">
-                  Leave empty for auto-increment
+                  Select one or more items from the different roadmap.
                 </div>
               </div>
 
@@ -384,6 +554,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                     setSelectedRelease("");
                     setUploadFile(null);
                     setVersion("");
+                    setSelectedRoadmapItemIds([]);
                     setUploadStatus("");
                     setUploadProgress(0);
                     document.getElementById("file-input").value = "";
