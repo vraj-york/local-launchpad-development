@@ -10,7 +10,16 @@ import { toast } from "sonner";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PageHeader } from "./PageHeader";
-
+import { Spinner } from "./ui/spinner";
+import { Lock, Unlock } from "lucide-react";
+import { Badge } from "./ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 const ReleaseManagement = ({ projectId, projectName }) => {
   const { user } = useAuth();
 
@@ -55,7 +64,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
     try {
       setCreating(true);
-      toast.info("Creating release...");
       await createRelease({
         projectId: Number(projectId),
         name: newRelease.name.trim(),
@@ -66,9 +74,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       await loadReleases();
       toast.success(`Release "${newRelease.name}" created successfully!`);
     } catch (err) {
-      const errorMessage = err.message || "Failed to create release";
+      const errorMessage = err.error || "Failed to create release";
       setError(errorMessage);
-      toast.error(`Failed to create release: ${errorMessage}`);
+      toast.error(`${errorMessage}`);
     } finally {
       setCreating(false);
     }
@@ -76,10 +84,13 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
   const handleLockToggle = async (releaseId, currentLockStatus) => {
     try {
-      await toggleReleaseLock(releaseId, !currentLockStatus);
+      const res = await toggleReleaseLock(releaseId, !currentLockStatus);
+      toast.success(res.message)
+      console.log("toggle release response", res)
       await loadReleases();
     } catch (err) {
-      setError(err.message || "Failed to toggle release lock");
+      toast.error(err.error || "Failed to toggle release lock");
+      setError(err.error || "Failed to toggle release lock");
     }
   };
 
@@ -127,7 +138,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       setUploadProgress(100);
 
       setUploadStatus(
-        `✅ Upload successful! Version: ${result.version.version} - Build URL: ${result.buildUrl}`,
+        `Upload successful! Version: ${result.version.version} - Build URL: ${result.buildUrl}`,
       );
       setUploadFile(null);
       setSelectedRelease("");
@@ -139,7 +150,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       );
     } catch (err) {
       const errorMessage = err.error || err.message || "Upload failed";
-      setUploadStatus(`❌ Upload failed: ${errorMessage}`);
+      console.log(err, "upload error")
+      setUploadStatus(`Upload failed: ${errorMessage}`);
       toast.error(`Upload failed: ${errorMessage}`);
     } finally {
       setUploading(false);
@@ -172,13 +184,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       )}</PageHeader>
 
 
-
-      {error && (
-        <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg border border-red-200 mb-6">
-          {error}
-        </div>
-      )}
-
       {/* Create Release Form */}
       {showCreateForm && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6">
@@ -206,7 +211,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
               <div className="mb-6">
                 <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Release Description/Roadmap
+                  Release Description (Optional)
                 </label>
                 <textarea
                   className="flex min-h-[80px] w-full rounded-md border border-slate-200 bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -217,7 +222,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       description: e.target.value,
                     })
                   }
-                  placeholder="Enter release description or roadmap"
+                  placeholder="Enter release description"
                   rows="3"
                 />
               </div>
@@ -228,7 +233,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   className="text-white"
                   disabled={creating || !newRelease.name.trim()}
                 >
-                  {creating ? "Creating..." : "Create Release"}
+                  {creating ? <> <Spinner /> Creating</> : "Create Release"}
                 </Button>
                 <Button
                   type="button"
@@ -255,30 +260,46 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             <form onSubmit={handleUpload}>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Select Release *
+                  Select Release
                 </label>
-                <select
-                  className="flex h-10 w-full items-center justify-between rounded-md border border-slate-200 bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+
+
+                <Select
                   value={selectedRelease}
-                  onChange={(e) => setSelectedRelease(e.target.value)}
-                  required
+                  onValueChange={(value) => {
+                    if (value === "CREATE_NEW") {
+                      setShowCreateForm(true);
+                      setSelectedRelease("");
+                    } else {
+                      setSelectedRelease(value);
+                    }
+                  }}
                 >
-                  <option value="">Choose a release...</option>
-                  {releases.map((release) => (
-                    <option
-                      key={release.id}
-                      value={release.id}
-                      disabled={release.isLocked}
-                    >
-                      {release.name} {release.isLocked ? "(Locked)" : ""}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Choose a release..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {!releases.some((r) => !r.isLocked) && (
+                      <SelectItem value="CREATE_NEW" className="text-emerald-600 font-medium">
+                        + Create New Release
+                      </SelectItem>
+                    )}
+                    {releases.map((release) => (
+                      <SelectItem
+                        key={release.id}
+                        value={release.id.toString()}
+                        disabled={release.isLocked}
+                      >
+                        {release.name} {release.isLocked ? "(Locked)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Version
+                  Version (Optional)
                 </label>
                 <Input
                   type="text"
@@ -293,7 +314,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
               <div className="mb-6">
                 <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Upload ZIP File *
+                  Upload ZIP File
                 </label>
                 <input
                   id="file-input"
@@ -351,10 +372,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               <div className="flex gap-3">
                 <Button
                   type="submit"
-                  className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                  className="text-white"
                   disabled={uploading || !selectedRelease || !uploadFile}
                 >
-                  {uploading ? "Uploading..." : "Upload & Build"}
+                  {uploading ? <> <Spinner /> Uploading</> : "Upload & Build"}
                 </Button>
                 <Button
                   type="button"
@@ -412,7 +433,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-6">
-              {releases.map((release) => (
+              {releases.map((release, index) => (
                 <div
                   key={release.id}
                   className="relative border border-slate-200 rounded-xl p-6 hover:shadow-md transition-shadow group bg-slate-50/30"
@@ -422,15 +443,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       {release.name}
                     </h4>
                     <div className="flex gap-2 items-center">
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${release.isLocked
-                          ? "bg-red-100 text-red-700"
-                          : "bg-emerald-100 text-emerald-700"
-                          }`}
-                      >
-                        {release.isLocked ? "🔒 Locked" : "🔓 Unlocked"}
-                      </span>
-                      {canManageReleases && (
+                      {release.isLocked ?
+                        <Badge className="bg-emerald-100 text-emerald-700"><Lock size={14} /> Locked</Badge> :
+                        <Badge className="bg-red-100 text-red-700"><Unlock size={14} /> Unlocked</Badge>}
+                      {canManageReleases && index === 0 && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -486,45 +502,47 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                     </div>
                   </div>
 
-                  {release.versions.length > 0 && (
-                    <div className="space-y-2">
-                      <h5 className="text-sm font-semibold text-slate-800 mb-2">
-                        Versions History
-                      </h5>
-                      {release.versions.map((version) => (
-                        <div
-                          key={version.id}
-                          className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg hover:border-emerald-200 transition-colors"
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="font-mono text-sm font-medium text-slate-700">
-                              v{version.version}
-                            </span>
-                            <span className="text-xs text-slate-400">
-                              {new Date(version.createdAt).toLocaleDateString()}
-                            </span>
+                  {
+                    release.versions.length > 0 && (
+                      <div className="space-y-2">
+                        <h5 className="text-sm font-semibold text-slate-800 mb-2">
+                          Versions History
+                        </h5>
+                        {release.versions.map((version) => (
+                          <div
+                            key={version.id}
+                            className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg hover:border-emerald-200 transition-colors"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="font-mono text-sm font-medium text-slate-700">
+                                v{version.version}
+                              </span>
+                              <span className="text-xs text-slate-400">
+                                {new Date(version.createdAt).toLocaleDateString()}
+                              </span>
+                            </div>
+                            {version.buildUrl && (
+                              <a
+                                href={version.buildUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-emerald-600 hover:text-emerald-700 text-xs font-medium flex items-center gap-1"
+                              >
+                                Live Build ↗
+                              </a>
+                            )}
                           </div>
-                          {version.buildUrl && (
-                            <a
-                              href={version.buildUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-emerald-600 hover:text-emerald-700 text-xs font-medium flex items-center gap-1"
-                            >
-                              Live Build ↗
-                            </a>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        ))}
+                      </div>
+                    )
+                  }
                 </div>
               ))}
             </div>
           )}
         </div>
       </div>
-    </div>
+    </div >
   );
 };
 
