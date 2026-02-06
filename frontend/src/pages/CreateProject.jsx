@@ -93,6 +93,9 @@ const CreateProject = () => {
 
         // Project Validation
         if (!projectName.trim()) errors.projectName = "Project name is required";
+        if (!/^[a-zA-Z0-9_-]+$/.test(projectName)) {
+            errors.projectName = "Project name can only contain letters, numbers, hyphens, and underscores";
+        }
         if (user?.role === 'admin' && !selectedManager) errors.manager = "Manager is required";
 
         // Roadmap Validation

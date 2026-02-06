@@ -39,7 +39,6 @@ const ProjectDetails = () => {
             try {
                 if (!project) setLoading(true); // Only show loading if we don't have project data yet
                 const data = await fetchProjectById(projectId);
-                console.log("Selected Project Data", data);
                 setProject(data);
             } catch (error) {
                 console.error("Failed to load project:", error);
