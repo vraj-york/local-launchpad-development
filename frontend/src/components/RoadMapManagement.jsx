@@ -694,9 +694,6 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                                                 // Manually updating both fields
                                                                                                 const from = range?.from ? format(range.from, 'yyyy-MM-dd') : "";
                                                                                                 const to = range?.to ? format(range.to, 'yyyy-MM-dd') : "";
-
-                                                                                                // We need to update items array, so we can't use updateItem helper easily for two fields at once without triggering 2 renders or modifying helper. 
-                                                                                                // Easier to replicate update logic here for batch update.
                                                                                                 setEditForm(prev => ({
                                                                                                     ...prev,
                                                                                                     items: prev.items.map(i =>
@@ -704,6 +701,8 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                                                     )
                                                                                                 }));
                                                                                             }}
+                                                                                            minDate={editForm.timelineStart ? new Date(editForm.timelineStart) : undefined}
+                                                                                            maxDate={editForm.timelineEnd ? new Date(editForm.timelineEnd) : undefined}
                                                                                             className={(validationErrors[`item-${item.id}-startDate`] || validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-endDate`]) ? "border-destructive w-full" : "w-full"}
                                                                                         />
                                                                                         {(validationErrors[`item-${item.id}-startDate`] || localErrors[`item-${item.id}-startDate`] || validationErrors[`item-${item.id}-endDate`] || localErrors[`item-${item.id}-endDate`]) && (
@@ -1013,5 +1012,4 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
 }
 
 export default RoadMapManagement;
-
 
