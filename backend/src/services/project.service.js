@@ -7,7 +7,7 @@ import { createRoadmapWithItems } from "./roadmap.service.js";
 /**
  * Shared access check (PRIVATE helper inside same service)
  */
-async function assertProjectAccess(projectId, user) {
+export async function assertProjectAccess(projectId, user) {
     const project = await prisma.project.findUnique({
         where: { id: projectId },
         select: { id: true, assignedManagerId: true },
@@ -134,10 +134,6 @@ export async function listProjectsService(user) {
                         orderBy: { createdAt: "desc" },
                         take: 1,
                     },
-                    roadmapItems: {
-                        orderBy: { createdAt: "desc" },
-                        take: 1,
-                    },
                 },
             },
 
@@ -183,41 +179,30 @@ export const getProjectByIdService = async (projectId, user) => {
             OR: [
                 { createdById: user.id },
                 { assignedManagerId: user.id },
-                {
-                    projectAccess: {
-                        some: { userId: user.id }
-                    }
-                }
-            ]
+                { projectAccess: { some: { userId: user.id } } },
+            ],
         },
         include: {
-            createdBy: {
-                select: { id: true, name: true, email: true }
-            },
-            assignedManager: {
-                select: { id: true, name: true, email: true }
-            },
+            createdBy: { select: { id: true, name: true, email: true } },
+            assignedManager: { select: { id: true, name: true, email: true } },
+
+            // 🧭 Planning roadmap
             roadmaps: {
-                orderBy: {
-                    id: "asc"   // ✅ roadmap order by id ASC
-                },
+                orderBy: { id: 'asc' },
                 include: {
-                    items: {
-                        orderBy: { createdAt: 'asc' }
-                    }
-                }
+                    items: { orderBy: { createdAt: 'asc' } },
+                },
             },
+
+            // 🚀 Release / version execution
             releases: {
                 include: {
-                    versions: true,
-                    roadmapItems: {
-                        orderBy: { createdAt: "desc" },
-                        take: 1,
-                    },
+                    versions: true
                 }
-            }
-        }
+            },
+        },
     });
+
 };
 
 

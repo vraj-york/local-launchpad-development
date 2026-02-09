@@ -1,4 +1,5 @@
-import { deleteRoadmap, deleteRoadmapItem, listRoadmapItemsByProjectService } from "../services/roadmap.service.js";
+import { deleteRoadmap, deleteRoadmapItem, listRoadmapItemsByProjectService, updateRoadmapService } from "../services/roadmap.service.js";
+import { validateRoadmapTimelines, validateRoadmapItemsTimeline } from "../validators/roadmap.validator.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
 
 export const roadmapController = {
@@ -37,6 +38,27 @@ export const roadmapController = {
 
         res.json(data);
     }),
+
+    /**
+     * Update roadmap (and items)
+     */
+    update: asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.projectId);
+        const { roadmaps } = req.body;
+
+        // Validation
+        const validatedRoadmaps = validateRoadmapTimelines(roadmaps);
+
+        validatedRoadmaps.forEach(roadmap => {
+            validateRoadmapItemsTimeline(roadmap);
+        });
+
+        const result = await updateRoadmapService({
+            projectId,
+            user: req.user,
+            roadmaps: validatedRoadmaps
+        });
+
+        res.json(result);
+    }),
 };
-
-

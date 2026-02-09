@@ -99,3 +99,14 @@ export const updateProjectValidation = [
 
     ...roadmapValidators("roadmap"),
 ];
+export const updateRoadmapsArrayValidation = [
+    param("projectId")
+        .isInt()
+        .withMessage("Invalid project id"),
+
+    body("roadmaps")
+        .isArray({ min: 1 })
+        .withMessage("At least one roadmap is required"),
+
+    ...roadmapValidators("roadmaps.*"),
+];

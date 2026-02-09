@@ -72,6 +72,8 @@ model ProjectVersion {
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   release     Release? @relation(fields: [releaseId], references: [id], onDelete: Cascade)
   uploader    User     @relation("VersionUploader", fields: [uploadedBy], references: [id])
+  roadmapItems  RoadmapItem[] @relation("VersionRoadmapItems")
+
 }
 
 
@@ -92,7 +94,6 @@ model Release {
   creator     User            @relation("ReleaseCreator", fields: [createdBy], references: [id])
   versions    ProjectVersion[]
 
-  roadmapItems RoadmapItem[]  // 🔥 ADD
 }
 
 
@@ -124,6 +125,7 @@ model RoadmapItem {
   id          Int       @id @default(autoincrement())
   roadmapId   Int
   releaseId   Int?      // 🔥 optional
+  projectVersionId Int?
 
   title       String
   description String?
@@ -138,8 +140,8 @@ model RoadmapItem {
   updatedAt   DateTime  @updatedAt
 
   roadmap     Roadmap   @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
-  release     Release?  @relation(fields: [releaseId], references: [id])
-}
+  projectVersion  ProjectVersion? @relation("VersionRoadmapItems",fields: [projectVersionId],references: [id])
+  }
 
 enum RoadmapStatus {
   DRAFT

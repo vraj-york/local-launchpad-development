@@ -245,7 +245,6 @@ export const listReleasesService = async (projectId, user) => {
                     }
                 }
             },
-            roadmapItems: true // Include linked roadmap items
         },
         orderBy: { createdAt: 'desc' }
     });
@@ -269,9 +268,8 @@ export const getReleaseByIdService = async (releaseId) => {
                 where: { isActive: true },
                 orderBy: { createdAt: 'desc' },
                 take: 1,
-                select: { version: true, createdAt: true }
+                select: { version: true, createdAt: true, roadmapItems: true }
             },
-            roadmapItems: true
         }
     });
 
@@ -443,12 +441,18 @@ export const lockReleaseService = async (releaseId, locked, user) => {
 };
 
 
-/**
- * Upload ZIP to a release
- */
-export const uploadReleaseVersionService = async (releaseId, file, versionInput, user) => {
-    const { role, id: userId } = user;
 
+export const uploadReleaseVersionService = async (
+    releaseId,
+    file,
+    versionInput,
+    roadmapItemIds,
+    user
+) => {
+    const { role, id: userId } = user;
+    const zipPath = file.path;
+
+    /* -------------------- 1. Fetch & validate release -------------------- */
     const release = await prisma.release.findUnique({
         where: { id: releaseId },
         include: {
@@ -457,318 +461,226 @@ export const uploadReleaseVersionService = async (releaseId, file, versionInput,
             }
         }
     });
+
     if (!release) throw new ApiError(404, "Release not found");
     if (release.isLocked) {
-        throw new ApiError(400, "Cannot upload to a locked release. Create a new release instead.");
+        throw new ApiError(400, "Cannot upload to a locked release");
     }
 
-    let hasAccess = false;
-    if (role === "admin") hasAccess = true;
-    else if (role === "manager" && release.project.assignedManagerId === userId) hasAccess = true;
+    const hasAccess =
+        role === "admin" ||
+        (role === "manager" && release.project.assignedManagerId === userId);
 
     if (!hasAccess) throw new ApiError(403, "Forbidden");
 
-    // Validate project name for GitHub repo
-    const validatedProjectName = validateProjectName(release.project.name);
-    // Generate version if not provided
+    /* -------------------- 2. Resolve version number -------------------- */
     let versionNumber = versionInput;
+
     if (!versionNumber) {
-        const existingVersions = await prisma.projectVersion.findMany({
+        const lastVersion = await prisma.projectVersion.findFirst({
             where: { releaseId },
-            orderBy: { createdAt: 'desc' },
-            take: 1
+            orderBy: { createdAt: "desc" },
+            select: { version: true }
         });
 
-        if (existingVersions.length === 0) {
+        if (!lastVersion) {
             versionNumber = "1.0.0";
         } else {
-            const lastVersion = existingVersions[0].version;
-            const parts = lastVersion.split('.');
-            const patch = parseInt(parts[2]) + 1;
-            versionNumber = `${parts[0]}.${parts[1]}.${patch}`;
+            const [major, minor, patch] = lastVersion.version
+                .split(".")
+                .map(Number);
+            versionNumber = `${major}.${minor}.${patch + 1}`;
         }
     }
 
-    const zipPath = file.path;
+    /* -------------------- 3. File validations -------------------- */
     if (!fs.existsSync(zipPath)) {
-        throw new ApiError(400, 'Uploaded file not found on server');
+        throw new ApiError(400, "Uploaded zip file not found");
     }
 
-    const projectFolder = path.join(process.cwd(), "projects", String(release.project.id));
+    const validatedProjectName = validateProjectName(release.project.name);
+    const projectFolder = path.join(
+        process.cwd(),
+        "projects",
+        String(release.project.id)
+    );
+
     return withProjectLock(validatedProjectName, async () => {
         try {
-            // Validate zip file
-            const stats = fs.statSync(zipPath);
-            if (stats.size === 0) {
-                throw new ApiError('Zip file is empty');
-            }
-
-            // Check if this is an existing project with git history
-            const gitDir = path.join(projectFolder, '.git');
+            /* -------------------- 4. Prepare project folder -------------------- */
+            const gitDir = path.join(projectFolder, ".git");
             const isExistingProject = fs.existsSync(gitDir);
 
             if (isExistingProject) {
-                // For existing projects, remove everything except .git directory
-                const items = fs.readdirSync(projectFolder);
-                for (const item of items) {
-                    if (item !== '.git') {
-                        const itemPath = path.join(projectFolder, item);
-                        fs.removeSync(itemPath);
+                for (const item of fs.readdirSync(projectFolder)) {
+                    if (item !== ".git") {
+                        fs.removeSync(path.join(projectFolder, item));
                     }
                 }
             } else {
-                // Clear the project directory completely for new projects
                 fs.emptyDirSync(projectFolder);
             }
 
-            // Extract zip file
+            /* -------------------- 5. Extract zip -------------------- */
             await extract(zipPath, { dir: projectFolder });
 
-            // Verify extraction was successful
-            const extractedFiles = fs.readdirSync(projectFolder);
-            if (extractedFiles.length === 0) {
-                throw new ApiError('Zip file extraction resulted in empty directory');
-            }
+            const actualProjectPath = findProjectRoot(projectFolder);
+            const packageJsonPath = path.join(actualProjectPath, "package.json");
 
-            // Detect actual project folder
-            let actualProjectPath = findProjectRoot(projectFolder);
-            // Validate that it's a React project
-            const packageJsonPath = path.join(actualProjectPath, 'package.json');
             if (!fs.existsSync(packageJsonPath)) {
-                throw new ApiError(`Not a valid React project: package.json not found at ${packageJsonPath}`);
+                throw new ApiError(400, "Invalid project (package.json missing)");
             }
 
-            let packageJson;
-            try {
-                packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-            } catch (error) {
-                throw new ApiError('Invalid package.json file');
+            const packageJson = JSON.parse(
+                fs.readFileSync(packageJsonPath, "utf-8")
+            );
+
+            if (!packageJson?.scripts?.build) {
+                throw new ApiError(400, "Build script missing in package.json");
             }
 
-            if (!packageJson.scripts || !packageJson.scripts.build) {
-                throw new ApiError('Not a valid React project: build script not found in package.json');
-            }
-
-            // Find and inject scripts/components into root HTML file
-            const htmlFiles = ['index.html', 'public/index.html', 'src/index.html'];
-
-            let rootHtmlPath = await findHtmlEntry(actualProjectPath);
-
-            if (!rootHtmlPath) {
-                console.warn("⚠️ No index.html found, skipping HTML injection");
-            } else {
-                console.log("✅ HTML found at:", rootHtmlPath);
-            }
-
-            // let rootHtmlPath = null;
-
-            for (const htmlFile of htmlFiles) {
-                const potentialPath = path.join(actualProjectPath, htmlFile);
-                if (fs.existsSync(potentialPath)) {
-                    rootHtmlPath = potentialPath;
-                    break;
-                }
-            }
-            if (rootHtmlPath) {
-                try {
-                    let htmlContent = fs.readFileSync(rootHtmlPath, 'utf-8');
-
-                    // Marker.io script to inject
-                    const markerScript = `<script>
+            /* -------------------- 6. Inject HTML scripts/header -------------------- */
+            const rootHtmlPath = await findHtmlEntry(actualProjectPath);
+            const markerScript = `<script>
 window.markerConfig = {
               project: '66c70a4bc69f538671fe255f',
               source: 'snippet'
             };
           !function(e,r,a){if(!e.__Marker){e.__Marker={};var t=[],n={__cs:t};["show","hide","isVisible","capture","cancelCapture","unload","reload","isExtensionInstalled","setReporter","setCustomData","on","off"].forEach(function(e){n[e]=function(){var r=Array.prototype.slice.call(arguments);r.unshift(e),t.push(r)}}),e.Marker=n;var s=r.createElement("script");s.async=1,s.src="https://edge.marker.io/latest/shim.js";var i=r.getElementsByTagName("script")[0];i.parentNode.insertBefore(s,i)}}(window,document);
 </script>`;
+            if (rootHtmlPath) {
+                let html = fs.readFileSync(rootHtmlPath, "utf-8");
+                let updated = false;
 
-                    // Get release header HTML using helper function
-                    const projectHeader = generateReleaseHeader();
-                    let hasChanges = false;
+                if (!html.includes("window.markerConfig")) {
+                    html = html.replace(
+                        "</head>",
+                        `${markerScript}\n</head>`
+                    );
+                    updated = true;
+                }
 
-                    // Check if Marker.io script is already injected to avoid duplicates
-                    if (!htmlContent.includes('window.markerConfig')) {
-                        // Inject Marker.io script before closing head tag
-                        if (htmlContent.includes('</head>')) {
-                            htmlContent = htmlContent.replace('</head>', `${markerScript}\n</head>`);
-                        } else if (htmlContent.includes('<head>')) {
-                            htmlContent = htmlContent.replace('<head>', `<head>\n${markerScript}`);
-                        } else {
-                            if (htmlContent.includes('<body>')) {
-                                htmlContent = htmlContent.replace('<body>', `<head>\n${markerScript}\n</head>\n<body>`);
-                            } else if (htmlContent.includes('<html>')) {
-                                htmlContent = htmlContent.replace('<html>', `<html>\n<head>\n${markerScript}\n</head>`);
-                            }
-                        }
-                        hasChanges = true;
-                    }
+                if (!html.includes("zip-sync-header")) {
+                    html = html.replace(
+                        /<body([^>]*)>/,
+                        `<body$1>\n${generateReleaseHeader()}`
+                    );
+                    updated = true;
+                }
 
-                    // Check if project header is already injected to avoid duplicates
-                    if (!htmlContent.includes('zip-sync-header')) {
-                        // Inject project header after opening body tag
-                        if (htmlContent.includes('<body>')) {
-                            htmlContent = htmlContent.replace('<body>', `<body>\n${projectHeader}`);
-                        } else if (htmlContent.includes('<body ')) {
-                            // Handle body tag with attributes
-                            htmlContent = htmlContent.replace(/<body([^>]*)>/, `<body$1>\n${projectHeader}`);
-                        } else {
-                            // Fallback: add to end of head or create body
-                            if (htmlContent.includes('</head>')) {
-                                htmlContent = htmlContent.replace('</head>', `</head>\n<body>\n${projectHeader}\n</body>`);
-                            }
-                        }
-                        hasChanges = true;
-                    }
-
-                    if (hasChanges) {
-                        fs.writeFileSync(rootHtmlPath, htmlContent, 'utf-8');
-                    }
-                } catch (error) {
-                    console.error('❌ Error injecting scripts/components:', error.message);
-                    // Don't fail the upload if injection fails
+                if (updated) {
+                    fs.writeFileSync(rootHtmlPath, html, "utf-8");
                 }
             }
 
-            // Build React app
-            try {
+            /* -------------------- 7. Build project -------------------- */
+            if (!fs.existsSync(path.join(actualProjectPath, "node_modules"))) {
                 runCommand("npm install", actualProjectPath);
-            } catch (error) {
-                throw new ApiError(`Dependency installation failed: ${error.message}`);
             }
 
-            try {
-                runCommand("npm run build", actualProjectPath);
-            } catch (error) {
-                throw new ApiError(`Build failed: ${error.message}`);
-            }
+            runCommand("npm run build", actualProjectPath);
 
-            // Ensure .gitignore exists
-            const gitignorePath = path.join(projectFolder, ".gitignore");
-            if (!fs.existsSync(gitignorePath)) {
-                fs.writeFileSync(gitignorePath, "node_modules\n.env\nbuild\ndist\n.DS_Store\n", "utf-8");
-            }
-
-            // Check if repository exists
+            /* -------------------- 8. Git setup & push -------------------- */
             const repoExists = await checkRepoExists(validatedProjectName);
-            // Git setup
-            const isNewRepo = !isExistingProject;
-            console
-            if (isNewRepo) {
+
+            if (!isExistingProject) {
                 runCommand("git init", projectFolder);
                 runCommand("git branch -m main", projectFolder);
-                runCommand('git config user.name "GitHub Zip Worker"', projectFolder);
-                runCommand('git config user.email "worker@github-zip.com"', projectFolder);
+                runCommand(`git config user.name "Zip Worker"`, projectFolder);
+                runCommand(`git config user.email "worker@zip.com"`, projectFolder);
 
                 if (!repoExists) {
                     await createGithubRepo(validatedProjectName);
                 }
 
-                const remoteUrl = `https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GITHUB_USERNAME}/${validatedProjectName}.git`;
-                runCommand(`git remote add origin ${remoteUrl}`, projectFolder);
-            } else {
-                runCommand('git config user.name "GitHub Zip Worker"', projectFolder);
-                runCommand('git config user.email "worker@github-zip.com"', projectFolder);
-
-                try {
-                    runCommand("git remote -v", projectFolder);
-                } catch (error) {
-                    const remoteUrl = `https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GITHUB_USERNAME}/${validatedProjectName}.git`;
-                    runCommand(`git remote add origin ${remoteUrl}`, projectFolder);
-                }
+                runCommand(
+                    `git remote add origin https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GITHUB_USERNAME}/${validatedProjectName}.git`,
+                    projectFolder
+                );
             }
 
-            // Commit changes
             runCommand("git add .", projectFolder);
 
             try {
-                const commitMessage = isNewRepo
-                    ? `Initial project upload at ${new Date().toISOString()}`
-                    : `Update project from zip upload at ${new Date().toISOString()}`;
-                runCommand(`git commit -m "${commitMessage}"`, projectFolder);
-            } catch (error) {
-                if (!error.message.includes('nothing to commit') && !error.message.includes('no changes added to commit')) {
-                    throw new ApiError(`Commit failed: ${error.message}`);
-                }
-            }
+                runCommand(
+                    `git commit -m "Release ${versionNumber} upload"`,
+                    projectFolder
+                );
+            } catch (_) { }
 
-            // Create unique tag
-            const tag = `v-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+            const tag = `v-${Date.now()}`;
             runCommand(`git tag ${tag}`, projectFolder);
+            runCommand("git push origin main --tags", projectFolder);
 
-            // Push to GitHub
-            try {
-                if (isNewRepo) {
-                    runCommand("git push -u origin main --tags", projectFolder);
-                } else {
-                    runCommand("git push origin main --tags", projectFolder);
-                }
-            } catch (pushError) {
-                console.error('❌ Push failed:', pushError.message);
-                throw new ApiError(`Push to GitHub failed: ${pushError.message}`);
-            }
-
-            // Detect build output dir
-            let outputDir = null;
-            if (fs.existsSync(path.join(actualProjectPath, "build"))) {
-                outputDir = "build";
-            } else if (fs.existsSync(path.join(actualProjectPath, "dist"))) {
-                outputDir = "dist";
-            }
+            /* -------------------- 9. Resolve build output -------------------- */
+            const outputDir = fs.existsSync(
+                path.join(actualProjectPath, "build")
+            )
+                ? "build"
+                : fs.existsSync(path.join(actualProjectPath, "dist"))
+                    ? "dist"
+                    : null;
 
             if (!outputDir) {
-                throw new ApiError("No build output found");
+                throw new ApiError(400, "Build output not found");
             }
 
-            // Patch index.html asset paths (optional)
-            const indexPath = path.join(actualProjectPath, outputDir, "index.html");
-            if (fs.existsSync(indexPath)) {
-                let html = fs.readFileSync(indexPath, "utf-8");
-                html = html.replace(/"\/assets\//g, '"./assets/');
-                fs.writeFileSync(indexPath, html);
-            }
-
-            // Calculate build URL with release ID parameter
             const relativeBuildPath = path.relative(
                 path.join(process.cwd(), "projects"),
                 path.join(actualProjectPath, outputDir)
             );
-            // Need config here. importing it at top
-            const buildUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/apps/${relativeBuildPath}?releaseId=${releaseId}`;
-            // Deactivate all existing versions for this project
-            await prisma.projectVersion.updateMany({
-                where: { projectId: release.project.id },
-                data: { isActive: false }
-            });
 
-            // Create new version linked to release
-            const newVersion = await prisma.projectVersion.create({
-                data: {
-                    projectId: release.project.id,
-                    releaseId: releaseId,
-                    version: versionNumber,
-                    zipFilePath: file.path, // Changed from req.file.path to file.path
-                    buildUrl,
-                    isActive: true,
-                    uploadedBy: userId
+            const buildUrl = `${process.env.BASE_URL || "http://localhost:3000"
+                }/apps/${relativeBuildPath}?releaseId=${releaseId}`;
+
+            /* -------------------- 10. DB transaction (OPTIMIZED) -------------------- */
+
+
+
+            const newVersion = await prisma.$transaction(async (tx) => {
+                await tx.projectVersion.updateMany({
+                    where: { projectId: release.project.id },
+                    data: { isActive: false },
+                });
+
+                const version = await tx.projectVersion.create({
+                    data: {
+                        projectId: release.project.id,
+                        releaseId,
+                        version: versionNumber,
+                        zipFilePath: zipPath,
+                        buildUrl,
+                        isActive: true,
+                        uploadedBy: userId,
+                    },
+                });
+                if (roadmapItemIds && roadmapItemIds.length > 0) {
+                    await tx.roadmapItem.updateMany({
+                        where: { id: { in: roadmapItemIds } },
+                        data: {
+                            releaseId,
+                            projectVersionId: version.id,
+                        },
+                    });
                 }
+
+                return version;
             });
 
+            /* -------------------- 11. Final response -------------------- */
             return {
-                message: "✅ Project uploaded & pushed to GitHub",
-                tag,
-                repository: `https://github.com/${GITHUB_USERNAME}/${validatedProjectName}`,
-                isNewRepo,
+                message: "✅ Release uploaded successfully",
+                releaseId,
+                versionId: newVersion.id,
+                version: newVersion.version,
+                roadmapItemCount: roadmapItemIds.length,
                 buildUrl,
-                version: newVersion
+                tag,
+                repository: `https://github.com/${GITHUB_USERNAME}/${validatedProjectName}`
             };
-
         } catch (error) {
-            console.error('❌ Upload failed:', error.message);
-            // Cleanup zip file on error
-            if (fs.existsSync(zipPath)) {
-                // fs.unlinkSync(zipPath); // Optional: keep for debugging?
-            }
-            throw new ApiError(500, `Upload failed: ${error.message}`);
+            console.error("❌ Upload failed:", error);
+            throw new ApiError(500, error.message || "Upload failed");
         }
     });
 };
