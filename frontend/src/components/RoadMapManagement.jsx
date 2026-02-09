@@ -449,9 +449,9 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                 <div key={roadmap.id} className="relative">
                                     {/* Progress Timeline Fill */}
                                     <div
-                                        className="absolute -left-[25px] top-0 w-2 bg-emerald-500 rounded-full transition-all duration-500"
+                                        className={`absolute -left-[25px] top-0 w-2 bg-emerald-500 transition-all duration-500 ${isCompleted && index !== roadmaps.length - 1 ? "rounded-t-full h-[calc(100%+10px)]" : "rounded-full"}`}
                                         style={{
-                                            height: `${progress}%`,
+                                            height: isCompleted && index !== roadmaps.length - 1 ? "calc(100% + 10px)" : `${progress}%`,
                                             minHeight: isCompleted ? "20px" : "0px",
                                         }}
                                     />
@@ -476,7 +476,7 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                     </div>
 
                                     {/* Card */}
-                                    <div className="ml-6 mb-8">
+                                    <div className={`ml-6 ${index === roadmaps.length - 1 ? 'mb-10' : 'pb-10'}`}>
                                         <div
                                             className={`bg-white rounded-lg border transition-all ${editingId === roadmap.id
                                                 ? "border-emerald-500 shadow-lg"
@@ -831,13 +831,15 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                             >
                                                                 Save
                                                             </Button>
-                                                            <Button
-                                                                onClick={handleCancel}
-                                                                variant="outline"
-                                                                size="sm"
-                                                            >
-                                                                Cancel
-                                                            </Button>
+                                                            {roadmaps.length > 1 && (
+                                                                <Button
+                                                                    onClick={handleCancel}
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                >
+                                                                    Cancel
+                                                                </Button>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 ) : (
@@ -904,12 +906,14 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                         <DropdownMenuItem onClick={() => handleEditClick(roadmap)}>
                                                                             Edit
                                                                         </DropdownMenuItem>
-                                                                        <DropdownMenuItem
-                                                                            onClick={() => handleDelete(roadmap.id)}
-                                                                            className="text-red-600 focus:text-red-600"
-                                                                        >
-                                                                            Delete
-                                                                        </DropdownMenuItem>
+                                                                        {roadmaps.length > 1 && (
+                                                                            <DropdownMenuItem
+                                                                                onClick={() => handleDelete(roadmap.id)}
+                                                                                className="text-red-600 focus:text-red-600"
+                                                                            >
+                                                                                Delete
+                                                                            </DropdownMenuItem>
+                                                                        )}
                                                                     </DropdownMenuContent>
                                                                 </DropdownMenu>
                                                             </div>
