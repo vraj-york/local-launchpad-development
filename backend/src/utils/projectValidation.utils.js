@@ -1,3 +1,4 @@
+
 export function validateProjectName(name) {
     if (!name || typeof name !== "string") {
         throw new Error("Invalid project name");

@@ -228,6 +228,6 @@ router.post(
     "/:releaseId/upload",
     authenticateToken,
     upload.single("project"),
-    (releaseController.upload)
+    releaseController.upload
 );
 export default router;

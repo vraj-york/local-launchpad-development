@@ -3,6 +3,7 @@ const router = express.Router();
 import { roadmapController } from "../controllers/roadmap.controller.js";
 import { param } from "express-validator";
 import { authenticateToken } from "../middleware/auth.middleware.js";
+import { updateRoadmapsArrayValidation } from "../validators/project.validator.js";
 
 /**
  * @swagger
@@ -99,4 +100,48 @@ router.get(
     param("projectId").isInt(),
     roadmapController.listItemsByProject
 );
+/**
+ * @swagger
+ * /roadmaps/project/{projectId}:
+ *   put:
+ *     summary: Update project roadmaps and items
+ *     tags: [Roadmaps]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [roadmaps]
+ *             properties:
+ *               roadmaps:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   description: Roadmap with editable items
+ *     responses:
+ *       200:
+ *         description: Roadmaps updated successfully
+ *       400:
+ *         description: Validation error
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Project not found
+ */
+router.put(
+    "/project/:projectId",
+    authenticateToken,
+    updateRoadmapsArrayValidation,
+    roadmapController.update
+);
+
 export default router;

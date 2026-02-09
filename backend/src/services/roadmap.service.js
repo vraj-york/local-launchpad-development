@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { validateRoadmapItems } from "../validators/roadmap.validator.js";
 import ApiError from "../utils/apiError.js";
+import { assertProjectAccess } from "./project.service.js";
 const prisma = new PrismaClient();
 
 export const createRoadmapWithItems = async (tx, projectId, roadmap) => {
@@ -46,8 +47,8 @@ export const deleteRoadmapTx = async (tx, roadmapId) => {
         include: {
             items: {
                 include: {
-                    release: {
-                        select: { id: true, name: true },
+                    projectVersion: {
+                        select: { id: true, version: true },
                     },
                 },
             },
@@ -57,13 +58,13 @@ export const deleteRoadmapTx = async (tx, roadmapId) => {
         throw new ApiError(404, "Roadmap not found");
     }
 
-    const linkedRelease = roadmap.items.find(
-        (item) => item.releaseId !== null
+    const linkedVersion = roadmap.items.find(
+        (item) => item.projectVersionId !== null
     );
-    if (linkedRelease) {
+    if (linkedVersion) {
         throw new ApiError(
             400,
-            `Cannot delete roadmap. Item "${linkedRelease.title}" is linked to release "${linkedRelease.release.name}".`
+            `Cannot delete roadmap. Item "${linkedVersion.title}" is linked to version "${linkedVersion.projectVersion.version}".`
         );
     }
 
@@ -81,17 +82,17 @@ export const deleteRoadmapItemTx = async (tx, roadmapId, itemId) => {
     const item = await tx.roadmapItem.findUnique({
         where: { id: itemId, roadmapId: roadmapId },
         include: {
-            release: { select: { name: true } },
+            projectVersion: { select: { version: true } },
         },
     });
 
     if (!item) {
         throw new ApiError(404, "Roadmap item not found");
     }
-    if (item.releaseId) {
+    if (item.projectVersionId) {
         throw new ApiError(
             400,
-            `Cannot delete item. Linked to release "${item.release?.name}".`
+            `Cannot delete item. Linked to version "${item.projectVersion?.version}".`
         );
     }
 
@@ -143,17 +144,101 @@ export const listRoadmapItemsByProjectService = async (projectId, user) => {
                     priority: true,
                     startDate: true,
                     endDate: true,
-                    releaseId: true,
-                    release: {
-                        select: {
-                            id: true,
-                            name: true
-                        }
-                    }
+                    // releaseId: true,
+                    // release: {
+                    //     select: {
+                    //         id: true,
+                    //         name: true
+                    //     }
+                    // }
                 }
             }
         }
     });
 
     return roadmaps;
+};
+
+
+const roadmapData = (r) => ({
+    title: r.title,
+    description: r.description,
+    status: r.status,
+    timelineStart: new Date(r.timelineStart),
+    timelineEnd: new Date(r.timelineEnd),
+});
+
+const itemData = (i) => ({
+    title: i.title,
+    description: i.description,
+    status: i.status,
+    priority: i.priority,
+    startDate: new Date(i.startDate),
+    endDate: new Date(i.endDate),
+});
+
+export const updateRoadmapService = async ({ projectId, user, roadmaps }) => {
+    // 1️⃣ Access check
+    await assertProjectAccess(projectId, user);
+
+    return prisma.$transaction(async (tx) => {
+        const results = [];
+
+        for (const roadmap of roadmaps) {
+            // 2️⃣ Upsert roadmap (only one allowed per update call for now, or creates new if no ID)
+            let roadmapId;
+
+            if (roadmap.id) {
+                const updated = await tx.roadmap.update({
+                    where: { id: roadmap.id },
+                    data: roadmapData(roadmap),
+                });
+                roadmapId = updated.id;
+            } else {
+                const created = await tx.roadmap.create({
+                    data: {
+                        ...roadmapData(roadmap),
+                        projectId: Number(projectId),
+                    },
+                });
+                roadmapId = created.id;
+            }
+
+            // 3️⃣ Split items
+            const existingItems = (roadmap.items || []).filter(i => i.id);
+            const newItems = (roadmap.items || []).filter(i => !i.id);
+
+            // 4️⃣ Update existing items (parallel)
+            if (existingItems.length > 0) {
+                await Promise.all(
+                    existingItems.map(item =>
+                        tx.roadmapItem.update({
+                            where: { id: item.id },
+                            data: itemData(item),
+                        })
+                    )
+                );
+            }
+
+            // 5️⃣ Create new items (bulk)
+            if (newItems.length > 0) {
+                await tx.roadmapItem.createMany({
+                    data: newItems.map(i => ({
+                        ...itemData(i),
+                        roadmapId,
+                    })),
+                });
+            }
+
+            results.push({
+                roadmapId,
+                status: "success"
+            });
+        }
+
+        return {
+            message: "Roadmaps updated successfully",
+            results
+        };
+    });
 };

@@ -65,8 +65,7 @@ export const releaseController = {
         if (!req.file) {
             return res.status(400).json({ error: "No file uploaded" });
         }
-
-        const result = await uploadReleaseVersionService(releaseId, req.file, req.body.version, req.user);
+        const result = await uploadReleaseVersionService(releaseId, req.file, req.body.version, req.body.roadmapItemIds, req.user);
         res.json(result);
     }),
 
