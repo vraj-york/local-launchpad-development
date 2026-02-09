@@ -144,6 +144,7 @@ export const listRoadmapItemsByProjectService = async (projectId, user) => {
                     priority: true,
                     startDate: true,
                     endDate: true,
+                    projectVersion: true
                     // releaseId: true,
                     // release: {
                     //     select: {

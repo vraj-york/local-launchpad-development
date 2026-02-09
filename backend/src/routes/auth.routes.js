@@ -2,6 +2,8 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
+import { OAuth2Client } from "google-auth-library";
+import crypto from "crypto";
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -116,6 +118,82 @@ router.post("/login", async (req, res) => {
     { expiresIn: "1d" }
   );
   res.json({ token, user });
+
+});
+
+/**
+ * @swagger
+ * /auth/google:
+ *   post:
+ *     summary: Google Login/Signup
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - token
+ *             properties:
+ *               token:
+ *                 type: string
+ *                 description: Google ID Token
+ *               role:
+ *                 type: string
+ *                 enum: [admin, manager]
+ *                 default: manager
+ *     responses:
+ *       200:
+ *         description: Success
+ *       400:
+ *         description: Invalid Google Token
+ */
+router.post("/google", async (req, res) => {
+  const { token, role } = req.body;
+
+  try {
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload.email_verified) {
+      return res.status(400).json({ error: "Google email not verified" });
+    }
+
+    const { email, name, picture } = payload;
+
+    let user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      // Create new user
+      const randomPassword = crypto.randomBytes(16).toString("hex");
+      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+
+      user = await prisma.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          role: (role && ["admin", "manager"].includes(role)) ? role : "manager",
+        }
+      });
+    }
+
+    const jwtToken = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    res.json({ token: jwtToken, user });
+
+  } catch (error) {
+    console.error("Google Auth Error:", error);
+    res.status(400).json({ error: "Invalid Google Token" });
+  }
 });
 
 

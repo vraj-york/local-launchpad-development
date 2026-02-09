@@ -240,6 +240,7 @@ export const listReleasesService = async (projectId, user) => {
             versions: {
                 orderBy: { createdAt: 'desc' },
                 include: {
+                    roadmapItems: true,
                     uploader: {
                         select: { id: true, name: true, email: true }
                     }
