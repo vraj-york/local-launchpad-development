@@ -81,7 +81,8 @@ const ProjectDetails = () => {
                     <Button
                         variant="ghost"
                         onClick={() => navigate('/projects')}
-                        className="gap-2 pl-0 hover:bg-transparent hover:text-primary text-slate-500"
+                        className="hover:bg-transparent hover:text-primary text-slate-500"
+                        style={{ padding: "0px" }}
                     >
                         <ArrowLeft className="w-4 h-4" />
                         Back to Projects
