@@ -684,13 +684,27 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                             key={version.id}
                             className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg hover:border-emerald-200 transition-colors"
                           >
-                            <div className="flex items-center gap-3">
-                              <span className="font-mono text-sm font-medium text-slate-700">
-                                v{version.version}
-                              </span>
-                              <span className="text-xs text-slate-400">
-                                {new Date(version.createdAt).toLocaleDateString()}
-                              </span>
+                            <div className="flex flex-col gap-2">
+
+                              <div className="flex items-center gap-3">
+                                <span className="font-mono text-sm font-medium text-slate-700">
+                                  v{version.version}
+                                </span>
+                                <span className="text-xs text-slate-400">
+                                  {new Date(version.createdAt).toLocaleDateString()}
+                                </span>
+                              </div>
+
+
+                              <div className="flex items-start gap-2 w-full">
+                                <span className="text-xs text-slate-400 whitespace-nowrap mt-1">RoadMap Items:</span>
+                                <div className="flex flex-wrap gap-2">
+                                  {version.roadmapItems.map((item) => (
+                                    <Badge key={item.id} className={"rounded-md"}>{item.title}</Badge>
+                                  ))}
+                                </div>
+                              </div>
+
                             </div>
                             {version.buildUrl && (
                               <a
