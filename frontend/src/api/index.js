@@ -208,14 +208,16 @@ export const toggleReleaseLock = async (releaseId, locked) => {
 };
 
 // Function to upload ZIP to a release
-export const uploadToRelease = async (releaseId, file, version = null) => {
+export const uploadToRelease = async (releaseId, file, version = null, roadmapItemIds) => {
     try {
         const formData = new FormData();
         formData.append('project', file);
         if (version) {
             formData.append('version', version);
         }
-
+        if (roadmapItemIds) {
+            formData.append('roadmapItemIds', roadmapItemIds);
+        }
         const response = await api.post(`/api/releases/${releaseId}/upload`, formData, {
             headers: {
                 'Content-Type': 'multipart/form-data',

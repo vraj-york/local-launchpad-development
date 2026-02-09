@@ -178,7 +178,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
         selectedRelease,
         uploadFile,
         version || null,
-        // selectedRoadmapItemIds --> here we will pass the selected roadmapItemIds to connect it with uploaded release version
+        selectedRoadmapItemIds
       );
 
       clearInterval(progressInterval);
