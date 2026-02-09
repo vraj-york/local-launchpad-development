@@ -289,3 +289,17 @@ export const getRoadmapItemsByProjectId = async (projectId) => {
         throw error.response?.data || { error: 'Failed to fetch roadmap items' };
     }
 };
+
+// Function to handle Google Login
+export const googleLogin = async (token) => {
+  try {
+    const response = await axios.post(`${API_URL}/api/auth/google`, { token });
+    const { token: jwtToken, user } = response.data;
+    // Store token and user data
+    localStorage.setItem('token', jwtToken);
+    localStorage.setItem('user', JSON.stringify(user));
+    return { token: jwtToken, user };
+  } catch (error) {
+    throw error.response?.data || { error: 'Google Login failed' };
+  }
+};

@@ -29,6 +29,7 @@ const config = {
 
     // Helper to check if running in production
     isProduction: import.meta.env.MODE === 'production',
+    GOOGLE_CLIENT_ID: import.meta.env.VITE_GOOGLE_CLIENT_ID || "516448789962-jhsndv38lfpdt30h334j8khu825fried.apps.googleusercontent.com",
 };
 
 export default config;

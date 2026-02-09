@@ -1,16 +1,20 @@
 
 import { AuthProvider } from './context/AuthContext';
-
-// import './styles/main.css';
 import { Toaster } from "@/components/ui/sonner"
 import { Routes } from './routes/Routes';
+import { GoogleOAuthProvider } from '@react-oauth/google';
+
+const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "516448789962-jhsndv38lfpdt30h334j8khu825fried.apps.googleusercontent.com"; // Fallback for dev
+
 
 const App = () => {
   return (
-    <AuthProvider>
-      <Routes />
-      <Toaster />
-    </AuthProvider>
+    <GoogleOAuthProvider clientId={clientId}>
+      <AuthProvider>
+        <Routes />
+        <Toaster />
+      </AuthProvider>
+    </GoogleOAuthProvider>
   );
 };
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { registerUser } from '../api';
+import { googleLogin, registerUser } from '../api';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2 } from 'lucide-react';
+import { GoogleLogin } from '@react-oauth/google';
 
 const LoginPage = () => {
     const { user, login } = useAuth();
@@ -96,6 +97,27 @@ const LoginPage = () => {
             ...credentials,
             role: value
         });
+    };
+
+    const handleGoogleSuccess = async (credentialResponse) => {
+        setLoading(true);
+        setError('');
+        try {
+            const result = await googleLogin(credentialResponse.credential);
+            if (result.token) {
+                // Update auth context
+                await login({
+                    email: result.user.email, // Optimistic update, actual logic inside context might differ
+                });
+                window.location.href = '/dashboard'; // Force reload to pick up token in context
+            }
+        } catch (err) {
+            setError('Google Login Failed');
+        }
+        setLoading(false);
+    };
+    const handleGoogleFailure = () => {
+        setError('Google Login Failed');
     };
 
     return (
@@ -226,6 +248,22 @@ const LoginPage = () => {
                                 {activeTab === 'login' ? 'Sign In' : 'Create Account'}
                             </Button>
                         </form>
+
+                        <div className="relative my-4">
+                            <div className="absolute inset-0 flex items-center">
+                                <span className="w-full border-t" />
+                            </div>
+                            <div className="relative flex justify-center text-xs uppercase">
+                                <span className="bg-white px-2 text-muted-foreground">Or continue with</span>
+                            </div>
+                        </div>
+                        <div className="flex justify-center w-full">
+                            <GoogleLogin
+                                onSuccess={handleGoogleSuccess}
+                                onError={handleGoogleFailure}
+                                useOneTap
+                            />
+                        </div>
                     </Tabs>
                 </CardContent>
                 <CardFooter className="flex flex-col justify-center text-center text-sm text-gray-500">
