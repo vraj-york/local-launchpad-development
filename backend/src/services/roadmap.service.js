@@ -36,7 +36,7 @@ export const createRoadmapWithItems = async (tx, projectId, roadmap) => {
     return newRoadmap;
 };
 export const deleteRoadmap = async (roadmapId) => {
-    return prisma.$transaction((tx) =>
+    return await prisma.$transaction((tx) =>
         deleteRoadmapTx(tx, roadmapId)
     );
 };
@@ -102,7 +102,7 @@ export const deleteRoadmapItemTx = async (tx, roadmapId, itemId) => {
 };
 
 export const deleteRoadmapItem = async (roadmapId, itemId) => {
-    prisma.$transaction((tx) => deleteRoadmapItemTx(tx, roadmapId, itemId));
+    return await prisma.$transaction((tx) => deleteRoadmapItemTx(tx, roadmapId, itemId));
 };
 
 export const listRoadmapItemsByProjectService = async (projectId, user) => {
@@ -130,31 +130,18 @@ export const listRoadmapItemsByProjectService = async (projectId, user) => {
     const roadmaps = await prisma.roadmap.findMany({
         where: { projectId },
         orderBy: { timelineStart: "asc" },
-        select: {
-            id: true,
-            title: true,
+        include: {
             items: {
-                orderBy: { startDate: "asc" },
-                select: {
-                    id: true,
-                    title: true,
-                    description: true,
-                    type: true,
-                    status: true,
-                    priority: true,
-                    startDate: true,
-                    endDate: true,
-                    projectVersion: true
-                    // releaseId: true,
-                    // release: {
-                    //     select: {
-                    //         id: true,
-                    //         name: true
-                    //     }
-                    // }
-                }
-            }
-        }
+                orderBy: { startDate: 'asc' },
+                include: {
+                    projectVersion: {
+                        include: {
+                            release: true,
+                        },
+                    },
+                },
+            },
+        },
     });
 
     return roadmaps;
@@ -210,7 +197,7 @@ export const updateRoadmapService = async ({ projectId, user, roadmaps }) => {
             const newItems = (roadmap.items || []).filter(i => !i.id);
 
             // 4️⃣ Update existing items (parallel)
-            if (existingItems.length > 0) {
+            if (existingItems && existingItems.length > 0) {
                 await Promise.all(
                     existingItems.map(item =>
                         tx.roadmapItem.update({

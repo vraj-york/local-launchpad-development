@@ -3,7 +3,8 @@ import {
     createProjectService, listProjectsService, activateProjectVersionService,
     getProjectLiveUrlService,
     listProjectVersionsService, getProjectByIdService, getProjectInfoService,
-    updateProjectService
+    updateProjectService,
+    getJiraTicketsService
 } from "../services/project.service.js";
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
@@ -107,4 +108,9 @@ export const projectController = {
         res.json(data);
     }),
 
+    getJiraTickets: asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.id);
+        const tickets = await getJiraTicketsService(projectId, req.user);
+        res.json(tickets);
+    }),
 };

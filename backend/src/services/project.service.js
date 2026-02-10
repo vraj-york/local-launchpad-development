@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 import ApiError from "../utils/apiError.js";
 import { createRoadmapWithItems } from "./roadmap.service.js";
+import { fetchProjectJiraTickets } from "../utils/jiraIntegration.js";
 
 /**
  * Shared access check (PRIVATE helper inside same service)
@@ -379,9 +380,44 @@ export const updateProjectService = async ({ projectId, userId, roadmap }) => {
             });
         }
 
+
+
         return {
             message: "Project updated successfully",
         };
     });
 };
 
+export const getJiraTicketsService = async (projectId, user) => {
+    // 1️⃣ Access check
+    const project = await assertProjectAccess(projectId, user);
+
+    // 2️⃣ Get full project details including Jira config
+    const projectDetails = await prisma.project.findUnique({
+        where: { id: projectId },
+        select: {
+            jiraBaseUrl: true,
+            jiraProjectKey: true,
+            jiraAccessToken: true,
+            jiraAccessKey: true, // This is expected to be the email/username
+        }
+    });
+
+    if (!projectDetails.jiraBaseUrl || !projectDetails.jiraProjectKey || !projectDetails.jiraAccessToken || !projectDetails.jiraAccessKey) {
+        throw new ApiError(400, "Jira configuration missing for this project");
+    }
+
+    // 3️⃣ Fetch tickets
+    const result = await fetchProjectJiraTickets({
+        baseUrl: projectDetails.jiraBaseUrl,
+        projectKey: projectDetails.jiraProjectKey,
+        apiToken: projectDetails.jiraAccessToken,
+        email: projectDetails.jiraAccessKey
+    });
+
+    if (!result.success) {
+        throw new ApiError(502, `Failed to fetch Jira tickets: ${result.error}`);
+    }
+
+    return result.issues;
+};

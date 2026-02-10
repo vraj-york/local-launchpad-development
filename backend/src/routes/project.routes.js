@@ -15,7 +15,6 @@ import config from "../config/index.js";
 import { validateProjectName } from "../utils/projectValidation.utils.js";
 import allowRoles from "../middleware/role.middleware.js";
 import { projectController } from "../controllers/project.controller.js";
-import asyncHandler from "../middleware/asyncHandler.middleware.js";
 import { createProjectValidation } from "../validators/project.validator.js";
 import { validate } from "../validators/validate.middleware.js";
 dotenv.config();
@@ -1804,5 +1803,69 @@ router.put(
   createProjectValidation, // reuse same validations
   projectController.update
 );
+
+/**
+ * @swagger
+ * /projects/{id}/jira/tickets:
+ *   get:
+ *     summary: Fetch Jira tickets for the project
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Project ID
+ *     responses:
+ *       200:
+ *         description: List of Jira tickets
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                     description: Jira Issue ID
+ *                   key:
+ *                     type: string
+ *                     description: Issue Key (e.g., PROJ-123)
+ *                   url:
+ *                     type: string
+ *                     description: Link to the issue
+ *                   summary:
+ *                     type: string
+ *                     description: Issue Title
+ *                   status:
+ *                     type: string
+ *                     description: Current status (e.g., To Do, Done)
+ *                   priority:
+ *                     type: string
+ *                     description: Priority level
+ *                   type:
+ *                     type: string
+ *                     description: Issue Type (e.g., Task, Bug)
+ *                   icon:
+ *                     type: string
+ *                     description: URL to issue type icon
+ *                   created:
+ *                     type: string
+ *                     format: date-time
+ *                   updated:
+ *                     type: string
+ *                     format: date-time
+ *       400:
+ *         description: Jira configuration missing for this project
+ *       404:
+ *         description: Project not found
+ *       502:
+ *         description: Failed to fetch tickets from Jira (Invalid credentials or network error)
+ */
+router.get("/:id/jira/tickets", authenticateToken, projectController.getJiraTickets);
 
 export default router;

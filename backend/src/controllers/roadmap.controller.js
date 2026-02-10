@@ -11,7 +11,7 @@ export const roadmapController = {
     delete: asyncHandler(async (req, res) => {
         const roadmapId = Number(req.params.roadmapId);
         const result = await deleteRoadmap(roadmapId);
-        res.status(200).json(result);
+        res.json(result);
     }),
     /**
      * Delete roadmap item
@@ -23,7 +23,7 @@ export const roadmapController = {
 
         const result = await deleteRoadmapItem(roadmapId, roadmapItemId);
 
-        res.status(200).json(result);
+        res.json(result);
     }),
     /**
      * List roadmap items by project

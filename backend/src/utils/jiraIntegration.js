@@ -24,7 +24,7 @@ function getAuthHeader() {
     if (!JIRA_CONFIG.username || !JIRA_CONFIG.apiToken) {
         throw new Error('Jira credentials not configured. Please set JIRA_USERNAME and JIRA_API_TOKEN environment variables.');
     }
-    
+
     const auth = Buffer.from(`${JIRA_CONFIG.username}:${JIRA_CONFIG.apiToken}`).toString('base64');
     return `Basic ${auth}`;
 }
@@ -35,11 +35,11 @@ function getAuthHeader() {
 function validateJiraConfig() {
     const required = ['baseUrl', 'username', 'apiToken', 'projectKey'];
     const missing = required.filter(key => !JIRA_CONFIG[key]);
-    
+
     if (missing.length > 0) {
         throw new Error(`Missing Jira configuration: ${missing.join(', ')}. Please set the required environment variables.`);
     }
-    
+
     // Validate URL format
     try {
         new URL(JIRA_CONFIG.baseUrl);
@@ -62,7 +62,7 @@ function parseSummaryForTickets(summary) {
 
     const tickets = [];
     let summaryText = '';
-    
+
     // Handle new batching response structure
     if (summary.summary) {
         summaryText = summary.summary;
@@ -71,19 +71,19 @@ function parseSummaryForTickets(summary) {
     else if (summary.output?.Summary) {
         summaryText = summary.output.Summary;
     }
-    
+
     if (summaryText) {
         // Handle multi-chunk summaries by combining all chunks
         const changes = summaryText
             .split('--- Chunk Summary ---')
-            .flatMap(chunk => 
+            .flatMap(chunk =>
                 chunk.trim()
                     .split('\n')
                     .filter(line => line.trim())
                     .map(line => line.replace(/^[-•]\s*/, '').trim())
                     .filter(line => line)
             );
-        
+
         // Group changes by category
         const categories = {
             'New Features': [],
@@ -91,11 +91,11 @@ function parseSummaryForTickets(summary) {
             'Improvements': [],
             'Other Changes': []
         };
-        
+
         changes.forEach(change => {
             const cleanChange = change.replace(/^-\s*/, '').trim();
             if (!cleanChange) return;
-            
+
             // Categorize based on keywords
             const lowerChange = cleanChange.toLowerCase();
             if (lowerChange.includes('add') || lowerChange.includes('new') || lowerChange.includes('create')) {
@@ -108,7 +108,7 @@ function parseSummaryForTickets(summary) {
                 categories['Other Changes'].push(cleanChange);
             }
         });
-        
+
         // Create tickets for each category with changes
         Object.entries(categories).forEach(([category, changes]) => {
             if (changes.length > 0) {
@@ -120,7 +120,7 @@ function parseSummaryForTickets(summary) {
             }
         });
     }
-    
+
     // Handle files information
     if (summary.files && Array.isArray(summary.files) && summary.files.length > 0) {
         tickets.push({
@@ -129,7 +129,7 @@ function parseSummaryForTickets(summary) {
             priority: 'Low'
         });
     }
-    
+
     // Handle impact information
     if (summary.impact) {
         tickets.push({
@@ -138,7 +138,7 @@ function parseSummaryForTickets(summary) {
             priority: 'Medium'
         });
     }
-    
+
     // If no structured data, create a general ticket
     if (tickets.length === 0) {
         tickets.push({
@@ -147,7 +147,7 @@ function parseSummaryForTickets(summary) {
             priority: 'Medium'
         });
     }
-    
+
     return tickets;
 }
 
@@ -156,10 +156,11 @@ function parseSummaryForTickets(summary) {
  */
 async function createJiraTicket(ticketData, projectInfo = {}) {
     validateJiraConfig();
-    
+
     const authHeader = getAuthHeader();
     const url = `${JIRA_CONFIG.baseUrl}/rest/api/3/issue`;
-    
+
+
     // Prepare ticket payload
     const payload = {
         fields: {
@@ -195,7 +196,8 @@ async function createJiraTicket(ticketData, projectInfo = {}) {
             ]
         }
     };
-    
+    console.log('Creating Jira ticket with payload:', JSON.stringify(payload, null, 2));
+
     // Add project information if available
     if (projectInfo.name) {
         payload.fields.description.content.push({
@@ -208,7 +210,7 @@ async function createJiraTicket(ticketData, projectInfo = {}) {
             ]
         });
     }
-    
+
     if (projectInfo.repository) {
         payload.fields.description.content.push({
             type: 'paragraph',
@@ -220,7 +222,7 @@ async function createJiraTicket(ticketData, projectInfo = {}) {
             ]
         });
     }
-    
+
     if (projectInfo.commitHash) {
         payload.fields.description.content.push({
             type: 'paragraph',
@@ -232,7 +234,7 @@ async function createJiraTicket(ticketData, projectInfo = {}) {
             ]
         });
     }
-    
+
     try {
         const response = await fetch(url, {
             method: 'POST',
@@ -243,12 +245,12 @@ async function createJiraTicket(ticketData, projectInfo = {}) {
             },
             body: JSON.stringify(payload)
         });
-        
+
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Jira API error: ${response.status} - ${errorText}`);
         }
-        
+
         const result = await response.json();
         return {
             success: true,
@@ -273,24 +275,24 @@ async function createJiraTicket(ticketData, projectInfo = {}) {
 export async function createJiraTicketsFromSummary(summary, projectInfo = {}) {
     try {
         validateJiraConfig();
-        
+
         const tickets = parseSummaryForTickets(summary);
         const results = [];
-        
+
         console.log(`Creating ${tickets.length} Jira tickets...`);
-        
+
         // Create tickets sequentially to avoid rate limiting
         for (const ticket of tickets) {
             const result = await createJiraTicket(ticket, projectInfo);
             results.push(result);
-            
+
             // Small delay between requests to avoid rate limiting
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
-        
+
         const successful = results.filter(r => r.success);
         const failed = results.filter(r => !r.success);
-        
+
         return {
             success: successful.length > 0,
             totalTickets: tickets.length,
@@ -328,10 +330,10 @@ export async function createJiraTicketsFromSummary(summary, projectInfo = {}) {
 export async function testJiraConnection() {
     try {
         validateJiraConfig();
-        
+
         const authHeader = getAuthHeader();
         const url = `${JIRA_CONFIG.baseUrl}/rest/api/3/myself`;
-        
+
         const response = await fetch(url, {
             method: 'GET',
             headers: {
@@ -339,12 +341,12 @@ export async function testJiraConnection() {
                 'Accept': 'application/json'
             }
         });
-        
+
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Jira connection failed: ${response.status} - ${errorText}`);
         }
-        
+
         const userInfo = await response.json();
         return {
             success: true,
@@ -360,16 +362,91 @@ export async function testJiraConnection() {
     }
 }
 
+
+/**
+ * Fetch Jira tickets for a project using dynamic configuration
+ */
+// jira.service.js
+export async function fetchProjectJiraTickets(config) {
+    try {
+        const { baseUrl, email, apiToken, projectKey } = config;
+
+        if (!baseUrl || !email || !apiToken || !projectKey) {
+            throw new Error("Missing Jira configuration");
+        }
+
+        const auth = Buffer.from(`${email}:${apiToken}`).toString("base64");
+
+        const response = await fetch(
+            `${baseUrl}/rest/api/3/search/jql`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Basic ${auth}`,
+                    Accept: "application/json",
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    jql: `project = ${projectKey} ORDER BY updated DESC`,
+                    maxResults: 50,
+                    fields: [
+                        "summary",
+                        "status",
+                        "priority",
+                        "issuetype",
+                        "created",
+                        "updated"
+                    ]
+                })
+            }
+        );
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`${response.status} - ${text}`);
+        }
+
+        const data = await response.json();
+
+        return {
+            success: true,
+            total: data.total,
+            issues: data.issues.map(issue => ({
+                id: issue.id,
+                key: issue.key,
+                url: `${baseUrl}/browse/${issue.key}`,
+                summary: issue.fields.summary,
+                status: issue.fields.status.name,
+                priority: issue.fields.priority?.name ?? null,
+                type: issue.fields.issuetype.name,
+                icon: issue.fields.issuetype.iconUrl,
+                created: issue.fields.created,
+                updated: issue.fields.updated
+            }))
+        };
+    } catch (error) {
+        console.error("fetchProjectJiraTickets error:", error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
+
+
+
+
 /**
  * Get Jira project information
  */
 export async function getJiraProjectInfo() {
     try {
         validateJiraConfig();
-        
+
         const authHeader = getAuthHeader();
         const url = `${JIRA_CONFIG.baseUrl}/rest/api/3/project/${JIRA_CONFIG.projectKey}`;
-        
+
         const response = await fetch(url, {
             method: 'GET',
             headers: {
@@ -377,12 +454,12 @@ export async function getJiraProjectInfo() {
                 'Accept': 'application/json'
             }
         });
-        
+
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Failed to get project info: ${response.status} - ${errorText}`);
         }
-        
+
         const projectInfo = await response.json();
         return {
             success: true,
