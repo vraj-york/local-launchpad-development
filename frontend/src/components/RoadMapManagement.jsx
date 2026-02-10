@@ -31,7 +31,6 @@ function RoadMapManagement({
   validationErrors = {},
   initialEditingId = null,
 }) {
-  console.log("this log is for testing purpose");
   const [localErrors, setLocalErrors] = useState({});
 
   // ... (internalRoadmaps state remains same)
