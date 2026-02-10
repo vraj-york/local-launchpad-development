@@ -4,7 +4,7 @@ import { Button } from '../components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { ArrowLeft, GitCommit, FileDiff } from 'lucide-react';
 import DiffModal from '../components/DiffModal';
-import { fetchProjectById, updateProject, deleteRoadmap, deleteRoadmapItem } from '@/api';
+import { fetchProjectById, updateProject, deleteRoadmap, deleteRoadmapItem, updateRoadmapByProjectId, getRoadmapItemsByProjectId } from '@/api';
 import RoadMapManagement from '@/components/RoadMapManagement';
 import ReleaseManagement from '@/components/ReleaseManagement';
 import { PageHeader } from '@/components/PageHeader';
@@ -49,6 +49,26 @@ const ProjectDetails = () => {
 
         loadProject();
     }, [projectId]);
+
+
+    useEffect(() => {
+        const loadRoadmap = async () => {
+            try {
+                if (!project) setLoading(true); // Only show loading if we don't have project data yet
+                const data = await getRoadmapItemsByProjectId(projectId);
+                // setProject(data);
+                console.log(data, "data from roadmap")
+            } catch (error) {
+                console.error("Failed to load project:", error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadRoadmap();
+    }, [projectId]);
+
+    console.log(project?.roadmaps, "project.roadmaps")
 
     const projectName = project?.name || 'Project';
     const projectDescription = project?.description || 'This is Testing Project';
@@ -146,7 +166,7 @@ const ProjectDetails = () => {
                                 // We use updateProject endpoint which expects { roadmap: ... }
                                 try {
                                     console.log(roadmap, "road map payload")
-                                    const updatedProject = await updateProject(project.id, { roadmap });
+                                    const updatedProject = await updateRoadmapByProjectId(project.id, { roadmap });
                                     toast.success("Roadmap updated successfully");
                                 } catch (error) {
                                     toast.error(error.error || "Failed to update roadmap");

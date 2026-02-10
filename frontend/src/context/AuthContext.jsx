@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect } from 'react';
 import { loginUser } from '../api/index';
+import { googleLogout } from '@react-oauth/google';
 
 export const AuthContext = createContext();
 
@@ -10,7 +11,7 @@ export const AuthProvider = ({ children }) => {
     useEffect(() => {
         const storedUser = localStorage.getItem('user');
         const token = localStorage.getItem('token');
-        
+
         if (storedUser && token) {
             try {
                 setUser(JSON.parse(storedUser));
@@ -34,13 +35,28 @@ export const AuthProvider = ({ children }) => {
     };
 
     const logout = () => {
+        googleLogout();
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         setUser(null);
     };
 
+    const checkAuth = () => {
+        const storedUser = localStorage.getItem('user');
+        const token = localStorage.getItem('token');
+
+        if (storedUser && token) {
+            try {
+                setUser(JSON.parse(storedUser));
+            } catch (error) {
+                localStorage.removeItem('user');
+                localStorage.removeItem('token');
+            }
+        }
+    };
+
     return (
-        <AuthContext.Provider value={{ user, loading, login, logout }}>
+        <AuthContext.Provider value={{ user, loading, login, logout, checkAuth }}>
             {children}
         </AuthContext.Provider>
     );
