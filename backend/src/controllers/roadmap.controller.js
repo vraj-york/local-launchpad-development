@@ -44,21 +44,25 @@ export const roadmapController = {
      */
     update: asyncHandler(async (req, res) => {
         const projectId = Number(req.params.projectId);
-        const { roadmaps } = req.body;
+        const { roadmap } = req.body;
 
-        // Validation
-        const validatedRoadmaps = validateRoadmapTimelines(roadmaps);
+        if (!roadmap) {
+            return res.status(400).json({ message: "roadmap is required" });
+        }
 
-        validatedRoadmaps.forEach(roadmap => {
-            validateRoadmapItemsTimeline(roadmap);
-        });
+        // Validate roadmap timeline
+        validateRoadmapTimelines([roadmap]);
+
+        // Validate items timeline
+        validateRoadmapItemsTimeline(roadmap);
 
         const result = await updateRoadmapService({
             projectId,
             user: req.user,
-            roadmaps: validatedRoadmaps
+            roadmap, // 👈 single roadmap
         });
 
         res.json(result);
-    }),
+    })
+
 };

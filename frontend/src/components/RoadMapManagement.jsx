@@ -15,6 +15,7 @@ import { PageHeader } from "./PageHeader";
 import { DatePickerWithRange } from "./ui/date-range-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { format } from "date-fns";
+import { Badge } from "./ui/badge";
 
 
 
@@ -380,22 +381,37 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
 
     const removeItem = async (itemId) => {
         console.log(itemId, "item id")
-        if (onItemDelete) {
-            const originalRoadmap = roadmaps.find(r => r.id === editingId);
-            const originalItem = originalRoadmap?.items.find(i => i.id === itemId);
 
-            // Only call backend if both roadmap and item are persisted (have number IDs)
-            if (originalItem && typeof editingId === 'number' && typeof itemId === 'number') {
+        // Check if this is a persisted item that needs backend deletion
+        const originalRoadmap = roadmaps.find(r => r.id === editingId);
+        const originalItem = originalRoadmap?.items.find(i => i.id === itemId);
+        const isPersistedItem = originalItem && typeof editingId === 'number' && typeof itemId === 'number';
+
+        if (onItemDelete && isPersistedItem) {
+            try {
+                // Only call backend if both roadmap and item are persisted (have number IDs)
                 await onItemDelete(editingId, itemId);
+                // Only update local state if API call succeeds
+                setEditForm({
+                    ...editForm,
+                    items: editForm.items.filter(
+                        (item) => item.id !== itemId,
+                    ),
+                });
+            } catch (error) {
+                // Don't update local state if API call fails
+                console.error("Failed to delete item, keeping in local state:", error);
+                // The error toast is already shown by onItemDelete in ProjectDetails.jsx
             }
+        } else {
+            // For temporary items (not persisted), just remove from local state
+            setEditForm({
+                ...editForm,
+                items: editForm.items.filter(
+                    (item) => item.id !== itemId,
+                ),
+            });
         }
-
-        setEditForm({
-            ...editForm,
-            items: editForm.items.filter(
-                (item) => item.id !== itemId,
-            ),
-        });
     };
 
     const getStatusColor = (status) => {
@@ -985,16 +1001,28 @@ function RoadMapManagement({ value, onChange, isEmbedded = false, onRoadmapUpdat
                                                                                         </p>
                                                                                     )}
                                                                             </div>
-                                                                            <span
-                                                                                className={`px-2 py-1 text-xs font-medium rounded ${getStatusColor(
-                                                                                    item.status,
-                                                                                )}`}
-                                                                            >
-                                                                                {item.status.replace(
-                                                                                    "_",
-                                                                                    " ",
-                                                                                )}
-                                                                            </span>
+                                                                            <div className="flex flex-col items-end gap-2">
+                                                                                <span
+                                                                                    className={`px-2 py-1 text-xs font-medium rounded ${getStatusColor(
+                                                                                        item.status,
+                                                                                    )}`}
+                                                                                >
+                                                                                    {item.status.replace(
+                                                                                        "_",
+                                                                                        " ",
+                                                                                    )}
+                                                                                </span>
+                                                                                <div className="flex gap-1 items-center">
+                                                                                    <p className="text-xs text-slate-400">
+                                                                                        {item.projectVersion?.release?.name}
+                                                                                    </p>
+                                                                                    {
+                                                                                        item?.projectVersion && (
+                                                                                            <Badge className={"rounded-sm"} size="sm">Version: {item?.projectVersion?.version}</Badge>
+                                                                                        )}
+
+                                                                                </div>
+                                                                            </div>
                                                                         </div>
                                                                     </div>
                                                                 </div>

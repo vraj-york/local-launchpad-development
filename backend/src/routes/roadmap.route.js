@@ -104,7 +104,7 @@ router.get(
  * @swagger
  * /roadmaps/project/{projectId}:
  *   put:
- *     summary: Update project roadmaps and items
+ *     summary: Update or add a single roadmap with multiple items
  *     tags: [Roadmaps]
  *     security:
  *       - bearerAuth: []
@@ -120,16 +120,14 @@ router.get(
  *         application/json:
  *           schema:
  *             type: object
- *             required: [roadmaps]
+ *             required: [roadmap]
  *             properties:
- *               roadmaps:
- *                 type: array
- *                 items:
- *                   type: object
- *                   description: Roadmap with editable items
+ *               roadmap:
+ *                 type: object
+ *                 description: Single roadmap with multiple items
  *     responses:
  *       200:
- *         description: Roadmaps updated successfully
+ *         description: Roadmap updated successfully
  *       400:
  *         description: Validation error
  *       403:
@@ -137,6 +135,7 @@ router.get(
  *       404:
  *         description: Project not found
  */
+
 router.put(
     "/project/:projectId",
     authenticateToken,

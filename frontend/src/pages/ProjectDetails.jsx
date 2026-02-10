@@ -18,6 +18,7 @@ const ProjectDetails = () => {
     // State
     const [project, setProject] = useState(location.state?.project || null);
     const [loading, setLoading] = useState(!location.state?.project);
+    const [roadmap, setRoadmap] = useState(null);
     // const [loading, setLoading] = useState(false);
     const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('releases');
@@ -26,8 +27,8 @@ const ProjectDetails = () => {
     // Helper to refresh project data
     const refreshProject = async () => {
         try {
-            const data = await fetchProjectById(projectId);
-            setProject(data);
+            const data = await getRoadmapItemsByProjectId(projectId);
+            setRoadmap(data);
         } catch (error) {
             console.error("Failed to refresh project:", error);
         }
@@ -50,14 +51,13 @@ const ProjectDetails = () => {
         loadProject();
     }, [projectId]);
 
-
     useEffect(() => {
         const loadRoadmap = async () => {
             try {
                 if (!project) setLoading(true); // Only show loading if we don't have project data yet
                 const data = await getRoadmapItemsByProjectId(projectId);
-                // setProject(data);
-                console.log(data, "data from roadmap")
+                setRoadmap(data);
+                console.log(data, "data from roadmap from getRoadmapItemsByProjectId")
             } catch (error) {
                 console.error("Failed to load project:", error);
             } finally {
@@ -68,21 +68,8 @@ const ProjectDetails = () => {
         loadRoadmap();
     }, [projectId]);
 
-    console.log(project?.roadmaps, "project.roadmaps")
-
     const projectName = project?.name || 'Project';
     const projectDescription = project?.description || 'This is Testing Project';
-    const projectStatus = project?.status || 'Active';
-
-    // Status badge color logic (reused from ProjectCard for consistency)
-    const getStatusColor = (status) => {
-        switch (status?.toLowerCase()) {
-            case 'active': return 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200';
-            case 'archived': return 'bg-slate-100 text-slate-700 hover:bg-slate-200';
-            case 'development': return 'bg-blue-100 text-blue-700 hover:bg-blue-200';
-            default: return 'bg-slate-100 text-slate-700 hover:bg-slate-200';
-        }
-    };
 
     if (loading) {
         return (
@@ -159,14 +146,19 @@ const ProjectDetails = () => {
 
                     <TabsContent value="roadmap" className="m-0 focus-visible:outline-none">
                         <RoadMapManagement
-                            value={project?.roadmaps || []}
-                            onChange={(newRoadmaps) => setProject(prev => ({ ...prev, roadmaps: newRoadmaps }))}
+                            // value={project?.roadmaps || []}
+                            value={roadmap}
+                            onChange={(newRoadmaps) => setRoadmap(newRoadmaps)}
                             isEmbedded={true}
                             onRoadmapUpdate={async (roadmap) => {
                                 // We use updateProject endpoint which expects { roadmap: ... }
                                 try {
-                                    console.log(roadmap, "road map payload")
-                                    const updatedProject = await updateRoadmapByProjectId(project.id, { roadmap });
+                                    // console.log(roadmap, "road map payload")
+                                    const data = {
+                                        roadmap: roadmap
+                                    }
+                                    console.log(data, "road map payload to update")
+                                    const updatedProject = await updateRoadmapByProjectId(project.id, data);
                                     toast.success("Roadmap updated successfully");
                                 } catch (error) {
                                     toast.error(error.error || "Failed to update roadmap");
@@ -178,11 +170,13 @@ const ProjectDetails = () => {
                             onRoadmapDelete={async (roadmapId) => {
                                 try {
                                     await deleteRoadmap(roadmapId);
+                                    // Update local state immediately to remove from UI
+                                    // setRoadmap(roadmap.filter(r => r.id !== roadmapId));
                                     toast.success("Roadmap deleted successfully");
                                     refreshProject();
                                 } catch (error) {
                                     console.error("Failed to delete roadmap:", error);
-                                    toast.error("Failed to delete roadmap");
+                                    toast.error(error.error || "Failed to delete roadmap");
                                 }
                             }}
                             onItemDelete={async (roadmapId, itemId) => {
@@ -193,7 +187,7 @@ const ProjectDetails = () => {
                                 } catch (error) {
                                     console.error("Failed to delete item:", error);
                                     if (error.status !== 404) {
-                                        toast.error("Failed to delete item from server");
+                                        toast.error(error.error || "Failed to delete item");
                                     }
                                 }
                             }}

@@ -165,68 +165,62 @@ const itemData = (i) => ({
     endDate: new Date(i.endDate),
 });
 
-export const updateRoadmapService = async ({ projectId, user, roadmaps }) => {
+
+export const updateRoadmapService = async ({ projectId, user, roadmap }) => {
     // 1️⃣ Access check
     await assertProjectAccess(projectId, user);
 
     return prisma.$transaction(async (tx) => {
-        const results = [];
+        let roadmapId;
 
-        for (const roadmap of roadmaps) {
-            // 2️⃣ Upsert roadmap (only one allowed per update call for now, or creates new if no ID)
-            let roadmapId;
+        // 2️⃣ Upsert roadmap (single roadmap only)
+        if (roadmap.id) {
+            const updated = await tx.roadmap.update({
+                where: { id: roadmap.id },
+                data: roadmapData(roadmap),
+            });
+            roadmapId = updated.id;
+        } else {
+            const created = await tx.roadmap.create({
+                data: {
+                    ...roadmapData(roadmap),
+                    projectId: Number(projectId),
+                },
+            });
+            roadmapId = created.id;
+        }
 
-            if (roadmap.id) {
-                const updated = await tx.roadmap.update({
-                    where: { id: roadmap.id },
-                    data: roadmapData(roadmap),
-                });
-                roadmapId = updated.id;
-            } else {
-                const created = await tx.roadmap.create({
-                    data: {
-                        ...roadmapData(roadmap),
-                        projectId: Number(projectId),
-                    },
-                });
-                roadmapId = created.id;
-            }
+        // 3️⃣ Split items
+        const items = roadmap.items || [];
+        const existingItems = items.filter(i => i.id);
+        const newItems = items.filter(i => !i.id);
 
-            // 3️⃣ Split items
-            const existingItems = (roadmap.items || []).filter(i => i.id);
-            const newItems = (roadmap.items || []).filter(i => !i.id);
+        // 4️⃣ Update existing items (parallel)
+        if (existingItems && existingItems.length > 0) {
+            console.log('Updating existing items:', existingItems);
+            await Promise.all(
+                existingItems.map(item =>
+                    tx.roadmapItem.update({
+                        where: { id: item.id },
+                        data: itemData(item),
+                    })
+                )
+            );
+        }
 
-            // 4️⃣ Update existing items (parallel)
-            if (existingItems && existingItems.length > 0) {
-                await Promise.all(
-                    existingItems.map(item =>
-                        tx.roadmapItem.update({
-                            where: { id: item.id },
-                            data: itemData(item),
-                        })
-                    )
-                );
-            }
-
-            // 5️⃣ Create new items (bulk)
-            if (newItems.length > 0) {
-                await tx.roadmapItem.createMany({
-                    data: newItems.map(i => ({
-                        ...itemData(i),
-                        roadmapId,
-                    })),
-                });
-            }
-
-            results.push({
-                roadmapId,
-                status: "success"
+        // 5️⃣ Create new items (bulk)
+        if (newItems && newItems.length > 0) {
+            await tx.roadmapItem.createMany({
+                data: newItems.map(i => ({
+                    ...itemData(i),
+                    roadmapId,
+                })),
             });
         }
 
         return {
-            message: "Roadmaps updated successfully",
-            results
+            message: "Roadmap updated successfully",
+            roadmapId,
         };
     });
 };
