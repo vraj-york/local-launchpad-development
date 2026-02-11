@@ -20,6 +20,7 @@ import {
 } from "./ui/select";
 import { format } from "date-fns";
 import { Badge } from "./ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 function RoadMapManagement({
   value,
@@ -339,21 +340,21 @@ function RoadMapManagement({
       roadmaps.map((roadmap) =>
         roadmap.id === roadmapId
           ? {
-              ...roadmap,
-              items: roadmap.items.map((item) =>
-                item.id === itemId
-                  ? {
-                      ...item,
-                      status:
-                        item.status === "COMPLETED"
-                          ? "PLANNED"
-                          : item.status === "PLANNED"
-                            ? "IN_PROGRESS"
-                            : "COMPLETED",
-                    }
-                  : item,
-              ),
-            }
+            ...roadmap,
+            items: roadmap.items.map((item) =>
+              item.id === itemId
+                ? {
+                  ...item,
+                  status:
+                    item.status === "COMPLETED"
+                      ? "PLANNED"
+                      : item.status === "PLANNED"
+                        ? "IN_PROGRESS"
+                        : "COMPLETED",
+                }
+                : item,
+            ),
+          }
           : roadmap,
       ),
     );
@@ -388,37 +389,21 @@ function RoadMapManagement({
   };
 
   const removeItem = async (itemId) => {
-    console.log(itemId, "item id");
+    if (onItemDelete) {
+      const originalRoadmap = roadmaps.find(r => r.id === editingId);
+      const originalItem = originalRoadmap?.items.find(i => i.id === itemId);
 
-    // Check if this is a persisted item that needs backend deletion
-    const originalRoadmap = roadmaps.find((r) => r.id === editingId);
-    const originalItem = originalRoadmap?.items.find((i) => i.id === itemId);
-    const isPersistedItem =
-      originalItem &&
-      typeof editingId === "number" &&
-      typeof itemId === "number";
-
-    if (onItemDelete && isPersistedItem) {
-      try {
-        // Only call backend if both roadmap and item are persisted (have number IDs)
+      if (originalItem && typeof editingId === 'number' && typeof itemId === 'number') {
         await onItemDelete(editingId, itemId);
-        // Only update local state if API call succeeds
-        setEditForm({
-          ...editForm,
-          items: editForm.items.filter((item) => item.id !== itemId),
-        });
-      } catch (error) {
-        // Don't update local state if API call fails
-        console.error("Failed to delete item, keeping in local state:", error);
-        // The error toast is already shown by onItemDelete in ProjectDetails.jsx
       }
-    } else {
-      // For temporary items (not persisted), just remove from local state
-      setEditForm({
-        ...editForm,
-        items: editForm.items.filter((item) => item.id !== itemId),
-      });
     }
+
+    setEditForm({
+      ...editForm,
+      items: editForm.items.filter(
+        (item) => item.id !== itemId,
+      ),
+    });
   };
 
   const getStatusColor = (status) => {
@@ -488,13 +473,12 @@ function RoadMapManagement({
                   {/* Timeline Node */}
                   <div className="absolute -left-[35px] top-0 z-10">
                     <div
-                      className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-                        isCompleted
-                          ? "bg-emerald-500"
-                          : progress > 0
-                            ? "bg-blue-500"
-                            : "bg-slate-300"
-                      }`}
+                      className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${isCompleted
+                        ? "bg-emerald-500"
+                        : progress > 0
+                          ? "bg-blue-500"
+                          : "bg-slate-300"
+                        }`}
                     >
                       {isCompleted && (
                         <Check className="w-3 h-3 text-white" strokeWidth={3} />
@@ -507,13 +491,12 @@ function RoadMapManagement({
                     className={`ml-6 ${index === roadmaps.length - 1 ? "mb-10" : "pb-10"}`}
                   >
                     <div
-                      className={`bg-white rounded-lg border transition-all ${
-                        editingId === roadmap.id
-                          ? "border-emerald-500 shadow-lg"
-                          : hasRoadmapErrors(roadmap)
-                            ? "border-destructive shadow-sm"
-                            : "border-gray-200 hover:border-gray-300 shadow-sm"
-                      }`}
+                      className={`bg-white rounded-lg border transition-all ${editingId === roadmap.id
+                        ? "border-emerald-500 shadow-lg"
+                        : hasRoadmapErrors(roadmap)
+                          ? "border-destructive shadow-sm"
+                          : "border-gray-200 hover:border-gray-300 shadow-sm"
+                        }`}
                     >
                       <div className="p-6">
                         {editingId === roadmap.id ? (
@@ -545,9 +528,9 @@ function RoadMapManagement({
                                         validationErrors[
                                           `roadmap-${editingId}-title`
                                         ] ||
-                                        localErrors[
+                                          localErrors[
                                           `roadmap-${editingId}-title`
-                                        ]
+                                          ]
                                           ? "border-destructive w-full"
                                           : "w-full"
                                       }
@@ -556,17 +539,17 @@ function RoadMapManagement({
                                       `roadmap-${editingId}-title`
                                     ] ||
                                       localErrors[
-                                        `roadmap-${editingId}-title`
+                                      `roadmap-${editingId}-title`
                                       ]) && (
-                                      <span className="text-xs text-destructive mt-1">
-                                        {validationErrors[
-                                          `roadmap-${editingId}-title`
-                                        ] ||
-                                          localErrors[
+                                        <span className="text-xs text-destructive mt-1">
+                                          {validationErrors[
                                             `roadmap-${editingId}-title`
-                                          ]}
-                                      </span>
-                                    )}
+                                          ] ||
+                                            localErrors[
+                                            `roadmap-${editingId}-title`
+                                            ]}
+                                        </span>
+                                      )}
                                   </div>
 
                                   <div className="w-full">
@@ -597,15 +580,15 @@ function RoadMapManagement({
                                         validationErrors[
                                           `roadmap-${editingId}-timelineStart`
                                         ] ||
-                                        validationErrors[
+                                          validationErrors[
                                           `roadmap-${editingId}-timelineEnd`
-                                        ] ||
-                                        localErrors[
+                                          ] ||
+                                          localErrors[
                                           `roadmap-${editingId}-timelineStart`
-                                        ] ||
-                                        localErrors[
+                                          ] ||
+                                          localErrors[
                                           `roadmap-${editingId}-timelineEnd`
-                                        ]
+                                          ]
                                           ? "border-destructive w-full"
                                           : "w-full"
                                       }
@@ -614,29 +597,29 @@ function RoadMapManagement({
                                       `roadmap-${editingId}-timelineStart`
                                     ] ||
                                       validationErrors[
-                                        `roadmap-${editingId}-timelineEnd`
+                                      `roadmap-${editingId}-timelineEnd`
                                       ] ||
                                       localErrors[
-                                        `roadmap-${editingId}-timelineStart`
+                                      `roadmap-${editingId}-timelineStart`
                                       ] ||
                                       localErrors[
-                                        `roadmap-${editingId}-timelineEnd`
+                                      `roadmap-${editingId}-timelineEnd`
                                       ]) && (
-                                      <p className="text-xs text-destructive mt-1">
-                                        {validationErrors[
-                                          `roadmap-${editingId}-timelineStart`
-                                        ] ||
-                                          localErrors[
+                                        <p className="text-xs text-destructive mt-1">
+                                          {validationErrors[
                                             `roadmap-${editingId}-timelineStart`
                                           ] ||
-                                          validationErrors[
+                                            localErrors[
+                                            `roadmap-${editingId}-timelineStart`
+                                            ] ||
+                                            validationErrors[
                                             `roadmap-${editingId}-timelineEnd`
-                                          ] ||
-                                          localErrors[
+                                            ] ||
+                                            localErrors[
                                             `roadmap-${editingId}-timelineEnd`
-                                          ]}
-                                      </p>
-                                    )}
+                                            ]}
+                                        </p>
+                                      )}
                                   </div>
                                 </div>
 
@@ -738,17 +721,60 @@ function RoadMapManagement({
                                     className="border border-slate-200 rounded-lg p-4 space-y-3 bg-primary-foreground"
                                   >
                                     <div className="flex items-center justify-between mb-2">
-                                      <span className="text-xs font-medium text-slate-500">
-                                        Item {idx + 1}
-                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-medium text-slate-500">
+                                          Item {idx + 1}
+                                        </span>
+
+                                        <div className="flex gap-1 items-center">
+                                          {item?.projectVersion && (
+                                            <>
+                                              <p className="text-xs text-slate-500">
+                                                |  {item.projectVersion?.release?.name}
+                                              </p>
+                                              <Badge
+                                                className={"rounded-sm"}
+                                                size="sm"
+                                              >
+                                                Version:{" "}
+                                                {item?.projectVersion?.version}
+                                              </Badge>
+                                            </>
+                                          )}
+                                        </div>
+                                      </div>
+
                                       {editForm.items.length > 1 && (
-                                        <Button
-                                          onClick={() => removeItem(item.id)}
-                                          className=" text-slate-400 hover:text-red-600 transition-colors"
-                                          variant="ghost"
-                                        >
-                                          <X className="w-4 h-4" />
-                                        </Button>
+                                        item?.projectVersion ? (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span className="inline-block w-fit cursor-not-allowed">
+                                                <Button
+                                                  className="text-red-600 hover:text-red-600 transition-colors"
+                                                  variant="ghost"
+                                                  disabled
+                                                >
+                                                  <X className="w-4 h-4" />
+                                                </Button>
+                                              </span>
+                                            </TooltipTrigger>
+
+                                            <TooltipContent>
+                                              <p>
+                                                You cannot remove this item because it is already linked to a project
+                                                version
+                                              </p>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        ) : (
+                                          <Button
+                                            onClick={() => removeItem(item.id)}
+                                            className="text-red-600 hover:text-red-600 transition-colors"
+                                            variant="ghost"
+                                          >
+                                            <X className="w-4 h-4" />
+                                          </Button>
+                                        )
                                       )}
                                     </div>
 
@@ -772,9 +798,9 @@ function RoadMapManagement({
                                               validationErrors[
                                                 `item-${item.id}-title`
                                               ] ||
-                                              localErrors[
+                                                localErrors[
                                                 `item-${item.id}-title`
-                                              ]
+                                                ]
                                                 ? "border-destructive"
                                                 : ""
                                             }
@@ -783,17 +809,17 @@ function RoadMapManagement({
                                             `item-${item.id}-title`
                                           ] ||
                                             localErrors[
-                                              `item-${item.id}-title`
+                                            `item-${item.id}-title`
                                             ]) && (
-                                            <span className="text-xs text-destructive mt-1">
-                                              {validationErrors[
-                                                `item-${item.id}-title`
-                                              ] ||
-                                                localErrors[
+                                              <span className="text-xs text-destructive mt-1">
+                                                {validationErrors[
                                                   `item-${item.id}-title`
-                                                ]}
-                                            </span>
-                                          )}
+                                                ] ||
+                                                  localErrors[
+                                                  `item-${item.id}-title`
+                                                  ]}
+                                              </span>
+                                            )}
                                         </div>
                                         <div>
                                           <label className="text-xs font-medium text-slate-600 mb-1 flex justify-between">
@@ -812,9 +838,9 @@ function RoadMapManagement({
                                               // Manually updating both fields
                                               const from = range?.from
                                                 ? format(
-                                                    range.from,
-                                                    "yyyy-MM-dd",
-                                                  )
+                                                  range.from,
+                                                  "yyyy-MM-dd",
+                                                )
                                                 : "";
                                               const to = range?.to
                                                 ? format(range.to, "yyyy-MM-dd")
@@ -824,10 +850,10 @@ function RoadMapManagement({
                                                 items: prev.items.map((i) =>
                                                   i.id === item.id
                                                     ? {
-                                                        ...i,
-                                                        startDate: from,
-                                                        endDate: to,
-                                                      }
+                                                      ...i,
+                                                      startDate: from,
+                                                      endDate: to,
+                                                    }
                                                     : i,
                                                 ),
                                               }));
@@ -835,8 +861,8 @@ function RoadMapManagement({
                                             minDate={
                                               editForm.timelineStart
                                                 ? new Date(
-                                                    editForm.timelineStart,
-                                                  )
+                                                  editForm.timelineStart,
+                                                )
                                                 : undefined
                                             }
                                             maxDate={
@@ -848,15 +874,15 @@ function RoadMapManagement({
                                               validationErrors[
                                                 `item-${item.id}-startDate`
                                               ] ||
-                                              validationErrors[
+                                                validationErrors[
                                                 `item-${item.id}-endDate`
-                                              ] ||
-                                              localErrors[
+                                                ] ||
+                                                localErrors[
                                                 `item-${item.id}-startDate`
-                                              ] ||
-                                              localErrors[
+                                                ] ||
+                                                localErrors[
                                                 `item-${item.id}-endDate`
-                                              ]
+                                                ]
                                                 ? "border-destructive w-full"
                                                 : "w-full"
                                             }
@@ -865,29 +891,29 @@ function RoadMapManagement({
                                             `item-${item.id}-startDate`
                                           ] ||
                                             localErrors[
-                                              `item-${item.id}-startDate`
+                                            `item-${item.id}-startDate`
                                             ] ||
                                             validationErrors[
-                                              `item-${item.id}-endDate`
+                                            `item-${item.id}-endDate`
                                             ] ||
                                             localErrors[
-                                              `item-${item.id}-endDate`
+                                            `item-${item.id}-endDate`
                                             ]) && (
-                                            <p className="text-xs text-destructive mt-1">
-                                              {validationErrors[
-                                                `item-${item.id}-startDate`
-                                              ] ||
-                                                localErrors[
+                                              <p className="text-xs text-destructive mt-1">
+                                                {validationErrors[
                                                   `item-${item.id}-startDate`
                                                 ] ||
-                                                validationErrors[
+                                                  localErrors[
+                                                  `item-${item.id}-startDate`
+                                                  ] ||
+                                                  validationErrors[
                                                   `item-${item.id}-endDate`
-                                                ] ||
-                                                localErrors[
+                                                  ] ||
+                                                  localErrors[
                                                   `item-${item.id}-endDate`
-                                                ]}
-                                            </p>
-                                          )}
+                                                  ]}
+                                              </p>
+                                            )}
                                         </div>
                                       </div>
 
@@ -1015,7 +1041,7 @@ function RoadMapManagement({
                                   variant="outline"
                                   size="sm"
                                 >
-                                  Cancel
+                                  Close
                                 </Button>
                               )}
                             </div>
@@ -1166,17 +1192,19 @@ function RoadMapManagement({
                                           {item.status.replace("_", " ")}
                                         </span>
                                         <div className="flex gap-1 items-center">
-                                          <p className="text-xs text-slate-400">
-                                            {item.projectVersion?.release?.name}
-                                          </p>
                                           {item?.projectVersion && (
-                                            <Badge
-                                              className={"rounded-sm"}
-                                              size="sm"
-                                            >
-                                              Version:{" "}
-                                              {item?.projectVersion?.version}
-                                            </Badge>
+                                            <>
+                                              <p className="text-xs text-slate-500">
+                                                {item.projectVersion?.release?.name}
+                                              </p>
+                                              <Badge
+                                                className={"rounded-sm"}
+                                                size="sm"
+                                              >
+                                                Version:{" "}
+                                                {item?.projectVersion?.version}
+                                              </Badge>
+                                            </>
                                           )}
                                         </div>
                                       </div>
