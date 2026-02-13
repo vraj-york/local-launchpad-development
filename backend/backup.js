@@ -23,8 +23,8 @@ app.post("/upload", upload.single("project"), async (req, res) => {
     await fs.ensureDir(path.resolve(projectPath));
 
     // ✅ Extract ZIP into project folder using absolute paths
-    await extract(path.resolve(req.file.path), { 
-      dir: path.resolve(projectPath) 
+    await extract(path.resolve(req.file.path), {
+      dir: path.resolve(projectPath)
     });
 
     // Detect actual project folder (where package.json exists)
@@ -37,37 +37,37 @@ app.post("/upload", upload.single("project"), async (req, res) => {
     }
 
     // Run install & build inside the right folder
-exec(`cd ${actualProjectPath} && npm install && npm run build`, async (err, stdout, stderr) => {
-  if (err) {
-    console.error(stderr);
-    return res.status(500).json({ error: "Build failed", details: stderr });
-  }
-  console.log(stdout);
+    exec(`cd ${actualProjectPath} && npm install && npm run build`, async (err, stdout, stderr) => {
+      if (err) {
+        console.error(stderr);
+        return res.status(500).json({ error: "Build failed", details: stderr });
+      }
+      console.log(stdout);
 
-  // Detect actual build output (CRA = build, Vite default = dist, custom possible)
-  let outputDir = null;
-  if (await fs.pathExists(path.join(actualProjectPath, "build"))) {
-    outputDir = "build";
-  } else if (await fs.pathExists(path.join(actualProjectPath, "dist"))) {
-    outputDir = "dist";
-  }
+      // Detect actual build output (CRA = build, Vite default = dist, custom possible)
+      let outputDir = null;
+      if (await fs.pathExists(path.join(actualProjectPath, "build"))) {
+        outputDir = "build";
+      } else if (await fs.pathExists(path.join(actualProjectPath, "dist"))) {
+        outputDir = "dist";
+      }
 
-  if (!outputDir) {
-    return res.status(500).json({ error: "No build output found" });
-  }
+      if (!outputDir) {
+        return res.status(500).json({ error: "No build output found" });
+      }
 
-  // ✅ Patch index.html to fix absolute /assets → relative ./assets
-  const indexPath = path.join(actualProjectPath, outputDir, "index.html");
-  if (await fs.pathExists(indexPath)) {
-    let html = await fs.readFile(indexPath, "utf-8");
-    html = html.replace(/"\/assets\//g, '"./as`sets/');
-    await fs.writeFile(indexPath, html);
-  }
+      // ✅ Patch index.html to fix absolute /assets → relative ./assets
+      const indexPath = path.join(actualProjectPath, outputDir, "index.html");
+      if (await fs.pathExists(indexPath)) {
+        let html = await fs.readFile(indexPath, "utf-8");
+        html = html.replace(/"\/assets\//g, '"./assets/');
+        await fs.writeFile(indexPath, html);
+      }
 
-  return res.json({
-    url: `http://localhost:${PORT}/apps/${projectId}/${outputDir}`
-  });
-});
+      return res.json({
+        url: `http://localhost:${PORT}/apps/${projectId}/${outputDir}`
+      });
+    });
 
 
 

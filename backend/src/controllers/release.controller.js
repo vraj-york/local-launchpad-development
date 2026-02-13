@@ -7,7 +7,8 @@ import {
 
     getReleaseInfoService,
     publicLockReleaseService,
-    uploadReleaseVersionService
+    uploadReleaseVersionService,
+    getReleasePreviewUrl
 } from "../services/release.service.js";
 
 export const releaseController = {
@@ -100,5 +101,16 @@ export const releaseController = {
         const { locked, token } = req.body;
         const result = await publicLockReleaseService(releaseId, locked, token);
         res.json(result);
+    }),
+    previewVersion: asyncHandler(async (req, res) => {
+        const { versionId } = req.params;
+
+        const previewUrl = await getReleasePreviewUrl(
+            Number(versionId),
+            req.user
+        );
+
+        // Redirect browser directly to build
+        return res.redirect(previewUrl);
     })
 };

@@ -230,4 +230,47 @@ router.post(
     upload.single("project"),
     releaseController.upload
 );
+
+
+/**
+ * @swagger
+ * /releases/preview/{versionId}:
+ *   get:
+ *     summary: Preview a release version
+ *     description: >
+ *       Redirects to the public build URL (S3/CloudFront) for a given release version.
+ *       Used to preview deployed HTML builds.
+ *     tags:
+ *       - Releases
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: versionId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           example: 14
+ *         description: Project version ID to preview
+ *     responses:
+ *       302:
+ *         description: Redirect to build preview URL
+ *         headers:
+ *           Location:
+ *             schema:
+ *               type: string
+ *               example: https://bucket.s3-website.ap-south-1.amazonaws.com/projects/12/release/15/1.0.0/index.html
+ *       400:
+ *         description: Build not available
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Version not found
+ */
+router.get(
+    "/preview/:versionId",
+    authenticateToken,
+    releaseController.previewVersion
+);
+
 export default router;

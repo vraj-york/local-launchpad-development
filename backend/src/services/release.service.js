@@ -7,6 +7,7 @@ import crypto from "crypto";
 import fetch from "node-fetch";
 import ApiError from "../utils/apiError.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
+import { uploadFileToS3Multipart, uploadDirectoryToS3 } from "../utils/uploadFiletoS3.js";
 
 const prisma = new PrismaClient();
 
@@ -186,13 +187,16 @@ function runCommand(command, cwd, options = {}) {
     const defaultOptions = {
         cwd,
         encoding: "utf-8",
+        // 1. Ensure shell is true so Node handles the command string correctly
+        shell: true,
         env: {
             ...process.env,
-            NODE_PATH: cwd + '/node_modules',
-            PATH: process.env.PATH + ':' + cwd + '/node_modules/.bin'
+            NODE_PATH: `${cwd}/node_modules`,
+            // 2. Fallback to a blank string if process.env.PATH is undefined
+            PATH: `${process.env.PATH || ''}:${cwd}/node_modules/.bin`
         },
-        timeout: 300000, // 5 min default timeout
-        maxBuffer: 10 * 1024 * 1024 // 10MB max buffer to prevent memory issues
+        timeout: 300000,
+        maxBuffer: 10 * 1024 * 1024
     };
 
     const finalOptions = { ...defaultOptions, ...options };
@@ -443,7 +447,7 @@ export const lockReleaseService = async (releaseId, locked, user) => {
 
 
 
-export const uploadReleaseVersionService = async (
+export const uploadReleaseVersionService_old = async (
     releaseId,
     file,
     versionInput,
@@ -655,6 +659,7 @@ window.markerConfig = {
                         uploadedBy: userId,
                     },
                 });
+
                 if (roadmapItemIds && roadmapItemIds.length > 0) {
                     await tx.roadmapItem.updateMany({
                         where: { id: { in: roadmapItemIds } },
@@ -685,6 +690,299 @@ window.markerConfig = {
         }
     });
 };
+
+export const uploadReleaseVersionService = async (
+    releaseId,
+    file,
+    versionInput,
+    roadmapItemIds,
+    user
+) => {
+    const { role, id: userId } = user;
+    const zipPath = file.path;
+    const S3_BUCKET = process.env.AWS_S3_BUCKET;
+    const AWS_REGION = process.env.AWS_REGION;
+
+    /* -------------------- 1. Fetch & validate release -------------------- */
+    const release = await prisma.release.findUnique({
+        where: { id: releaseId },
+        include: {
+            project: { select: { id: true, name: true, assignedManagerId: true } }
+        }
+    });
+
+    if (!release) throw new ApiError(404, "Release not found");
+    if (release.isLocked) throw new ApiError(400, "Release is locked");
+
+    const hasAccess =
+        role === "admin" ||
+        (role === "manager" && release.project.assignedManagerId === userId);
+
+    if (!hasAccess) throw new ApiError(403, "Forbidden");
+
+    /* -------------------- 2. Resolve version number -------------------- */
+    let versionNumber = versionInput;
+
+    if (!versionNumber) {
+        const lastVersion = await prisma.projectVersion.findFirst({
+            where: { releaseId },
+            orderBy: { createdAt: "desc" },
+            select: { version: true }
+        });
+
+        if (!lastVersion) {
+            versionNumber = "1.0.0";
+        } else {
+            const [major, minor, patch] = lastVersion.version.split(".").map(Number);
+            versionNumber = `${major}.${minor}.${patch + 1}`;
+        }
+    }
+    /* -------------------- 3. File validations -------------------- */
+
+    if (!file) throw new ApiError(400, "File not provided");
+
+    const isZip =
+        file.originalname.toLowerCase().endsWith(".zip") &&
+        ["application/zip", "application/x-zip-compressed"].includes(file.mimetype);
+
+    if (!isZip) throw new ApiError(400, "Only ZIP files allowed");
+
+    /* -------------------- 4. Prepare project folder -------------------- */
+    const projectRoot = path.join(
+        process.cwd(),
+        "projects",
+        String(release.project.id),
+        versionNumber
+    );
+    const projectFolder = path.join(
+        process.cwd(),
+        "projects",
+        String(release.project.id)
+    );
+
+    const gitDir = path.join(projectFolder, ".git");
+
+    const isExistingProject = fs.existsSync(gitDir);
+    if (isExistingProject) {
+        for (const item of fs.readdirSync(projectFolder)) {
+            if (item !== ".git") {
+                fs.removeSync(path.join(projectFolder, item));
+            }
+        }
+    } else {
+        fs.emptyDirSync(projectFolder);
+    }
+    // fs.removeSync(projectRoot);
+    // fs.ensureDirSync(projectRoot);
+
+    /* -------------------- 5. Extract zip -------------------- */
+    await extract(zipPath, { dir: projectRoot });
+
+    const actualProjectPath = findProjectRoot(projectRoot);
+    const packageJsonPath = path.join(actualProjectPath, "package.json");
+
+    if (!fs.existsSync(packageJsonPath))
+        throw new ApiError(400, "package.json missing");
+
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    if (!packageJson?.scripts?.build)
+        throw new ApiError(400, "Build script missing");
+
+
+    /* -------------------- 6. Inject HTML headers / scripts (SAFE) -------------------- */
+    const rootHtmlPath = await findHtmlEntry(actualProjectPath);
+    const markerScript = `<script>
+window.markerConfig = {
+              project: '66c70a4bc69f538671fe255f',
+              source: 'snippet'
+            };
+          !function(e,r,a){if(!e.__Marker){e.__Marker={};var t=[],n={__cs:t};["show","hide","isVisible","capture","cancelCapture","unload","reload","isExtensionInstalled","setReporter","setCustomData","on","off"].forEach(function(e){n[e]=function(){var r=Array.prototype.slice.call(arguments);r.unshift(e),t.push(r)}}),e.Marker=n;var s=r.createElement("script");s.async=1,s.src="https://edge.marker.io/latest/shim.js";var i=r.getElementsByTagName("script")[0];i.parentNode.insertBefore(s,i)}}(window,document);
+</script>`;
+    if (rootHtmlPath) {
+        let html = fs.readFileSync(rootHtmlPath, "utf-8");
+
+        // Basic sanity check
+        if (!html.includes("<html")) {
+            console.warn("⚠️ Skipping HTML injection: invalid HTML file");
+        } else {
+            let updated = false;
+
+            // Inject Marker script ONLY if <head> exists
+            if (
+                !html.includes("window.markerConfig") &&
+                html.toLowerCase().includes("</head>")
+            ) {
+                html = html.replace(
+                    /<\/head>/i,
+                    `${markerScript}\n</head>`
+                );
+                updated = true;
+            }
+
+            // Inject header ONLY if <body> exists
+            if (
+                !html.includes("zip-sync-header") &&
+                html.toLowerCase().includes("<body")
+            ) {
+                html = html.replace(
+                    /<body([^>]*)>/i,
+                    `<body$1>\n${generateReleaseHeader()}`
+                );
+                updated = true;
+            }
+
+            if (updated) {
+                fs.writeFileSync(rootHtmlPath, html, "utf-8");
+            }
+        }
+    }
+
+
+    /* -------------------- 7. Build project -------------------- */
+    runCommand("npm install", actualProjectPath);
+    runCommand("npm run build", actualProjectPath);
+
+    /* -------------------- 8. Git setup & push -------------------- */
+    /* -------------------- 8. Git setup & push -------------------- */
+    const validatedProjectName = validateProjectName(release.project.name);
+
+    // const projectFolder = path.join(process.cwd(), "projects", String(release.project.id));
+    const gitWorkingDir = actualProjectPath; // e.g. .../projects/20/1.0.2
+    const permanentGitDir = path.join(projectFolder, ".git");
+    const localGitDir = path.join(gitWorkingDir, ".git");
+
+    // 1. If a .git folder exists in the parent, MOVE it into our new version folder
+    if (fs.existsSync(permanentGitDir)) {
+        console.log("Found existing history. Moving .git to new version folder...");
+        fs.moveSync(permanentGitDir, localGitDir);
+    }
+
+    // 2. Initialize if NO history was found (First time ever)
+    if (!fs.existsSync(localGitDir)) {
+        console.log("No history found. Initializing fresh...");
+        runCommand("git init", gitWorkingDir);
+        runCommand("git branch -m main", gitWorkingDir);
+        runCommand(`git config user.name "Zip Worker"`, gitWorkingDir);
+        runCommand(`git config user.email "worker@zip.com"`, gitWorkingDir);
+        const repoExists = await checkRepoExists(validatedProjectName);
+        if (!repoExists) await createGithubRepo(validatedProjectName);
+
+        const remoteUrl = `https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GITHUB_USERNAME}/${validatedProjectName}.git`;
+        runCommand(`git remote add origin ${remoteUrl}`, gitWorkingDir);
+    }
+
+    // 3. Sync and Commit
+    const gitignoreContent = "node_modules\n.DS_Store\n.env\ndist\nbuild";
+    fs.writeFileSync(path.join(gitWorkingDir, ".gitignore"), gitignoreContent);
+
+    runCommand("git add .", gitWorkingDir);
+    try {
+        runCommand(`git commit -m "Release ${versionNumber} upload"`, gitWorkingDir);
+    } catch (e) {
+        console.log("No changes detected.");
+    }
+
+    // 4. Push (Standard push should work now because history is preserved)
+    console.log("🚀 Pushing update...");
+    try {
+        runCommand("git push origin main", gitWorkingDir);
+    } catch (e) {
+        console.log("⚠️ Standard push failed, attempting force push as fallback...");
+        // Force push only as a fallback
+        runCommand("git push origin main --force", gitWorkingDir);
+    }
+
+    // 5. IMPORTANT: Move the .git folder back to the parent for the NEXT version to use
+    fs.moveSync(localGitDir, permanentGitDir);
+
+
+    /* -------------------- 9. Resolve build output -------------------- */
+    const buildDir = fs.existsSync(path.join(actualProjectPath, "build"))
+        ? "build"
+        : fs.existsSync(path.join(actualProjectPath, "dist"))
+            ? "dist"
+            : null;
+    console.log('buildDir', buildDir)
+    if (!buildDir) throw new ApiError(400, "Build output not found");
+
+    const buildDirPath = path.join(actualProjectPath, buildDir);
+    // FIX: Patch index.html to use relative paths (e.g., /assets/ -> assets/)
+    const indexPath = path.join(buildDirPath, "index.html");
+    console.log('indexPath', indexPath)
+    if (fs.existsSync(indexPath)) {
+        let html = fs.readFileSync(indexPath, "utf-8");
+
+        // This Regex replaces "/assets/" with "assets/" (removes leading slash)
+        // It also handles both double and single quotes.
+        html = html.replace(/(["'])\/assets\//g, '$1assets/');
+
+        fs.writeFileSync(indexPath, html, "utf-8");
+        console.log("✅ Patched index.html for relative S3 paths");
+    }
+
+    /* -------------------- 10. Upload ZIP to S3 -------------------- */
+
+    const s3BaseKey = `projects/${release.project.id}/releases/${releaseId}/${versionNumber}`;
+
+    // This uploads the contents of buildDirPath to S3 under the /build/ prefix
+    await uploadDirectoryToS3(
+        buildDirPath,
+        `${s3BaseKey}/${buildDir}`
+    );
+
+    await uploadDirectoryToS3(
+        buildDirPath,
+        `${s3BaseKey}/${buildDir}`
+    );
+    const buildUrl = `https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${s3BaseKey}/${buildDir}/index.html`;
+
+
+    /* -------------------- 11. DB transaction (OPTIMIZED) -------------------- */
+    const newVersion = await prisma.$transaction(async (tx) => {
+        await tx.projectVersion.updateMany({
+            where: { projectId: release.project.id },
+            data: { isActive: false }
+        });
+
+        const version = await tx.projectVersion.create({
+            data: {
+                projectId: release.project.id,
+                releaseId,
+                version: versionNumber,
+                zipFilePath: zipPath,
+                buildUrl,
+                isActive: true,
+                uploadedBy: userId
+            }
+        });
+
+        if (Array.isArray(roadmapItemIds) && roadmapItemIds.length) {
+            await tx.roadmapItem.updateMany({
+                where: { id: { in: roadmapItemIds.map(Number) } },
+                data: {
+                    releaseId,
+                    projectVersionId: version.id
+                }
+            });
+        }
+
+        return version;
+    });
+
+    /* -------------------- 12. Cleanup -------------------- */
+    fs.removeSync(projectRoot);
+    fs.removeSync(zipPath);
+
+    /* -------------------- 13. Final response -------------------- */
+    return {
+        message: "✅ Release uploaded successfully",
+        releaseId,
+        versionId: newVersion.id,
+        version: newVersion.version,
+        buildUrl
+    };
+};
+
 
 /**
  * Get release info for header display (generates lock token)
@@ -777,3 +1075,40 @@ export const publicLockReleaseService = async (releaseId, locked, token) => {
         locked: updatedRelease.isLocked
     };
 };
+
+// services/releasePreview.service.ts
+
+export const getReleasePreviewUrl = async (
+    versionId,
+    user
+) => {
+    const version = await prisma.projectVersion.findUnique({
+        where: { id: versionId },
+        include: {
+            project: {
+                select: {
+                    assignedManagerId: true
+                }
+            }
+        }
+    });
+
+    if (!version) {
+        throw new ApiError(404, "Version not found");
+    }
+
+    const hasAccess =
+        user.role === "admin" ||
+        user.id === version.project.assignedManagerId;
+
+    if (!hasAccess) {
+        throw new ApiError(403, "Forbidden");
+    }
+
+    if (!version.buildUrl) {
+        throw new ApiError(400, "Build not available");
+    }
+
+    return version.buildUrl;
+};
+
