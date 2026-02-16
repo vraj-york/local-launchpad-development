@@ -300,10 +300,11 @@ export const createReleaseService = async (data, user) => {
     // Check access
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) throw new ApiError(404, "Project not found");
+    const decryptUser = decryptId(userId);
 
     let hasAccess = false;
     if (role === "admin") hasAccess = true;
-    else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
+    else if (role === "manager" && project.assignedManagerId === Number(decryptUser)) hasAccess = true;
 
     if (!hasAccess) throw new ApiError(403, "Forbidden");
 

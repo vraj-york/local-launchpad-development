@@ -194,19 +194,18 @@ export const getProjectByIdService = async (projectId, user = null) => {
     const whereClause = {
         id: projectId,
     };
-
     // 2. Add Permission Logic
     if (user?.id) {
+        const userId = decryptId(user.id)
         // Authenticated: User must be owner, manager, or have explicit access
         whereClause.OR = [
-            { createdById: user.id },
-            { assignedManagerId: user.id },
-            { projectAccess: { some: { userId: user.id } } },
+            { createdById: Number(userId) },
+            { assignedManagerId: Number(userId) },
+            { projectAccess: { some: { userId: Number(userId) } } },
             // Optional: Still allow them to see it if it's public
             // { isPublic: true } 
         ];
     }
-
 
     const project = await prisma.project.findFirst({
         where: whereClause,

@@ -56,9 +56,9 @@ export const projectController = {
         validatedRoadmaps.forEach((roadmap) => {
             validateRoadmapItemsTimeline(roadmap);
         });
-        const userId = (req.user.id);
+        const userId = decryptId(req.user.id);
         const project = await createProjectService({
-            userId: userId,
+            userId: Number(userId),
             body: req.body,
         });
 
