@@ -26,6 +26,7 @@ function RoadMapManagement({
   value,
   onChange,
   isEmbedded = false,
+  readOnly = false,
   onRoadmapUpdate,
   onRoadmapDelete,
   onItemDelete,
@@ -336,6 +337,7 @@ function RoadMapManagement({
   };
 
   const toggleItemStatus = (roadmapId, itemId) => {
+    if (readOnly) return;
     setRoadmaps(
       roadmaps.map((roadmap) =>
         roadmap.id === roadmapId
@@ -432,7 +434,7 @@ function RoadMapManagement({
     <div
       className={`${isEmbedded ? "" : "min-h-screen bg-gray-50 p-8"} rounded-xl`}
     >
-      <div className="max-w-5xl mx-auto">
+      <div className="mx-auto">
         {!isEmbedded && (
           <PageHeader
             title="Project Roadmap"
@@ -440,12 +442,14 @@ function RoadMapManagement({
           />
         )}
 
-        <div className="mb-6">
-          <Button onClick={handleAddRoadmap} className="gap-2">
-            <Plus className="w-4 h-4" />
-            Add Roadmap
-          </Button>
-        </div>
+        {!readOnly && (
+          <div className="mb-6">
+            <Button onClick={handleAddRoadmap} className="gap-2">
+              <Plus className="w-4 h-4" />
+              Add Roadmap
+            </Button>
+          </div>
+        )}
 
         <div className="relative pl-8">
           {/* Vertical Timeline Line */}
@@ -1097,31 +1101,34 @@ function RoadMapManagement({
                                     /{roadmap.items.length} completed
                                   </div>
                                 </div>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button
-                                      className="p-1 hover:bg-slate-100 rounded transition-colors"
-                                      variant="ghost"
-                                    >
-                                      <MoreVertical className="w-5 h-5 text-slate-400" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    <DropdownMenuItem
-                                      onClick={() => handleEditClick(roadmap)}
-                                    >
-                                      Edit
-                                    </DropdownMenuItem>
-                                    {roadmaps.length > 1 && (
-                                      <DropdownMenuItem
-                                        onClick={() => handleDelete(roadmap.id)}
-                                        className="text-red-600 focus:text-red-600"
+                                {/* menu to edit items */}
+                                {!readOnly && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        className="p-1 hover:bg-slate-100 rounded transition-colors"
+                                        variant="ghost"
                                       >
-                                        Delete
+                                        <MoreVertical className="w-5 h-5 text-slate-400" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem
+                                        onClick={() => handleEditClick(roadmap)}
+                                      >
+                                        Edit
                                       </DropdownMenuItem>
-                                    )}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                                      {roadmaps.length > 1 && (
+                                        <DropdownMenuItem
+                                          onClick={() => handleDelete(roadmap.id)}
+                                          className="text-red-600 focus:text-red-600"
+                                        >
+                                          Delete
+                                        </DropdownMenuItem>
+                                      )}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
                               </div>
                             </div>
 
@@ -1135,7 +1142,7 @@ function RoadMapManagement({
                                     onClick={() =>
                                       toggleItemStatus(roadmap.id, item.id)
                                     }
-                                    className="shrink-0 mt-0.5 cursor-pointer"
+                                    className={`${!readOnly ? "cursor-pointer shrink-0 mt-0.5" : "cursor-default shrink-0 mt-0.5"}`}
                                   >
                                     {item.status === "COMPLETED" ? (
                                       <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center">

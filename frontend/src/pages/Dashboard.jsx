@@ -61,14 +61,14 @@ const Dashboard = () => {
     }
 
     return (
-        <div className="max-w-7xl mx-auto">
+        <div className="mx-auto">
 
             <PageHeader title="Welcome to Zip Sync Dashboard" description="Manage your projects, upload builds, and track progress all in one place.">
                 <CreateProjectButton />
             </PageHeader>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 mb-8">
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between">
                         <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -118,7 +118,7 @@ const Dashboard = () => {
                             <p>Get started by creating your first project or uploading a build.</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4  gap-6">
                             {projects.slice(-6).reverse().map((project) => (
                                 <ProjectCard key={project.id} project={project} />
                             ))}

@@ -76,7 +76,6 @@ export const fetchManagers = async () => {
 
 // Function to create a new project
 export const createProject = async (projectData) => {
-    console.log(projectData);
     try {
         const response = await api.post('/api/projects', projectData);
         return response.data;
@@ -293,12 +292,9 @@ export const getRoadmapItemsByProjectId = async (projectId) => {
 //Update Roadmap Items by ProjectID
 export const updateRoadmapByProjectId = async(projectId, roadmapData)=>{
     try {
-        console.log(roadmapData,"roadmapData")
         const res = await api.put(`/api/roadmaps/project/${projectId}`, roadmapData);
-        console.log(res,"res form upadte roadmap")
         return res.data;
     } catch (error) {
-        console.log(error,"error form update roadmap")
         throw error.response?.data || { error: 'Failed to update roadmap' };
     }
 }

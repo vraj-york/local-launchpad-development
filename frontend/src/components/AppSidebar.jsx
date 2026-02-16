@@ -38,6 +38,11 @@ export function AppSidebar() {
             url: "/projects",
             icon: Folder,
         },
+        {
+            title: "Public",
+            url: "/public",
+            icon: Folder,
+        },
     ];
 
     return (

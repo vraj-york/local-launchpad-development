@@ -7,6 +7,7 @@ import Dashboard from '@/pages/Dashboard';
 import GitDiff from '@/pages/GitDiff';
 import Projects from '@/pages/Projects';
 import CreateProject from '@/pages/CreateProject';
+import { PublicProjectView } from '@/pages/PublicProjectView';
 
 export const Routes = () => {
 
@@ -14,6 +15,7 @@ export const Routes = () => {
 
   const publicRoutes = [
     { path: "/login", element: <LoginPage /> },
+    // { path: "/public/projects/:encryptedId", element: <PublicProjectView /> },
   ]
 
   const privateRoutes = [
@@ -22,6 +24,8 @@ export const Routes = () => {
     { path: "/projects/new", element: <CreateProject /> },
     { path: "/projects/:projectId", element: <ProjectDetails /> },
     { path: "/projects/:projectId/diff", element: <GitDiff /> },
+    { path: "/public", element: <PublicProjectView /> },
+
   ]
 
 
