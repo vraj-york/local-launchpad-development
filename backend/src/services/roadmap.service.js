@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { validateRoadmapItems } from "../validators/roadmap.validator.js";
 import ApiError from "../utils/apiError.js";
 import { assertProjectAccess } from "./project.service.js";
+import { decryptId, encryptAllIds } from "../utils/encryptionHelper.js";
 const prisma = new PrismaClient();
 
 /**
@@ -114,6 +115,7 @@ export const deleteRoadmapItem = async (roadmapId, itemId) => {
 
 export const listRoadmapItemsByProjectService = async (projectId, user) => {
     const { role, id: userId } = user;
+    const decryptUser = decryptId(userId);
 
     /**
      * Access control
@@ -127,7 +129,7 @@ export const listRoadmapItemsByProjectService = async (projectId, user) => {
         throw new ApiError(404, "Project not found");
     }
 
-    if (role !== "admin" && project.assignedManagerId !== userId) {
+    if (role !== "admin" && project.assignedManagerId !== Number(decryptUser)) {
         throw new ApiError(403, "Forbidden");
     }
 
@@ -151,7 +153,7 @@ export const listRoadmapItemsByProjectService = async (projectId, user) => {
         },
     });
 
-    return roadmaps;
+    return encryptAllIds(roadmaps);
 };
 
 
@@ -176,14 +178,13 @@ const itemData = (i) => ({
 export const updateRoadmapService = async ({ projectId, user, roadmap }) => {
     // 1️⃣ Access check
     await assertProjectAccess(projectId, user);
-
     return prisma.$transaction(async (tx) => {
         let roadmapId;
 
         // 2️⃣ Upsert roadmap (single roadmap only)
         if (roadmap.id) {
             const updated = await tx.roadmap.update({
-                where: { id: roadmap.id },
+                where: { id: Number(roadmap.id) },
                 data: roadmapData(roadmap),
             });
             roadmapId = updated.id;
@@ -208,7 +209,7 @@ export const updateRoadmapService = async ({ projectId, user, roadmap }) => {
             await Promise.all(
                 existingItems.map(item =>
                     tx.roadmapItem.update({
-                        where: { id: item.id },
+                        where: { id: Number(item.id) },
                         data: itemData(item),
                     })
                 )

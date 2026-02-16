@@ -4,6 +4,8 @@ import { roadmapController } from "../controllers/roadmap.controller.js";
 import { param } from "express-validator";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import { updateRoadmapsArrayValidation } from "../validators/project.validator.js";
+import { decryptRequestMiddleware } from "../middleware/decryption.middleware.js";
+router.use(decryptRequestMiddleware);
 
 /**
  * @swagger
@@ -18,7 +20,7 @@ import { updateRoadmapsArrayValidation } from "../validators/project.validator.j
  *         name: roadmapId
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     responses:
  *       200:
  *         description: Roadmap deleted successfully
@@ -30,7 +32,7 @@ import { updateRoadmapsArrayValidation } from "../validators/project.validator.j
 router.delete(
     "/:roadmapId",
     authenticateToken,
-    param("roadmapId").isInt(),
+    param("roadmapId"),
     roadmapController.delete
 );
 /**
@@ -46,12 +48,12 @@ router.delete(
  *         name: roadmapId
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *       - in: path
  *         name: itemId
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     responses:
  *       200:
  *         description: Roadmap item deleted successfully
@@ -66,8 +68,8 @@ router.delete(
     "/:roadmapId/items/:itemId",
     authenticateToken,
     [
-        param("roadmapId").isInt(),
-        param("itemId").isInt()
+        param("roadmapId"),
+        param("itemId")
     ],
     roadmapController.deleteItem
 );
@@ -88,7 +90,7 @@ router.delete(
  *         name: projectId
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     responses:
  *       200:
  *         description: List of roadmaps with items
@@ -97,7 +99,7 @@ router.delete(
 router.get(
     "/project/:projectId/items",
     authenticateToken,
-    param("projectId").isInt(),
+    param("projectId"),
     roadmapController.listItemsByProject
 );
 /**
@@ -113,7 +115,7 @@ router.get(
  *         name: projectId
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     requestBody:
  *       required: true
  *       content:
