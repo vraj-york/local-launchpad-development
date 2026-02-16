@@ -10,18 +10,18 @@ import ApiError from "../utils/apiError.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
 
 import { validateRoadmapTimelines, validateRoadmapItemsTimeline } from "../validators/roadmap.validator.js";
+import { decryptId, encryptId } from "../utils/encryptionHelper.js";
 
 export const projectController = {
     list: asyncHandler(async (req, res) => {
         const projects = await listProjectsService(req.user);
         res.json(projects);
     }),
-
     // GET /api/projects/:projectId
     getById: asyncHandler(async (req, res) => {
-        const projectId = Number(req.params.projectId);
-
-        const project = await getProjectByIdService(projectId, req.user);
+        const projectId = (req.params.projectId);
+        const decreptId = decryptId(projectId)
+        const project = await getProjectByIdService(Number(decreptId), req.user);
 
         if (!project) {
             res.status(404);
@@ -30,7 +30,18 @@ export const projectController = {
 
         res.json(project);
     }),
+    getProjectPublicDetail: asyncHandler(async (req, res) => {
+        const projectId = (req.params.projectId);
+        const decreptId = decryptId(projectId)
+        const project = await getProjectByIdService(Number(decreptId));
 
+        if (!project) {
+            res.status(404);
+            throw new ApiError(404, 'Project not found');
+        }
+
+        res.json(project);
+    }),
     create: asyncHandler(async (req, res) => {
         const { roadmaps } = req.body;
         if (!Array.isArray(roadmaps) || roadmaps.length === 0) {
@@ -45,9 +56,9 @@ export const projectController = {
         validatedRoadmaps.forEach((roadmap) => {
             validateRoadmapItemsTimeline(roadmap);
         });
-
+        const userId = (req.user.id);
         const project = await createProjectService({
-            userId: req.user.id,
+            userId: userId,
             body: req.body,
         });
 
@@ -70,9 +81,11 @@ export const projectController = {
     }
     ,
     activateVersion: asyncHandler(async (req, res) => {
-        const projectId = Number(req.params.id);
-        const versionId = Number(req.params.versionId);
 
+        const decryptProjectId = decryptId(req.params.id);
+        const decryptVersionId = decryptId(req.params.versionId);
+        const projectId = Number(decryptProjectId);
+        const versionId = Number(decryptVersionId);
         await activateProjectVersionService({
             projectId,
             versionId,
@@ -82,8 +95,9 @@ export const projectController = {
         res.json({ message: "Version activated successfully" });
     }),
     getLiveUrl: asyncHandler(async (req, res) => {
+        const decrypt = decryptId(req.params.id)
         const data = await getProjectLiveUrlService({
-            projectId: Number(req.params.id),
+            projectId: Number(decrypt),
             user: req.user,
         });
 
@@ -94,8 +108,10 @@ export const projectController = {
     }),
 
     listVersions: asyncHandler(async (req, res) => {
+        const decrypt = decryptId(req.params.id)
+
         const versions = await listProjectVersionsService({
-            projectId: Number(req.params.id),
+            projectId: Number(decrypt),
             user: req.user,
         });
 
