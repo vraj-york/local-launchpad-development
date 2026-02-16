@@ -48,7 +48,8 @@ export const decryptId = (encryptedData) => {
 export const encryptAllIds = (data) => {
     // Handle null/undefined
     if (data === null || data === undefined) return data;
-
+    //  Return Dates (or other special objects) immediately
+    if (data instanceof Date) return data;
     // If it's an array, map over each element
     if (Array.isArray(data)) {
         return data.map(item => encryptAllIds(item));
@@ -72,6 +73,5 @@ export const encryptAllIds = (data) => {
         }
         return transformed;
     }
-
     return data;
 };
