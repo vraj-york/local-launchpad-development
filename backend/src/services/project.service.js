@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 import ApiError from "../utils/apiError.js";
 import { createRoadmapWithItems } from "./roadmap.service.js";
 import { fetchProjectJiraTickets } from "../utils/jiraIntegration.js";
+import { decryptId, encryptAllIds } from "../utils/encryptionHelper.js";
 
 /**
  * Shared access check (PRIVATE helper inside same service)
@@ -18,17 +19,18 @@ export async function assertProjectAccess(projectId, user) {
         throw new ApiError(404, "Project not found");
     }
 
-    const { role, id: userId } = user;
 
+    const { role, id: userId } = user;
+    const decryptUser = decryptId(userId);
     const hasAccess =
         role === "admin" ||
-        (role === "manager" && project.assignedManagerId === userId);
+        (role === "manager" && project.assignedManagerId === Number(decryptUser));
 
     if (!hasAccess) {
         throw new ApiError(403, "Forbidden");
     }
-
-    return project;
+    const encrypted = encryptAllIds(project)
+    return encrypted;
 }
 
 
@@ -50,24 +52,23 @@ export const createProjectService = async ({ userId, body }) => {
         assignedManagerId,
         roadmaps
     } = body;
-    /**
-  * Validate assigned manager exists
-  */
+    const assignedUser = Number(assignedManagerId);
+    // 1. Validate assigned manager 
+    // No need for Number(assignedManagerId) anymore!
     const managerExists = await prisma.user.findFirst({
         where: {
-            id: Number(assignedManagerId),
+            id: assignedUser,
             role: "manager"
         },
         select: { id: true }
     });
 
     if (!managerExists) {
-        throw new ApiError(400, "Assigned manager not found");
+        throw new ApiError(400, "Assigned manager not found or invalid role");
     }
+
     return prisma.$transaction(async (tx) => {
-        /**
-         * 1. Create project
-         */
+        // 2. Create project
         const project = await tx.project.create({
             data: {
                 name,
@@ -79,19 +80,30 @@ export const createProjectService = async ({ userId, body }) => {
                 jiraAccessToken,
                 jiraAccessKey,
                 jiraIssueType,
-                assignedManagerId: Number(assignedManagerId),
+                assignedManagerId: assignedUser,
                 createdById: userId
             }
         });
 
-        /**
-         * 2. Create roadmaps and items
-         */
-        for (const roadmap of roadmaps) {
-            await createRoadmapWithItems(tx, project.id, roadmap);
+        // 3. Create roadmaps and items
+        if (roadmaps && roadmaps.length > 0) {
+            for (const roadmap of roadmaps) {
+                await createRoadmapWithItems(tx, project.id, roadmap);
+            }
         }
 
-        return project;
+        // 4. Fetch the FULL project to return to user
+        // We do this so encryptAllIds can find the roadmap IDs too!
+        // const fullProject = await tx.project.findUnique({
+        //     where: { id: project.id },
+        //     include: {
+        //         roadmaps: {
+        //             include: { items: true }
+        //         }
+        //     }
+        // });
+        // console.log('fullProject', fullProject)
+        return encryptAllIds(project);
     });
 };
 
@@ -99,18 +111,21 @@ export const createProjectService = async ({ userId, body }) => {
 
 export async function listProjectsService(user) {
     const { id: userId, role } = user;
-
+    const decryptUserId = decryptId(userId)
     let whereClause;
 
     if (role === "admin") {
         whereClause = {};
     } else if (role === "manager") {
-        whereClause = { assignedManagerId: userId };
+        whereClause = { assignedManagerId: Number(decryptUserId) };
     } else {
         throw new ApiError(403, "Forbidden");
     }
 
-    return prisma.project.findMany({
+
+    // Transform the result to encrypt all IDs
+
+    const rawProjects = await prisma.project.findMany({
         where: whereClause,
         orderBy: { createdAt: "desc" },
 
@@ -169,20 +184,32 @@ export async function listProjectsService(user) {
             },
         },
     });
+    return encryptAllIds(rawProjects);
 }
 /**
  * GET project by ID (with roadmap + items)
  */
-export const getProjectByIdService = async (projectId, user) => {
-    return prisma.project.findFirst({
-        where: {
-            id: projectId,
-            OR: [
-                { createdById: user.id },
-                { assignedManagerId: user.id },
-                { projectAccess: { some: { userId: user.id } } },
-            ],
-        },
+export const getProjectByIdService = async (projectId, user = null) => {
+    // 1. Define the base query that applies to everyone
+    const whereClause = {
+        id: projectId,
+    };
+
+    // 2. Add Permission Logic
+    if (user?.id) {
+        // Authenticated: User must be owner, manager, or have explicit access
+        whereClause.OR = [
+            { createdById: user.id },
+            { assignedManagerId: user.id },
+            { projectAccess: { some: { userId: user.id } } },
+            // Optional: Still allow them to see it if it's public
+            // { isPublic: true } 
+        ];
+    }
+
+
+    const project = await prisma.project.findFirst({
+        where: whereClause,
         include: {
             createdBy: { select: { id: true, name: true, email: true } },
             assignedManager: { select: { id: true, name: true, email: true } },
@@ -203,6 +230,7 @@ export const getProjectByIdService = async (projectId, user) => {
             },
         },
     });
+    return encryptAllIds(project);
 
 };
 
@@ -269,7 +297,7 @@ export async function getProjectLiveUrlService({ projectId, user }) {
 export async function listProjectVersionsService({ projectId, user }) {
     await assertProjectAccess(projectId, user);
 
-    return prisma.projectVersion.findMany({
+    const versions = await prisma.projectVersion.findMany({
         where: { projectId },
         orderBy: { createdAt: "desc" },
         include: {
@@ -282,6 +310,7 @@ export async function listProjectVersionsService({ projectId, user }) {
             },
         },
     });
+    return encryptAllIds(versions)
 }
 /*   PROJECT INFO (HEADER)*/
 export async function getProjectInfoService(projectId) {

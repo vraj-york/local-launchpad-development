@@ -4,10 +4,12 @@ import { releaseController } from "../controllers/release.controller.js";
 import multer from "multer";
 import path from "path";
 import dotenv from "dotenv";
+import { decryptRequestMiddleware } from "../middleware/decryption.middleware.js";
 
 dotenv.config();
 
 const router = express.Router();
+router.use(decryptRequestMiddleware);
 
 /**
  * @swagger
@@ -32,7 +34,7 @@ const router = express.Router();
  *         name: projectId
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *         description: ID of the project
  *     responses:
  *       200:
@@ -45,7 +47,7 @@ const router = express.Router();
  *                 type: object
  *                 properties:
  *                   id:
- *                     type: integer
+ *                     type: string
  *                   name:
  *                     type: string
  *                   isLocked:
@@ -80,13 +82,13 @@ router.get("/project/:projectId", authenticateToken, releaseController.list);
  *               - name
  *             properties:
  *               projectId:
- *                 type: integer
+ *                 type: string
  *               name:
  *                 type: string
  *               description:
  *                 type: string
  *               roadmapItemId:
- *                 type: integer
+ *                 type: string
  *                 description: Optional ID of a roadmap item to link
  *     responses:
  *       201:
@@ -113,7 +115,7 @@ router.post("/", authenticateToken, releaseController.create);
  *         name: id
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     responses:
  *       200:
  *         description: Release details
@@ -137,7 +139,7 @@ router.get("/:id", authenticateToken, releaseController.getById);
  *         name: id
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     requestBody:
  *       required: true
  *       content:
@@ -170,7 +172,7 @@ router.post("/:id/lock", authenticateToken, releaseController.lock);
  *         name: id
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     requestBody:
  *       required: true
  *       content:
@@ -208,7 +210,7 @@ router.post("/:id/public-lock", releaseController.publicLock); // No auth requir
  *         name: id
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     responses:
  *       200:
  *         description: Release info including lock token
@@ -249,7 +251,7 @@ router.post(
  *         name: versionId
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *           example: 14
  *         description: Project version ID to preview
  *     responses:
