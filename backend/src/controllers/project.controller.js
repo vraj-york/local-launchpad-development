@@ -1,10 +1,11 @@
 
 import {
-    createProjectService, listProjectsService, activateProjectVersionService,
+    createProjectService, listProjectsService, setReleaseStatusService,
     getProjectLiveUrlService,
     listProjectVersionsService, getProjectByIdService, getProjectInfoService,
     updateProjectService,
-    getJiraTicketsService
+    getJiraTicketsService,
+    activateProjectVersionService
 } from "../services/project.service.js";
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
@@ -80,6 +81,18 @@ export const projectController = {
         });
 
         res.json({ message: "Version activated successfully" });
+    }),
+
+    setReleaseStatus: asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.id);
+        const releaseId = Number(req.params.releaseId);
+        await setReleaseStatusService({
+            projectId,
+            releaseId,
+            user: req.user
+        });
+
+        res.json({ message: "Release activated successfully" });
     }),
     getLiveUrl: asyncHandler(async (req, res) => {
         const data = await getProjectLiveUrlService({
