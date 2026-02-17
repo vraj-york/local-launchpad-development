@@ -375,6 +375,7 @@ export const lockReleaseService = async (releaseId, locked, user) => {
             id: true,
             isLocked: true,
             projectId: true,
+            isActive: true,
             project: {
                 select: { assignedManagerId: true }
             }

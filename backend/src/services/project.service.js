@@ -190,6 +190,19 @@ export const getProjectByIdService = async (projectId, user = null) => {
             // { isPublic: true } 
         ];
     }
+    // 3. Define Release Filter (Only show active if user is null)
+    const releaseInclude = user?.id ? {
+        orderBy: { id: "desc" },
+        include: {
+            versions: { orderBy: { id: "desc" } }
+        }
+    } : {
+        where: { isActive: true },
+        include: {
+            versions: { where: { isActive: true } }
+        }
+    };
+
     const project = await prisma.project.findFirst({
         where: whereClause,
         include: {
@@ -200,16 +213,12 @@ export const getProjectByIdService = async (projectId, user = null) => {
             roadmaps: {
                 orderBy: { id: 'asc' },
                 include: {
-                    items: { orderBy: { createdAt: 'asc' } },
+                    items: { orderBy: { id: 'asc' } },
                 },
             },
 
             // 🚀 Release / version execution
-            releases: {
-                include: {
-                    versions: true
-                }
-            },
+            releases: releaseInclude,
         },
     });
     return project;
