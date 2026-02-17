@@ -349,3 +349,13 @@ export const activateReleaseVersions = async (projectId, versionId) => {
     );
   }
 };
+
+// get project data publically
+export const getProjectDataPublically = async (projectId) => {
+  try {
+    const response = await api.get(`/api/projects/public/${projectId}`);
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to get project data publically" };
+  }
+};
