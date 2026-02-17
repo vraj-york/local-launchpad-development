@@ -12,7 +12,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PageHeader } from "./PageHeader";
 import { Spinner } from "./ui/spinner";
-import { ChevronDown, Lock, Unlock } from "lucide-react";
+import { ChevronDown, Lock, Plus, Unlock, Upload } from "lucide-react";
 import { Badge } from "./ui/badge";
 import {
   Select,
@@ -29,6 +29,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Label } from "./ui/label";
+import { Textarea } from "./ui/textarea";
+import { SelectActiveVersion } from "./SelectActiveVersion";
 const ReleaseManagement = ({ projectId, projectName }) => {
   const { user } = useAuth();
 
@@ -36,6 +47,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showUploadForm, setShowUploadForm] = useState(false);
   const [creating, setCreating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [selectedRelease, setSelectedRelease] = useState("");
@@ -48,7 +60,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [roadmapsLoading, setRoadmapsLoading] = useState(false);
   const [roadmapError, setRoadmapError] = useState("");
   const [selectedRoadmapItemIds, setSelectedRoadmapItemIds] = useState([]);
-
 
   const [newRelease, setNewRelease] = useState({
     name: "",
@@ -115,7 +126,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const handleLockToggle = async (releaseId, currentLockStatus) => {
     try {
       const res = await toggleReleaseLock(releaseId, !currentLockStatus);
-      toast.success(res.message)
+      toast.success(res.message);
       await loadReleases();
     } catch (err) {
       toast.error(err.error || "Failed to toggle release lock");
@@ -178,7 +189,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
         selectedRelease,
         uploadFile,
         version || null,
-        selectedRoadmapItemIds
+        selectedRoadmapItemIds,
       );
 
       clearInterval(progressInterval);
@@ -191,7 +202,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       setSelectedRelease("");
       setVersion("");
       setSelectedRoadmapItemIds([]);
-      document.getElementById("file-input").value = "";
+      setShowUploadForm(false);
+      const fileInput = document.getElementById("file-input");
+      if (fileInput) fileInput.value = "";
       await loadReleases();
       toast.success(
         `Project uploaded successfully! Version: ${result.version.version}`,
@@ -213,6 +226,17 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       }
     }
     return null;
+  };
+
+  const resetUploadForm = () => {
+    setSelectedRelease("");
+    setUploadFile(null);
+    setVersion("");
+    setSelectedRoadmapItemIds([]);
+    setUploadStatus("");
+    setUploadProgress(0);
+    const fileInput = document.getElementById("file-input");
+    if (fileInput) fileInput.value = "";
   };
 
   const selectedItems = selectedRoadmapItemIds
@@ -249,105 +273,300 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
   return (
     <div>
-      <PageHeader title="Release Management" description="Manage releases and upload ZIP files">{canManageReleases && (
-        <Button
-          className="text-white gap-2"
-          onClick={() => setShowCreateForm(true)}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-          </svg>
-          Create Release
-        </Button>
-      )}</PageHeader>
+      <PageHeader
+        title="Release Management"
+        description="Manage releases and upload ZIP files"
+      >
+        {canManageReleases && (
+          <div className="flex gap-2">
+            {releases.length > 0 && (
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => setShowUploadForm(true)}
+              >
+                <Upload />
+                Upload New Release
+              </Button>
+            )}
+            <Button
+              className="text-white gap-2"
+              onClick={() => setShowCreateForm(true)}
+            >
+              <Plus />
+              Create Release
+            </Button>
+          </div>
+        )}
+      </PageHeader>
 
+      <div className="flex flex-col gap-6">
+        <SelectActiveVersion
+          release={releases}
+          projectId={projectId}
+          onActivated={loadReleases}
+        />
 
-      {/* Create Release Form */}
-      {showCreateForm && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6">
+        {/* Releases List */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200">
           <div className="px-6 py-4 border-b border-slate-100">
             <h3 className="text-lg font-semibold text-slate-800">
-              Create New Release
+              All Releases ({releases.length})
             </h3>
           </div>
           <div className="p-6">
-            <form onSubmit={handleCreateRelease}>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Release Name
-                </label>
-                <Input
-                  type="text"
-                  value={newRelease.name}
-                  onChange={(e) =>
-                    setNewRelease({ ...newRelease, name: e.target.value })
-                  }
-                  placeholder="Enter release name"
-                  required
-                />
+            {releases.length === 0 ? (
+              <div className="text-center py-16 text-slate-500 flex flex-col items-center">
+                <div className="mb-4 opacity-50 text-slate-400">
+                  <svg
+                    width="64"
+                    height="64"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-medium text-slate-700 mb-2">
+                  No Releases Found
+                </h3>
+                <p className="mb-6">
+                  Create your first release to get started.
+                </p>
+                {canManageReleases && (
+                  <Button
+                    className="text-white"
+                    onClick={() => setShowCreateForm(true)}
+                  >
+                    Create Release
+                  </Button>
+                )}
               </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-6">
+                {releases.map((release, index) => (
+                  <div
+                    key={release.id}
+                    className="relative border border-slate-200 rounded-xl p-6 hover:shadow-md transition-shadow group bg-slate-50/30"
+                  >
+                    <div className="flex justify-between items-start mb-4">
+                      <h4 className="text-lg font-semibold text-slate-800">
+                        {release.name}
+                      </h4>
+                      <div className="flex gap-2 items-center">
+                        {release.isLocked ? (
+                          <Badge className="bg-emerald-100 text-emerald-700">
+                            <Lock size={14} /> Locked
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-red-100 text-red-700">
+                            <Unlock size={14} /> Unlocked
+                          </Badge>
+                        )}
+                        {canManageReleases && index === 0 && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className={
+                              release.isLocked
+                                ? "text-amber-600 hover:text-amber-700"
+                                : "text-slate-600"
+                            }
+                            onClick={() =>
+                              handleLockToggle(release.id, release.isLocked)
+                            }
+                          >
+                            {release.isLocked ? "Unlock" : "Lock"}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
 
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Release Description (Optional)
-                </label>
-                <textarea
-                  className="flex min-h-[80px] w-full rounded-md border border-slate-200 bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-                  value={newRelease.description}
-                  onChange={(e) =>
-                    setNewRelease({
-                      ...newRelease,
-                      description: e.target.value,
-                    })
-                  }
-                  placeholder="Enter release description"
-                  rows="3"
-                />
-              </div>
+                    <p className="text-slate-600 mb-4 whitespace-pre-wrap text-sm">
+                      {release.description || "No description provided"}
+                    </p>
 
-              <div className="flex gap-3">
-                <Button
-                  type="submit"
-                  className="text-white"
-                  disabled={creating || !newRelease.name.trim()}
-                >
-                  {creating ? <> <Spinner /> Creating</> : "Create Release"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setShowCreateForm(false)}
-                >
-                  Cancel
-                </Button>
+                    <div className="flex items-center gap-4 text-xs text-slate-500 mb-4 pb-4 border-b border-slate-200">
+                      <span>
+                        Created:{" "}
+                        {new Date(release.createdAt).toLocaleDateString()}
+                      </span>
+                      <span>By: {release.creator.name}</span>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-lg p-3 text-sm text-slate-600 mb-4">
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <span className="text-slate-400 font-normal">
+                            Release ID:
+                          </span>{" "}
+                          <span className="font-mono text-xs">
+                            {release.id}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 font-normal">
+                            Versions:
+                          </span>{" "}
+                          {release.versions.length}
+                        </div>
+                        {release.versions.length > 0 && (
+                          <div>
+                            <span className="text-slate-400 font-normal">
+                              Latest:
+                            </span>{" "}
+                            v{release.versions[0].version}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {release.versions.length > 0 && (
+                      <div className="space-y-2">
+                        <h5 className="text-sm font-semibold text-slate-800 mb-2">
+                          Versions History
+                        </h5>
+                        {release.versions.map((version) => (
+                          <div
+                            key={version.id}
+                            className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg hover:border-emerald-200 transition-colors"
+                          >
+                            <div className="flex flex-col gap-2">
+                              <div className="flex items-center gap-3">
+                                <span className="font-mono text-sm font-medium text-slate-700">
+                                  v{version.version}
+                                </span>
+                                <span className="text-xs text-slate-400">
+                                  {new Date(
+                                    version.createdAt,
+                                  ).toLocaleDateString()}
+                                </span>
+                              </div>
+
+                              <div className="flex items-start gap-2 w-full">
+                                <span className="text-xs text-slate-400 whitespace-nowrap mt-1">
+                                  RoadMap Items:
+                                </span>
+                                <div className="flex flex-wrap gap-2">
+                                  {version.roadmapItems.map((item) => (
+                                    <Badge
+                                      key={item.id}
+                                      className={"rounded-md"}
+                                    >
+                                      {item.title}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                            {version.buildUrl && (
+                              <a
+                                href={version.buildUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-emerald-600 hover:text-emerald-700 text-xs font-medium flex items-center gap-1"
+                              >
+                                Live Build ↗
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
-            </form>
+            )}
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Upload to Release Form */}
+      {/* Create Release Form Modal */}
+      <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create New Release</DialogTitle>
+            {/* <DialogDescription>
+              Add a new release for this project. You can upload builds to it
+              after creating.
+            </DialogDescription> */}
+          </DialogHeader>
+          <form onSubmit={handleCreateRelease} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="release-name">Release Name</Label>
+              <Input
+                id="release-name"
+                type="text"
+                value={newRelease.name}
+                onChange={(e) =>
+                  setNewRelease({ ...newRelease, name: e.target.value })
+                }
+                placeholder="Enter release name"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="release-description">
+                Release Description (Optional)
+              </Label>
+              <Textarea
+                id="release-description"
+                value={newRelease.description}
+                onChange={(e) =>
+                  setNewRelease({
+                    ...newRelease,
+                    description: e.target.value,
+                  })
+                }
+                placeholder="Enter release description"
+                rows={3}
+              />
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="submit"
+                className="text-white"
+                disabled={creating || !newRelease.name.trim()}
+              >
+                {creating ? (
+                  <>
+                    <Spinner /> Creating
+                  </>
+                ) : (
+                  "Create Release"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Upload to Release Form Modal */}
       {canManageReleases && releases.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6">
-          <div className="px-6 py-4 border-b border-slate-100">
-            <h3 className="text-lg font-semibold text-slate-800">
-              Upload to Release
-            </h3>
-          </div>
-          <div className="p-6">
-            <form onSubmit={handleUpload}>
-
-              <div className="grid md:grid-cols-2 grid-cols-1 gap-4">
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Select Release
-                  </label>
-
-
+        <Dialog
+          open={showUploadForm}
+          onOpenChange={(open) => {
+            setShowUploadForm(open);
+            if (!open) resetUploadForm();
+          }}
+        >
+          <DialogContent className="overflow-y-auto space-y-6">
+            <DialogHeader>
+              <DialogTitle>Upload to Release</DialogTitle>
+              <DialogDescription>
+                Choose a release, optional version and roadmap items, then
+                upload a ZIP file to build.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleUpload} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4">
+                <div className="space-y-2">
+                  <Label>Select Release</Label>
                   <Select
                     value={selectedRelease}
                     onValueChange={(value) => {
                       if (value === "CREATE_NEW") {
+                        setShowUploadForm(false);
                         setShowCreateForm(true);
                         setSelectedRelease("");
                       } else {
@@ -360,7 +579,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                     </SelectTrigger>
                     <SelectContent>
                       {!releases.some((r) => !r.isLocked) && (
-                        <SelectItem value="CREATE_NEW" className="text-emerald-600 font-medium">
+                        <SelectItem
+                          value="CREATE_NEW"
+                          className="text-emerald-600 font-medium"
+                        >
                           + Create New Release
                         </SelectItem>
                       )}
@@ -376,27 +598,23 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                     </SelectContent>
                   </Select>
                 </div>
-
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Version (Optional)
-                  </label>
+                <div className="space-y-2">
+                  <Label htmlFor="upload-version">Version (Optional)</Label>
                   <Input
+                    id="upload-version"
                     type="text"
                     value={version}
                     onChange={(e) => setVersion(e.target.value)}
                     placeholder="e.g., 1.0.0, 1.1.0, 2.0.0"
                   />
-                  <div className="text-xs text-slate-500 mt-1">
+                  <p className="text-xs text-muted-foreground">
                     Leave empty for auto-increment
-                  </div>
+                  </p>
                 </div>
               </div>
 
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Roadmap Items Included
-                </label>
+              <div className="space-y-2">
+                <Label>Roadmap Items Included</Label>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -436,7 +654,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                         </DropdownMenuLabel>
                         {roadmap.items?.length ? (
                           roadmap.items.map((item) => {
-                            const itemId = item.id
+                            const itemId = item.id;
                             const isChecked =
                               selectedRoadmapItemIds.includes(itemId);
                             return (
@@ -457,9 +675,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                   }
                                 }}
                               >
-                                <span className="text-sm">
-                                  {item.title}
-                                </span>
+                                <span className="text-sm">{item.title}</span>
                               </DropdownMenuCheckboxItem>
                             );
                           })
@@ -473,34 +689,30 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   </DropdownMenuContent>
                 </DropdownMenu>
                 {roadmapError && (
-                  <div className="text-xs text-red-600 mt-1">
-                    {roadmapError}
-                  </div>
+                  <p className="text-xs text-red-600">{roadmapError}</p>
                 )}
-                <div className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-muted-foreground">
                   Select one or more items from the different roadmap.
-                </div>
+                </p>
               </div>
 
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Upload ZIP File
-                </label>
+              <div className="space-y-2">
+                <Label htmlFor="file-input">Upload ZIP File</Label>
                 <input
                   id="file-input"
                   type="file"
                   accept=".zip"
                   onChange={handleFileSelect}
-                  className="flex w-full rounded-md border border-slate-200 bg-transparent px-3 py-2 text-sm shadow-sm file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-slate-700 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   required
                 />
-                <div className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-muted-foreground">
                   Only ZIP files are allowed. Maximum size: 50MB
-                </div>
+                </p>
               </div>
 
               {uploadFile && (
-                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg mb-4">
+                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
                   <div className="font-medium text-blue-900 mb-1">
                     Selected File:
                   </div>
@@ -512,7 +724,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               )}
 
               {uploading && (
-                <div className="mb-4">
+                <div>
                   <div className="flex justify-between mb-2 text-sm text-slate-700">
                     <span>Uploading...</span>
                     <span>{uploadProgress}%</span>
@@ -521,213 +733,53 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                     <div
                       className="bg-emerald-500 h-2 rounded-full transition-all duration-300"
                       style={{ width: `${uploadProgress}%` }}
-                    ></div>
+                    />
                   </div>
                 </div>
               )}
 
               {uploadStatus && (
                 <div
-                  className={`p-3 rounded-lg mb-4 border ${uploadStatus.includes("✅")
-                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                    : uploadStatus.includes("❌")
-                      ? "bg-red-50 border-red-200 text-red-800"
-                      : "bg-blue-50 border-blue-200 text-blue-800"
-                    }`}
+                  className={`p-3 rounded-lg border text-sm ${
+                    uploadStatus.includes("Upload successful")
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                      : uploadStatus.includes("Upload failed")
+                        ? "bg-red-50 border-red-200 text-red-800"
+                        : "bg-blue-50 border-blue-200 text-blue-800"
+                  }`}
                 >
                   {uploadStatus}
                 </div>
               )}
 
-              <div className="flex gap-3">
+              <DialogFooter className="gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={resetUploadForm}
+                  disabled={uploading}
+                >
+                  Clear
+                </Button>
                 <Button
                   type="submit"
                   className="text-white"
                   disabled={uploading || !selectedRelease || !uploadFile}
                 >
-                  {uploading ? <> <Spinner /> Uploading</> : "Upload & Build"}
+                  {uploading ? (
+                    <>
+                      <Spinner /> Uploading
+                    </>
+                  ) : (
+                    "Upload & Build"
+                  )}
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setSelectedRelease("");
-                    setUploadFile(null);
-                    setVersion("");
-                    setSelectedRoadmapItemIds([]);
-                    setUploadStatus("");
-                    setUploadProgress(0);
-                    document.getElementById("file-input").value = "";
-                  }}
-                  disabled={uploading}
-                >
-                  Clear
-                </Button>
-              </div>
+              </DialogFooter>
             </form>
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
-
-      {/* Releases List */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-        <div className="px-6 py-4 border-b border-slate-100">
-          <h3 className="text-lg font-semibold text-slate-800">
-            All Releases ({releases.length})
-          </h3>
-        </div>
-        <div className="p-6">
-          {releases.length === 0 ? (
-            <div className="text-center py-16 text-slate-500 flex flex-col items-center">
-              <div className="mb-4 opacity-50 text-slate-400">
-                <svg
-                  width="64"
-                  height="64"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                >
-                  <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-medium text-slate-700 mb-2">
-                No Releases Found
-              </h3>
-              <p className="mb-6">Create your first release to get started.</p>
-              {canManageReleases && (
-                <Button
-                  className="text-white"
-                  onClick={() => setShowCreateForm(true)}
-                >
-                  Create Release
-                </Button>
-              )}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-6">
-              {releases.map((release, index) => (
-                <div
-                  key={release.id}
-                  className="relative border border-slate-200 rounded-xl p-6 hover:shadow-md transition-shadow group bg-slate-50/30"
-                >
-                  <div className="flex justify-between items-start mb-4">
-                    <h4 className="text-lg font-semibold text-slate-800">
-                      {release.name}
-                    </h4>
-                    <div className="flex gap-2 items-center">
-                      {release.isLocked ?
-                        <Badge className="bg-emerald-100 text-emerald-700"><Lock size={14} /> Locked</Badge> :
-                        <Badge className="bg-red-100 text-red-700"><Unlock size={14} /> Unlocked</Badge>}
-                      {canManageReleases && index === 0 && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className={
-                            release.isLocked
-                              ? "text-amber-600 hover:text-amber-700"
-                              : "text-slate-600"
-                          }
-                          onClick={() =>
-                            handleLockToggle(release.id, release.isLocked)
-                          }
-                        >
-                          {release.isLocked ? "Unlock" : "Lock"}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-
-                  <p className="text-slate-600 mb-4 whitespace-pre-wrap text-sm">
-                    {release.description || "No description provided"}
-                  </p>
-
-                  <div className="flex items-center gap-4 text-xs text-slate-500 mb-4 pb-4 border-b border-slate-200">
-                    <span>
-                      Created:{" "}
-                      {new Date(release.createdAt).toLocaleDateString()}
-                    </span>
-                    <span>By: {release.creator.name}</span>
-                  </div>
-
-                  <div className="bg-white border border-slate-200 rounded-lg p-3 text-sm text-slate-600 mb-4">
-                    <div className="grid grid-cols-3 gap-2">
-                      <div>
-                        <span className="text-slate-400 font-normal">
-                          Release ID:
-                        </span>{" "}
-                        <span className="font-mono text-xs">{release.id}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-normal">
-                          Versions:
-                        </span>{" "}
-                        {release.versions.length}
-                      </div>
-                      {release.versions.length > 0 && (
-                        <div>
-                          <span className="text-slate-400 font-normal">
-                            Latest:
-                          </span>{" "}
-                          v{release.versions[0].version}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {
-                    release.versions.length > 0 && (
-                      <div className="space-y-2">
-                        <h5 className="text-sm font-semibold text-slate-800 mb-2">
-                          Versions History
-                        </h5>
-                        {release.versions.map((version) => (
-                          <div
-                            key={version.id}
-                            className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg hover:border-emerald-200 transition-colors"
-                          >
-                            <div className="flex flex-col gap-2">
-
-                              <div className="flex items-center gap-3">
-                                <span className="font-mono text-sm font-medium text-slate-700">
-                                  v{version.version}
-                                </span>
-                                <span className="text-xs text-slate-400">
-                                  {new Date(version.createdAt).toLocaleDateString()}
-                                </span>
-                              </div>
-
-
-                              <div className="flex items-start gap-2 w-full">
-                                <span className="text-xs text-slate-400 whitespace-nowrap mt-1">RoadMap Items:</span>
-                                <div className="flex flex-wrap gap-2">
-                                  {version.roadmapItems.map((item) => (
-                                    <Badge key={item.id} className={"rounded-md"}>{item.title}</Badge>
-                                  ))}
-                                </div>
-                              </div>
-
-                            </div>
-                            {version.buildUrl && (
-                              <a
-                                href={version.buildUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-emerald-600 hover:text-emerald-700 text-xs font-medium flex items-center gap-1"
-                              >
-                                Live Build ↗
-                              </a>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  }
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div >
+    </div>
   );
 };
 

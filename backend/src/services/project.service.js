@@ -174,55 +174,51 @@ export async function listProjectsService(user) {
  * GET project by ID (with roadmap + items)
  */
 export const getProjectByIdService = async (projectId, user = null) => {
-    // 1. Define the base query that applies to everyone
-    const whereClause = {
-        id: projectId,
-    };
+    const id = Number(projectId);
+    if (Number.isNaN(id)) return null;
 
-    // 2. Add Permission Logic
-    if (user?.id) {
-        // Authenticated: User must be owner, manager, or have explicit access
-        whereClause.OR = [
-            { createdById: user.id },
-            { assignedManagerId: user.id },
-            { projectAccess: { some: { userId: user.id } } },
-            // Optional: Still allow them to see it if it's public
-            // { isPublic: true } 
-        ];
-    }
-    // 3. Define Release Filter (Only show active if user is null)
-    const releaseInclude = user?.id ? {
-        orderBy: { id: "desc" },
-        include: {
-            versions: { orderBy: { id: "desc" } }
-        }
-    } : {
-        where: { isActive: true },
-        include: {
-            versions: { where: { isActive: true } }
-        }
-    };
-
-    const project = await prisma.project.findFirst({
-        where: whereClause,
+    const project = await prisma.project.findUnique({
+        where: { id },
         include: {
             createdBy: { select: { id: true, name: true, email: true } },
             assignedManager: { select: { id: true, name: true, email: true } },
-
-            // 🧭 Planning roadmap
             roadmaps: {
-                orderBy: { id: 'asc' },
+                orderBy: { id: "asc" },
                 include: {
-                    items: { orderBy: { id: 'asc' } },
+                    items: { orderBy: { id: "asc" } },
                 },
             },
-
-            // 🚀 Release / version execution
-            releases: releaseInclude,
+            releases: {
+                orderBy: { id: "desc" },
+                include: {
+                    versions: { orderBy: { id: "desc" } },
+                },
+            },
+            versions: {
+                where: { isActive: true },
+                select: {
+                    id: true,
+                    version: true,
+                    buildUrl: true,
+                    createdAt: true,
+                },
+            },
         },
     });
-};
 
+    if (!project) return null;
+
+    // Access: same as listProjectsService — admin sees all, manager sees only assigned
+    if (user?.id) {
+        const { role, id: userId } = user;
+        const allowed =
+            role === "admin" ||
+            (role === "manager" && project.assignedManagerId === userId);
+        if (!allowed) throw new ApiError(403, "Forbidden");
+    }
+
+    return project;
+};
 
 /**
  * NEW: Activate project version
