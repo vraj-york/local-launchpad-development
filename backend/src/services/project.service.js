@@ -221,7 +221,6 @@ export const getProjectByIdService = async (projectId, user = null) => {
             releases: releaseInclude,
         },
     });
-    return project;
 };
 
 
