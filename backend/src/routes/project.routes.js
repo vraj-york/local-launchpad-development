@@ -1220,6 +1220,7 @@ router.get(
   projectController.listVersions
 );
 
+
 /**
  * @swagger
  * /projects/{id}/versions/{versionId}/activate:
@@ -1247,6 +1248,35 @@ router.post(
   "/:id/versions/:versionId/activate",
   authenticateToken,
   projectController.activateVersion
+);
+
+/**
+ * @swagger
+ * /projects/{id}/releases/{releaseId}/activate:
+ *   post:
+ *     summary: Set active status for a release
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *       - in: path
+ *         name: releaseId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.post(
+  "/:id/releases/:releaseId/activate",
+  authenticateToken,
+  projectController.setReleaseStatus
 );
 
 

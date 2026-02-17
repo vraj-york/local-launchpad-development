@@ -219,6 +219,7 @@ export const getProjectByIdService = async (projectId, user = null) => {
 /**
  * NEW: Activate project version
  */
+
 export async function activateProjectVersionService({
     projectId,
     versionId,
@@ -252,6 +253,45 @@ export async function activateProjectVersionService({
             data: { isActive: true },
         });
     });
+}
+
+/**
+ * Set release active status
+ */
+export async function setReleaseStatusService({
+    projectId,
+    releaseId,
+    user
+}) {
+    // 1️⃣ Access check
+    await assertProjectAccess(projectId, user);
+
+
+    await prisma.$transaction(async (tx) => {
+
+        // 2️⃣ Update active status
+        const release = await prisma.release.findFirst({
+            where: { id: releaseId, projectId }
+        });
+
+        if (!release) {
+            throw new ApiError(404, "Release not found");
+        }
+
+        if (release.isActive) {
+            throw new ApiError(400, "Release is already active");
+        }
+
+        await tx.release.updateMany({
+            where: { projectId },
+            data: { isActive: false },
+        });
+
+        await tx.release.update({
+            where: { id: releaseId },
+            data: { isActive: true },
+        });
+    })
 }
 /*GET LIVE URL*/
 export async function getProjectLiveUrlService({ projectId, user }) {

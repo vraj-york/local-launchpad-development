@@ -129,10 +129,10 @@ export const listRoadmapItemsByProjectService = async (projectId, user) => {
      */
     const roadmaps = await prisma.roadmap.findMany({
         where: { projectId },
-        orderBy: { timelineStart: "asc" },
+        orderBy: { id: "asc" },
         include: {
             items: {
-                orderBy: { startDate: 'asc' },
+                orderBy: { id: 'asc' },
                 include: {
                     projectVersion: {
                         include: {

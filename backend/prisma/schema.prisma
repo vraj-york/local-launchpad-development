@@ -85,14 +85,16 @@ model Release {
   description String?
   releaseDate DateTime?   // 🔥 ADD (key for timeline & roadmap)
   isLocked    Boolean  @default(false)
+  isActive    Boolean  @default(false)
 
   createdBy   Int
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-
+  
   project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   creator     User            @relation("ReleaseCreator", fields: [createdBy], references: [id])
   versions    ProjectVersion[]
+
 
 }
 
@@ -163,6 +165,9 @@ enum RoadmapItemType {
   EPIC
   INITIATIVE
   TECH_DEBT
+  BUG
+  IMPROVEMENT
+  
 }
 
 enum RoadmapItemStatus {
@@ -170,6 +175,9 @@ enum RoadmapItemStatus {
   IN_PROGRESS
   DONE
   BLOCKED
+  DRAFT
+  ACTIVE
+  COMPLETED
 }
 
 enum RoadmapItemPriority {
