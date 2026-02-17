@@ -547,12 +547,9 @@ export const uploadReleaseVersionService_old = async (
 
             /* -------------------- 6. Inject HTML scripts/header -------------------- */
             const rootHtmlPath = await findHtmlEntry(actualProjectPath);
-            const markerScript = `<script>
-window.markerConfig = {
-              project: '66c70a4bc69f538671fe255f',
-              source: 'snippet'
-            };
-          !function(e,r,a){if(!e.__Marker){e.__Marker={};var t=[],n={__cs:t};["show","hide","isVisible","capture","cancelCapture","unload","reload","isExtensionInstalled","setReporter","setCustomData","on","off"].forEach(function(e){n[e]=function(){var r=Array.prototype.slice.call(arguments);r.unshift(e),t.push(r)}}),e.Marker=n;var s=r.createElement("script");s.async=1,s.src="https://edge.marker.io/latest/shim.js";var i=r.getElementsByTagName("script")[0];i.parentNode.insertBefore(s,i)}}(window,document);
+            const markerScript = `<script> window.markerConfig = {
+project: '68b6da8e7a78dd9ff9cff850',source: 'snippet'};
+!function(e,r,a){if(!e.__Marker){e.__Marker={};var t=[],n={__cs:t};["show","hide","isVisible","capture","cancelCapture","unload","reload","isExtensionInstalled","setReporter","clearReporter","setCustomData","on","off"].forEach(function(e){n[e]=function(){var r=Array.prototype.slice.call(arguments);r.unshift(e),t.push(r)}}),e.Marker=n;var s=r.createElement("script");s.async=1,s.src="https://edge.marker.io/latest/shim.js";var i=r.getElementsByTagName("script")[0];i.parentNode.insertBefore(s,i)}}(window,document);
 </script>`;
             if (rootHtmlPath) {
                 let html = fs.readFileSync(rootHtmlPath, "utf-8");
@@ -569,7 +566,14 @@ window.markerConfig = {
                 if (!html.includes("zip-sync-header")) {
                     html = html.replace(
                         /<body([^>]*)>/,
-                        `<body$1>\n${generateReleaseHeader()}`
+                        `<body$1>\n${generateReleaseHeader({
+                            projectId: release.project.id,
+                            releaseId: release.id,
+                            version: versionNumber,
+                            projectName: release.project.name,
+                            releaseName: release.name,
+                            apiUrl: process.env.BASE_URL || "http://localhost:5000"
+                        })}`
                     );
                     updated = true;
                 }
@@ -578,7 +582,6 @@ window.markerConfig = {
                     fs.writeFileSync(rootHtmlPath, html, "utf-8");
                 }
             }
-
             /* -------------------- 7. Build project -------------------- */
             if (!fs.existsSync(path.join(actualProjectPath, "node_modules"))) {
                 runCommand("npm install", actualProjectPath);
@@ -789,15 +792,13 @@ export const uploadReleaseVersionService = async (
     if (!packageJson?.scripts?.build)
         throw new ApiError(400, "Build script missing");
 
-
     /* -------------------- 6. Inject HTML headers / scripts (SAFE) -------------------- */
     const rootHtmlPath = await findHtmlEntry(actualProjectPath);
     const markerScript = `<script>
 window.markerConfig = {
-              project: '66c70a4bc69f538671fe255f',
-              source: 'snippet'
-            };
-          !function(e,r,a){if(!e.__Marker){e.__Marker={};var t=[],n={__cs:t};["show","hide","isVisible","capture","cancelCapture","unload","reload","isExtensionInstalled","setReporter","setCustomData","on","off"].forEach(function(e){n[e]=function(){var r=Array.prototype.slice.call(arguments);r.unshift(e),t.push(r)}}),e.Marker=n;var s=r.createElement("script");s.async=1,s.src="https://edge.marker.io/latest/shim.js";var i=r.getElementsByTagName("script")[0];i.parentNode.insertBefore(s,i)}}(window,document);
+project: '68b6da8e7a78dd9ff9cff850',
+};
+!function(e,r,a){if(!e.__Marker){e.__Marker={};var t=[],n={__cs:t};["show","hide","isVisible","capture","cancelCapture","unload","reload","isExtensionInstalled","setReporter","clearReporter","setCustomData","on","off"].forEach(function(e){n[e]=function(){var r=Array.prototype.slice.call(arguments);r.unshift(e),t.push(r)}}),e.Marker=n;var s=r.createElement("script");s.async=1,s.src="https://edge.marker.io/latest/shim.js";var i=r.getElementsByTagName("script")[0];i.parentNode.insertBefore(s,i)}}(window,document);
 </script>`;
     if (rootHtmlPath) {
         let html = fs.readFileSync(rootHtmlPath, "utf-8");
@@ -820,14 +821,33 @@ window.markerConfig = {
                 updated = true;
             }
 
-            // Inject header ONLY if <body> exists
-            if (
-                !html.includes("zip-sync-header") &&
-                html.toLowerCase().includes("<body")
-            ) {
+            // Remove existing header if present to ensure we invoke with latest data
+            if (html.includes("zip-sync-header")) {
+                // Remove Style
+                html = html.replace(/<style>[\s\S]*?\.zip-sync-header[\s\S]*?<\/style>/, "");
+                // Remove Div
+                html = html.replace(/<div class="zip-sync-header"[\s\S]*?<\/div>/, "");
+                // Remove Script
+                html = html.replace(/<script>[\s\S]*?ZipSync Header functionality[\s\S]*?<\/script>/, "");
+            }
+            // Always inject the header if body exists
+            if (html.toLowerCase().includes("<body")) {
+
+                const headerData = {
+                    projectId: release.project.id,
+                    releaseId: release.id,
+                    version: versionNumber,
+                    projectName: release.project.name,
+                    apiUrl: process.env.BASE_URL || "http://localhost:5000"
+                };
+
+                const generatedHeader = generateReleaseHeader(headerData);
+
+                // console.log("📝 Generated Header HTML:", generatedHeader); // Optional: uncomment if needed
+
                 html = html.replace(
                     /<body([^>]*)>/i,
-                    `<body$1>\n${generateReleaseHeader()}`
+                    `<body$1>\n${generatedHeader}`
                 );
                 updated = true;
             }
@@ -837,13 +857,10 @@ window.markerConfig = {
             }
         }
     }
-
-
     /* -------------------- 7. Build project -------------------- */
     runCommand("npm install", actualProjectPath);
     runCommand("npm run build", actualProjectPath);
 
-    /* -------------------- 8. Git setup & push -------------------- */
     /* -------------------- 8. Git setup & push -------------------- */
     const validatedProjectName = validateProjectName(release.project.name);
 
@@ -903,22 +920,24 @@ window.markerConfig = {
         : fs.existsSync(path.join(actualProjectPath, "dist"))
             ? "dist"
             : null;
-    console.log('buildDir', buildDir)
     if (!buildDir) throw new ApiError(400, "Build output not found");
 
     const buildDirPath = path.join(actualProjectPath, buildDir);
     // FIX: Patch index.html to use relative paths (e.g., /assets/ -> assets/)
     const indexPath = path.join(buildDirPath, "index.html");
-    console.log('indexPath', indexPath)
     if (fs.existsSync(indexPath)) {
         let html = fs.readFileSync(indexPath, "utf-8");
 
-        // This Regex replaces "/assets/" with "assets/" (removes leading slash)
-        // It also handles both double and single quotes.
+        // FIX 1: Look for any attribute followed by ="/ or ='/ and remove the slash
+        // This turns src="/assets/..." into src="assets/..."
+        html = html.replace(/=(['"])\//g, '=$1');
+
+        // FIX 2: Look for any standalone "/assets/" in scripts or meta tags
+        // This handles cases like: const path = "/assets/img.png"
         html = html.replace(/(["'])\/assets\//g, '$1assets/');
 
         fs.writeFileSync(indexPath, html, "utf-8");
-        console.log("✅ Patched index.html for relative S3 paths");
+        console.log("✅ Fixed: All absolute paths (images/favicons) are now relative.");
     }
 
     /* -------------------- 10. Upload ZIP to S3 -------------------- */
