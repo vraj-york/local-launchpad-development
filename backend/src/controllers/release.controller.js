@@ -10,7 +10,6 @@ import {
     uploadReleaseVersionService,
     getReleasePreviewUrl
 } from "../services/release.service.js";
-import { decryptId, encryptAllIds } from "../utils/encryptionHelper.js";
 
 export const releaseController = {
     /**
@@ -25,8 +24,8 @@ export const releaseController = {
      * List all releases for a project
      */
     list: asyncHandler(async (req, res) => {
-        const projectId = decryptId(req.params.projectId)
-        const releases = await listReleasesService(Number(projectId), req.user);
+        const projectId = parseInt(req.params.projectId, 10);
+        const releases = await listReleasesService(projectId, req.user);
         res.json(releases);
     }),
 
@@ -34,8 +33,8 @@ export const releaseController = {
      * Get a release by ID
      */
     getById: asyncHandler(async (req, res) => {
-        const releaseId = decryptId(req.params.id)
-        const release = await getReleaseByIdService(Number(releaseId));
+        const releaseId = parseInt(req.params.id, 10);
+        const release = await getReleaseByIdService(releaseId);
         res.json(release);
     }),
 
@@ -43,18 +42,18 @@ export const releaseController = {
      * Lock or unlock a release
      */
     lock: asyncHandler(async (req, res) => {
-        const releaseId = decryptId(req.params.id)
+        const releaseId = parseInt(req.params.id, 10);
         const { locked } = req.body;
 
         if (typeof locked !== 'boolean') {
             return res.status(400).json({ error: "Invalid 'locked' parameter. Must be true or false." });
         }
 
-        const release = await lockReleaseService(Number(releaseId), locked, req.user);
-        const response = encryptAllIds(release)
+        const release = await lockReleaseService(releaseId, locked, req.user);
+
         res.json({
             message: `Release ${locked ? 'locked' : 'unlocked'} successfully`,
-            response
+            release
         });
     }),
 
@@ -71,10 +70,10 @@ export const releaseController = {
         let roadmapItemIds = [];
         if (req.body.roadmapItemIds) {
             // Handle comma-separated string from FormData
-            const rawIds = typeof req.body.roadmapItemIds === 'string'
-                ? req.body.roadmapItemIds.split(',')
+            const rawIds = typeof req.body.roadmapItemIds === 'string' 
+                ? req.body.roadmapItemIds.split(',') 
                 : (Array.isArray(req.body.roadmapItemIds) ? req.body.roadmapItemIds : []);
-
+            
             roadmapItemIds = rawIds
                 .map(id => parseInt(id, 10))
                 .filter(id => !isNaN(id));
@@ -89,8 +88,8 @@ export const releaseController = {
      * Get release info (public/header)
      */
     info: asyncHandler(async (req, res) => {
-        const releaseId = decryptId(req.params.id)
-        const data = await getReleaseInfoService(Number(releaseId));
+        const releaseId = parseInt(req.params.id, 10);
+        const data = await getReleaseInfoService(releaseId);
         res.json(data);
     }),
 
@@ -98,9 +97,9 @@ export const releaseController = {
      * Public lock (no auth, token based)
      */
     publicLock: asyncHandler(async (req, res) => {
-        const releaseId = decryptId(req.params.id)
+        const releaseId = parseInt(req.params.id, 10);
         const { locked, token } = req.body;
-        const result = await publicLockReleaseService(Number(releaseId), locked, token);
+        const result = await publicLockReleaseService(releaseId, locked, token);
         res.json(result);
     }),
     previewVersion: asyncHandler(async (req, res) => {

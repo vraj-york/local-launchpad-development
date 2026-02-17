@@ -4,7 +4,6 @@ import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
 import { OAuth2Client } from "google-auth-library";
 import crypto from "crypto";
-import { encryptAllIds } from "../utils/encryptionHelper.js";
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -31,8 +30,7 @@ router.get("/managers", async (req, res) => {
         email: true
       }
     });
-
-    res.json(encryptAllIds(managers));
+    res.json(managers);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -119,8 +117,7 @@ router.post("/login", async (req, res) => {
     process.env.JWT_SECRET,
     { expiresIn: "1d" }
   );
-  const userDetail = encryptAllIds(user)
-  res.json({ token, userDetail });
+  res.json({ token, user });
 
 });
 
@@ -184,7 +181,6 @@ router.post("/google", async (req, res) => {
         }
       });
     }
-    user = encryptAllIds(user)
 
     const jwtToken = jwt.sign(
       { id: user.id, role: user.role },

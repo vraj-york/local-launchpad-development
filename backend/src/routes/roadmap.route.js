@@ -4,8 +4,6 @@ import { roadmapController } from "../controllers/roadmap.controller.js";
 import { param } from "express-validator";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import { updateRoadmapsArrayValidation } from "../validators/project.validator.js";
-import { decryptRequestMiddleware } from "../middleware/decryption.middleware.js";
-router.use(decryptRequestMiddleware);
 
 /**
  * @swagger
@@ -20,7 +18,7 @@ router.use(decryptRequestMiddleware);
  *         name: roadmapId
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *     responses:
  *       200:
  *         description: Roadmap deleted successfully
@@ -32,7 +30,7 @@ router.use(decryptRequestMiddleware);
 router.delete(
     "/:roadmapId",
     authenticateToken,
-    param("roadmapId"),
+    param("roadmapId").isInt(),
     roadmapController.delete
 );
 /**
@@ -48,12 +46,12 @@ router.delete(
  *         name: roadmapId
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *       - in: path
  *         name: itemId
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *     responses:
  *       200:
  *         description: Roadmap item deleted successfully
@@ -68,8 +66,8 @@ router.delete(
     "/:roadmapId/items/:itemId",
     authenticateToken,
     [
-        param("roadmapId"),
-        param("itemId")
+        param("roadmapId").isInt(),
+        param("itemId").isInt()
     ],
     roadmapController.deleteItem
 );
@@ -90,7 +88,7 @@ router.delete(
  *         name: projectId
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *     responses:
  *       200:
  *         description: List of roadmaps with items
@@ -99,7 +97,7 @@ router.delete(
 router.get(
     "/project/:projectId/items",
     authenticateToken,
-    param("projectId"),
+    param("projectId").isInt(),
     roadmapController.listItemsByProject
 );
 /**
@@ -115,7 +113,7 @@ router.get(
  *         name: projectId
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *     requestBody:
  *       required: true
  *       content:

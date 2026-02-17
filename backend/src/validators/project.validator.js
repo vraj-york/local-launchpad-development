@@ -6,7 +6,7 @@ import { body, param } from "express-validator";
 const ROADMAP_STATUS = ["DRAFT", "ACTIVE", "COMPLETED"];
 const TSHIRT_SIZES = ["XS", "S", "M", "L", "XL"];
 const ITEM_TYPES = ["FEATURE", "BUG", "TASK"];
-const ITEM_STATUS = ["DRAFT", "ACTIVE", "COMPLETED"];
+const ITEM_STATUS = ["PLANNED", "IN_PROGRESS", "DONE"];
 const ITEM_PRIORITY = ["LOW", "MEDIUM", "HIGH"];
 
 /**

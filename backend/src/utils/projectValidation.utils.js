@@ -1,4 +1,3 @@
-import ApiError from "../utils/apiError.js";
 
 export function validateProjectName(name) {
     if (!name || typeof name !== "string") {

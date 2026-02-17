@@ -1,7 +1,6 @@
 import { deleteRoadmap, deleteRoadmapItem, listRoadmapItemsByProjectService, updateRoadmapService } from "../services/roadmap.service.js";
 import { validateRoadmapTimelines, validateRoadmapItemsTimeline } from "../validators/roadmap.validator.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
-import { decryptId, encryptAllIds } from "../utils/encryptionHelper.js";
 
 export const roadmapController = {
     /**
@@ -10,8 +9,8 @@ export const roadmapController = {
      */
 
     delete: asyncHandler(async (req, res) => {
-        const roadmapId = decryptId(req.params.roadmapId);
-        const result = await deleteRoadmap(Number(roadmapId));
+        const roadmapId = Number(req.params.roadmapId);
+        const result = await deleteRoadmap(roadmapId);
         res.json(result);
     }),
     /**
@@ -19,11 +18,9 @@ export const roadmapController = {
      * ❌ Block if item is assigned to a release
      */
     deleteItem: asyncHandler(async (req, res) => {
-        const decreyptroadmapItemId = decryptId(req.params.itemId);
-        const decreyptroadmapId = decryptId(req.params.roadmapId);
+        const roadmapItemId = Number(req.params.itemId);
+        const roadmapId = Number(req.params.roadmapId);
 
-        const roadmapItemId = Number(decreyptroadmapItemId);
-        const roadmapId = Number(decreyptroadmapId);
         const result = await deleteRoadmapItem(roadmapId, roadmapItemId);
 
         res.json(result);
@@ -32,10 +29,10 @@ export const roadmapController = {
      * List roadmap items by project
      */
     listItemsByProject: asyncHandler(async (req, res) => {
-        const projectId = decryptId(req.params.projectId)
+        const projectId = Number(req.params.projectId);
 
         const data = await listRoadmapItemsByProjectService(
-            Number(projectId),
+            projectId,
             req.user
         );
 
@@ -46,8 +43,7 @@ export const roadmapController = {
      * Update roadmap (and items)
      */
     update: asyncHandler(async (req, res) => {
-        const decreyptProjectId = decryptId(req.params.projectId);
-        const projectId = Number(decreyptProjectId);
+        const projectId = Number(req.params.projectId);
         const { roadmap } = req.body;
 
         if (!roadmap) {
@@ -66,7 +62,7 @@ export const roadmapController = {
             roadmap, // 👈 single roadmap
         });
 
-        res.json(encryptAllIds(result));
+        res.json(result);
     })
 
 };

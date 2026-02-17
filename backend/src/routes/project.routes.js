@@ -7,7 +7,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs-extra";
 import extract from "extract-zip";
-import { execSync } from "child_process";
+import { exec, execSync } from "child_process";
 import crypto from "crypto";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
@@ -17,13 +17,11 @@ import allowRoles from "../middleware/role.middleware.js";
 import { projectController } from "../controllers/project.controller.js";
 import { createProjectValidation } from "../validators/project.validator.js";
 import { validate } from "../validators/validate.middleware.js";
-import { decryptRequestMiddleware } from "../middleware/decryption.middleware.js";
-
 dotenv.config();
 
 const router = express.Router();
 const prisma = new PrismaClient();
-router.use(decryptRequestMiddleware);
+
 // Environment variables
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_USERNAME = process.env.GITHUB_USERNAME;
@@ -1187,7 +1185,7 @@ router.post(
  *         name: id
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *     responses:
  *       200:
  *         description: Success
@@ -1211,7 +1209,7 @@ router.get(
  *         name: id
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *     responses:
  *       200:
  *         description: Success
@@ -1235,12 +1233,12 @@ router.get(
  *         name: id
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *       - in: path
  *         name: versionId
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *     responses:
  *       200:
  *         description: Success
@@ -1265,34 +1263,14 @@ router.post(
  *         name: projectId
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *     responses:
  *       200:
  *         description: Success
  */
 router.get('/:projectId', authenticateToken, projectController.getById);
 
-/**
- * @swagger
- * /projects/public/{projectId}:
- *   get:
- *     summary: Get project by ID
- *     tags: [Projects]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: projectId
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Success
- */
-router.get('/public/:projectId', projectController.getProjectPublicDetail);// Get diff summary for a project
-
-
+// Get diff summary for a project
 router.get("/:id/diff-summary", authenticateToken, async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
   const { id: userId, role } = req.user;
@@ -1796,7 +1774,7 @@ router.get("/jira/test-connection", authenticateToken, async (req, res) => {
  *         name: projectId
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
  *     requestBody:
  *       required: true
  *       content:
@@ -1838,7 +1816,7 @@ router.put(
  *       - in: path
  *         name: id
  *         schema:
- *           type: string
+ *           type: integer
  *         required: true
  *         description: Project ID
  *     responses:
@@ -1889,5 +1867,25 @@ router.put(
  *         description: Failed to fetch tickets from Jira (Invalid credentials or network error)
  */
 router.get("/:id/jira/tickets", authenticateToken, projectController.getJiraTickets);
+/**
+ * @swagger
+ * /projects/public/{projectId}:
+ *   get:
+ *     summary: Get project by ID
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.get('/public/:projectId', projectController.getProjectPublicDetail);// Get diff summary for a project
+
 
 export default router;
