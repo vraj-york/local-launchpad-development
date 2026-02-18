@@ -127,7 +127,7 @@ model RoadmapItem {
   id          Int       @id @default(autoincrement())
   roadmapId   Int
   releaseId   Int?      // 🔥 optional
-  projectVersionId Int?
+
 
   title       String
   description String?
@@ -142,7 +142,8 @@ model RoadmapItem {
   updatedAt   DateTime  @updatedAt
 
   roadmap     Roadmap   @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
-  projectVersion  ProjectVersion? @relation("VersionRoadmapItems",fields: [projectVersionId],references: [id])
+  projectVersions ProjectVersion[] @relation("VersionRoadmapItems")
+  
   }
 
 enum RoadmapStatus {

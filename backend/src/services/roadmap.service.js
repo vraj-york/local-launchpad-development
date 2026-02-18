@@ -47,7 +47,7 @@ export const deleteRoadmapTx = async (tx, roadmapId) => {
         include: {
             items: {
                 include: {
-                    projectVersion: {
+                    projectVersions: {
                         select: { id: true, version: true },
                     },
                 },
@@ -59,12 +59,13 @@ export const deleteRoadmapTx = async (tx, roadmapId) => {
     }
 
     const linkedVersion = roadmap.items.find(
-        (item) => item.projectVersionId !== null
+        (item) => item.projectVersions && item.projectVersions.length > 0
     );
     if (linkedVersion) {
+        const versions = linkedVersion.projectVersions.map((v) => v.version).join(", ");
         throw new ApiError(
             400,
-            `Cannot delete roadmap. Item "${linkedVersion.title}" is linked to version "${linkedVersion.projectVersion.version}".`
+            `Cannot delete roadmap. Item "${linkedVersion.title}" is linked to version(s) "${versions}".`
         );
     }
 
@@ -82,17 +83,18 @@ export const deleteRoadmapItemTx = async (tx, roadmapId, itemId) => {
     const item = await tx.roadmapItem.findUnique({
         where: { id: itemId, roadmapId: roadmapId },
         include: {
-            projectVersion: { select: { version: true } },
+            projectVersions: { select: { version: true } },
         },
     });
 
     if (!item) {
         throw new ApiError(404, "Roadmap item not found");
     }
-    if (item.projectVersionId) {
+    if (item.projectVersions && item.projectVersions.length > 0) {
+        const versions = item.projectVersions.map((v) => v.version).join(", ");
         throw new ApiError(
             400,
-            `Cannot delete item. Linked to version "${item.projectVersion?.version}".`
+            `Cannot delete item. Linked to version(s) "${versions}".`
         );
     }
 
@@ -134,11 +136,12 @@ export const listRoadmapItemsByProjectService = async (projectId, user) => {
             items: {
                 orderBy: { id: 'asc' },
                 include: {
-                    projectVersion: {
+                    projectVersions: {
                         include: {
                             release: true,
                         },
                     },
+
                 },
             },
         },
