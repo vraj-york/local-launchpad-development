@@ -1,20 +1,30 @@
-import { BrowserRouter, Navigate, Route, Routes as RouterRoutes, } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext';
-import LoginPage from '../pages/LoginPage';
-import { MainLayout } from '@/layouts/MainLayout';
-import ProjectDetails from '@/pages/ProjectDetails';
-import Dashboard from '@/pages/Dashboard';
-import GitDiff from '@/pages/GitDiff';
-import Projects from '@/pages/Projects';
-import CreateProject from '@/pages/CreateProject';
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes as RouterRoutes,
+} from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import LoginPage from "../pages/LoginPage";
+import { MainLayout } from "@/layouts/MainLayout";
+import ProjectDetails from "@/pages/ProjectDetails";
+import Dashboard from "@/pages/Dashboard";
+import GitDiff from "@/pages/GitDiff";
+import Projects from "@/pages/Projects";
+import CreateProject from "@/pages/CreateProject";
+import { PublicProjectView } from "@/pages/PublicProjectView";
 
 export const Routes = () => {
-
   const { user, loading } = useAuth();
 
   const publicRoutes = [
     { path: "/login", element: <LoginPage /> },
-  ]
+    {
+      path: "/projects/public/:projectId",
+      element: <PublicProjectView />,
+      publicOnly: false,
+    },
+  ];
 
   const privateRoutes = [
     { path: "/dashboard", element: <Dashboard /> },
@@ -22,8 +32,7 @@ export const Routes = () => {
     { path: "/projects/new", element: <CreateProject /> },
     { path: "/projects/:projectId", element: <ProjectDetails /> },
     { path: "/projects/:projectId/diff", element: <GitDiff /> },
-  ]
-
+  ];
 
   if (loading) {
     return <div>Loading...</div>;
@@ -36,7 +45,15 @@ export const Routes = () => {
           <Route
             key={index}
             path={route.path}
-            element={!user ? route.element : <Navigate to="/dashboard" replace />}
+            element={
+              route.publicOnly === false ? (
+                route.element
+              ) : !user ? (
+                route.element
+              ) : (
+                <Navigate to="/dashboard" replace />
+              )
+            }
           />
         ))}
 
@@ -50,8 +67,11 @@ export const Routes = () => {
           ))}
         </Route>
 
-        <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
+        <Route
+          path="*"
+          element={<Navigate to={user ? "/dashboard" : "/login"} replace />}
+        />
       </RouterRoutes>
     </BrowserRouter>
-  )
-}
+  );
+};

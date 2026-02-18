@@ -57,7 +57,6 @@ const ProjectDetails = () => {
                 if (!project) setLoading(true); // Only show loading if we don't have project data yet
                 const data = await getRoadmapItemsByProjectId(projectId);
                 setRoadmap(data);
-                console.log(data, "data from roadmap from getRoadmapItemsByProjectId")
             } catch (error) {
                 console.error("Failed to load project:", error);
             } finally {
@@ -153,12 +152,7 @@ const ProjectDetails = () => {
                             onRoadmapUpdate={async (roadmap) => {
                                 // We use updateProject endpoint which expects { roadmap: ... }
                                 try {
-                                    // console.log(roadmap, "road map payload")
-                                    const data = {
-                                        roadmap: roadmap
-                                    }
-                                    console.log(data, "road map payload to update")
-                                    const updatedProject = await updateRoadmapByProjectId(project.id, data);
+                                    const updatedProject = await updateRoadmapByProjectId(project.id, { roadmap });
                                     toast.success("Roadmap updated successfully");
                                 } catch (error) {
                                     toast.error(error.error || "Failed to update roadmap");
