@@ -166,7 +166,10 @@ const itemData = (i) => ({
     priority: i.priority,
     startDate: new Date(i.startDate),
     endDate: new Date(i.endDate),
+    type: i.type
+
 });
+
 
 
 export const updateRoadmapService = async ({ projectId, user, roadmap }) => {
