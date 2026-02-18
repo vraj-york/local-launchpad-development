@@ -438,7 +438,7 @@ function RoadMapManagement({
     <div
       className={`${isEmbedded ? "" : "min-h-screen bg-gray-50 p-8"} rounded-xl`}
     >
-      <div className="mx-auto">
+      <div className="mx-auto max-w-5xl">
         {!isEmbedded && (
           <PageHeader
             title="Project Roadmap"
