@@ -661,6 +661,9 @@ project: '68b6da8e7a78dd9ff9cff850',source: 'snippet'};
                         buildUrl,
                         isActive: true,
                         uploadedBy: userId,
+                        roadmapItems: {
+                            connect: roadmapItemIds ? roadmapItemIds.map(id => ({ id: Number(id) })) : []
+                        }
                     },
                 });
 
@@ -669,7 +672,6 @@ project: '68b6da8e7a78dd9ff9cff850',source: 'snippet'};
                         where: { id: { in: roadmapItemIds } },
                         data: {
                             releaseId,
-                            projectVersionId: version.id,
                         },
                     });
                 }
@@ -972,7 +974,10 @@ project: '68b6da8e7a78dd9ff9cff850',
                 zipFilePath: zipPath,
                 buildUrl,
                 isActive: true,
-                uploadedBy: userId
+                uploadedBy: userId,
+                roadmapItems: {
+                    connect: Array.isArray(roadmapItemIds) ? roadmapItemIds.map(id => ({ id: Number(id) })) : []
+                }
             }
         });
 
@@ -981,7 +986,6 @@ project: '68b6da8e7a78dd9ff9cff850',
                 where: { id: { in: roadmapItemIds.map(Number) } },
                 data: {
                     releaseId,
-                    projectVersionId: version.id
                 }
             });
         }

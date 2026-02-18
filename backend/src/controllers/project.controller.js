@@ -21,9 +21,7 @@ export const projectController = {
     // GET /api/projects/:projectId
     getById: asyncHandler(async (req, res) => {
         const projectId = Number(req.params.projectId);
-
         const project = await getProjectByIdService(projectId, req.user);
-
         if (!project) {
             res.status(404);
             throw new ApiError(404, 'Project not found');

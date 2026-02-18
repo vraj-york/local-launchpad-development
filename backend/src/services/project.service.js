@@ -175,46 +175,56 @@ export const getProjectByIdService = async (projectId, user = null) => {
   // 1. Define the base query that applies to everyone
   const whereClause = {
     id: projectId,
-  }; // 2. Add Permission Logic
+  };
+
+  /**
+  * 2️ Role-based access
+  */
+  if (user?.id) {
+    if (user.role === "manager") {
+      // Manager → only own created projects
+      whereClause.createdById = user.id;
+    }
+  }
+
+  /* 3️ Include releases ONLY if user exists
+  */
+  const include = {
+    createdBy: {
+      select: { id: true, name: true, email: true },
+    },
+    assignedManager: {
+      select: { id: true, name: true, email: true },
+    },
+    versions: {
+      where: { isActive: true },
+      select: { id: true, version: true, buildUrl: true, createdAt: true }
+    },
+    //  Roadmaps
+    roadmaps: {
+      orderBy: { id: "asc" },
+      include: {
+        items: {
+          orderBy: { id: "asc" },
+          include: {
+            projectVersions: true
+          }
+        },
+      },
+    },
+  };
 
   if (user?.id) {
-    // Authenticated: User must be owner, manager, or have explicit access
-    whereClause.OR = [
-      { createdById: user.id },
-      { assignedManagerId: user.id },
-      { projectAccess: { some: { userId: user.id } } }, // Optional: Still allow them to see it if it's public
-      // { isPublic: true }
-    ];
-  } // 3. Define Release Filter (Only show active if user is null)
-  const releaseInclude = user?.id
-    ? {
-        orderBy: { id: "desc" },
-        include: {
-          versions: { orderBy: { id: "desc" } },
-        },
-      }
-    : {
-        where: { isActive: true },
-        include: {
-          versions: { where: { isActive: true } },
-        },
-      };
-
+    include.releases = {
+      orderBy: { id: "desc" },
+      include: {
+        versions: { orderBy: { id: "desc" } },
+      },
+    };
+  }
   const project = await prisma.project.findFirst({
     where: whereClause,
-    include: {
-      createdBy: { select: { id: true, name: true, email: true } },
-      assignedManager: { select: { id: true, name: true, email: true } }, // :compass: Planning roadmap
-
-      roadmaps: {
-        orderBy: { id: "asc" },
-        include: {
-          items: { orderBy: { id: "asc" } },
-        },
-      }, // :rocket: Release / version execution
-
-      releases: releaseInclude,
-    },
+    include
   });
   return project;
 };
