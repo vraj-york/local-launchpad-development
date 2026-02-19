@@ -39,7 +39,7 @@ export const PublicProjectView = () => {
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-slate-50 w-full overflow-hidden">
       <div className="mx-auto w-full px-4 md:px-8 py-6">
-        <div className="w-full flex justify-between items-center bg-white p-5 rounded-lg">
+        <div className="w-full max-w-5xl mx-auto flex justify-between items-center bg-white p-5 rounded-lg">
           <div className="flex flex-col item-center">
             <h1 className="text-xl font-bold text-slate-800 tracking-tight">
               Name: {publicProject?.name}

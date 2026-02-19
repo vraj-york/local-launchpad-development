@@ -273,10 +273,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
   return (
     <div>
-      <PageHeader
-        title="Release Management"
-        description="Manage releases and upload ZIP files"
-      >
+      <PageHeader title="Release Management">
         {canManageReleases && (
           <div className="flex gap-2">
             {releases.length > 0 && (
@@ -486,10 +483,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Create New Release</DialogTitle>
-            {/* <DialogDescription>
-              Add a new release for this project. You can upload builds to it
-              after creating.
-            </DialogDescription> */}
           </DialogHeader>
           <form onSubmit={handleCreateRelease} className="space-y-4">
             <div className="space-y-2">
@@ -547,6 +540,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
           open={showUploadForm}
           onOpenChange={(open) => {
             setShowUploadForm(open);
+            ƒ;
             if (!open) resetUploadForm();
           }}
         >
@@ -578,23 +572,43 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       <SelectValue placeholder="Choose a release..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {!releases.some((r) => !r.isLocked) && (
-                        <SelectItem
-                          value="CREATE_NEW"
-                          className="text-emerald-600 font-medium"
-                        >
-                          + Create New Release
-                        </SelectItem>
-                      )}
-                      {releases.map((release) => (
-                        <SelectItem
-                          key={release.id}
-                          value={release.id.toString()}
-                          disabled={release.isLocked}
-                        >
-                          {release.name} {release.isLocked ? "(Locked)" : ""}
-                        </SelectItem>
-                      ))}
+                      {(() => {
+                        const lastFiveLockedReleases = releases
+                          .filter((r) => r.isLocked)
+                          .slice(0, 5);
+                        const unlockedReleases = releases.filter(
+                          (r) => !r.isLocked,
+                        );
+                        return (
+                          <>
+                            {unlockedReleases.length === 0 && (
+                              <SelectItem
+                                value="CREATE_NEW"
+                                className="text-emerald-600 font-medium"
+                              >
+                                + Create New Release
+                              </SelectItem>
+                            )}
+                            {unlockedReleases.map((release) => (
+                              <SelectItem
+                                key={release.id}
+                                value={release.id.toString()}
+                              >
+                                {release.name}
+                              </SelectItem>
+                            ))}
+                            {lastFiveLockedReleases.map((release) => (
+                              <SelectItem
+                                key={release.id}
+                                value={release.id.toString()}
+                                disabled
+                              >
+                                {release.name} (Locked)
+                              </SelectItem>
+                            ))}
+                          </>
+                        );
+                      })()}
                     </SelectContent>
                   </Select>
                 </div>
