@@ -81,7 +81,33 @@ export const createProjectValidation = [
     body("assignedManagerId")
         .isInt()
         .withMessage("Assigned manager ID must be an integer"),
+    body("githubUsername")
+        .trim()
+        .notEmpty()
+        .withMessage("GitHub username is required"),
 
+    body("githubToken")
+        .trim()
+        .notEmpty()
+        .withMessage("GitHub Personal Access Token (PAT) is required"),
+
+    body("jiraAccessKey")
+        .isEmail()
+        .withMessage("A valid Jira account email(access key) is required for authentication"),
+
+    body("jiraBaseUrl")
+        .isURL()
+        .withMessage("Jira Base URL must be a valid URL (e.g., https://company.atlassian.net)"),
+
+    body("jiraProjectKey")
+        .trim()
+        .notEmpty()
+        .withMessage("Jira Project Key is required (e.g., PROJ)"),
+
+    body("jiraAccessToken")
+        .trim()
+        .notEmpty()
+        .withMessage("Jira API Token is required"),
     body("roadmaps")
         .isArray({ min: 1 })
         .withMessage("At least one roadmap is required"),
@@ -92,12 +118,34 @@ export const updateProjectValidation = [
     param("projectId")
         .isInt()
         .withMessage("Invalid project id"),
-
-    body("roadmap")
+    body("githubUsername")
+        .trim()
         .notEmpty()
-        .withMessage("Roadmap is required"),
+        .withMessage("GitHub username is required"),
 
-    ...roadmapValidators("roadmap"),
+    body("githubToken")
+        .trim()
+        .notEmpty()
+        .withMessage("GitHub Personal Access Token (PAT) is required"),
+
+    body("jiraAccessKey")
+        .isEmail()
+        .withMessage("A valid Jira account email(access key) is required for authentication"),
+
+    body("jiraBaseUrl")
+        .isURL()
+        .withMessage("Jira Base URL must be a valid URL (e.g., https://company.atlassian.net)"),
+
+    body("jiraProjectKey")
+        .trim()
+        .notEmpty()
+        .withMessage("Jira Project Key is required (e.g., PROJ)"),
+
+    body("jiraAccessToken")
+        .trim()
+        .notEmpty()
+        .withMessage("Jira API Token is required"),
+
 ];
 export const updateRoadmapsArrayValidation = [
     param("projectId")

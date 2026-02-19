@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 import ApiError from "../utils/apiError.js";
 import { createRoadmapWithItems } from "./roadmap.service.js";
 import { fetchProjectJiraTickets } from "../utils/jiraIntegration.js";
+import axios from "axios";
 
 /**
  * Shared access check (PRIVATE helper inside same service)
@@ -30,7 +31,37 @@ export async function assertProjectAccess(projectId, user) {
 
   return project;
 }
+const validateGithubConnection = async (username, token) => {
+  try {
+    // We check the user profile; it's the lightest way to verify a token
+    await axios.get(`https://api.github.com/users/${username}`, {
+      headers: { Authorization: `token ${token}` },
+    });
+  } catch (error) {
+    throw new ApiError(400, "Invalid GitHub credentials or username.");
+  }
+};
 
+const validateJiraConnection = async (baseUrl, projectKey, email, apiToken) => {
+  try {
+    // 1. Jira requires: base64(email:apiToken)
+    const authString = Buffer.from(`${email}:${apiToken}`).toString('base64');
+
+    const url = `${baseUrl.replace(/\/$/, "")}/rest/api/2/project/${projectKey}`;
+
+    await axios.get(url, {
+      headers: {
+        'Authorization': `Basic ${authString}`,
+        'Accept': 'application/json',
+        'X-Atlassian-Token': 'no-check' // Optional: prevents some XSRF issues
+      },
+    });
+  } catch (error) {
+    // Log the actual response from Jira to see exactly why it failed (401, 403, or 404)
+
+    throw new ApiError(400, `Jira Validation Failed: ${error.response?.data?.errorMessages?.[0] || "Check credentials"}`);
+  }
+};
 /**
  * create project
  */
@@ -49,7 +80,7 @@ export const createProjectService = async ({ userId, body }) => {
     roadmaps,
   } = body;
   /**
-   * Validate assigned manager exists
+   * 1. Validate assigned manager exists
    */
   const managerExists = await prisma.user.findFirst({
     where: {
@@ -62,9 +93,18 @@ export const createProjectService = async ({ userId, body }) => {
   if (!managerExists) {
     throw new ApiError(400, "Assigned manager not found");
   }
+
+  /**
+   * 2. Validate External Connections
+   * Perform these before opening the DB transaction to keep it lean.
+   */
+  await Promise.all([
+    validateGithubConnection(githubUsername, githubToken),
+    validateJiraConnection(jiraBaseUrl, jiraProjectKey, jiraAccessKey, jiraAccessToken)
+  ]);
   return prisma.$transaction(async (tx) => {
     /**
-     * 1. Create project
+     * 3. Create project
      */
     const project = await tx.project.create({
       data: {
@@ -83,7 +123,7 @@ export const createProjectService = async ({ userId, body }) => {
     });
 
     /**
-     * 2. Create roadmaps and items
+     * 4. Create roadmaps and items
      */
     for (const roadmap of roadmaps) {
       await createRoadmapWithItems(tx, project.id, roadmap);
@@ -183,7 +223,7 @@ export const getProjectByIdService = async (projectId, user = null) => {
   if (user?.id) {
     if (user.role === "manager") {
       // Manager → only own created projects
-      whereClause.createdById = user.id;
+      whereClause.assignedManagerId = user.id;
     }
   }
 
@@ -207,7 +247,11 @@ export const getProjectByIdService = async (projectId, user = null) => {
         items: {
           orderBy: { id: "asc" },
           include: {
-            projectVersions: true
+            projectVersions: {
+              include: {
+                release: true,
+              },
+            },
           }
         },
       },
@@ -371,74 +415,61 @@ export async function getProjectInfoService(projectId) {
     lastUpdated: activeVersion?.createdAt ?? null,
   };
 }
-const roadmapData = (r) => ({
-  title: r.title,
-  description: r.description,
-  status: r.status,
-  timelineStart: new Date(r.timelineStart),
-  timelineEnd: new Date(r.timelineEnd),
-});
 
-const itemData = (i) => ({
-  title: i.title,
-  description: i.description,
-  status: i.status,
-  priority: i.priority,
-  startDate: new Date(i.startDate),
-  endDate: new Date(i.endDate),
-});
 
-export const updateProjectService = async ({ projectId, userId, roadmap }) => {
-  return prisma.$transaction(async (tx) => {
-    // 2️⃣ Upsert roadmap (only one allowed)
-    let roadmapId;
+export const updateProjectDetailsService = async ({ projectId, userId, body }) => {
+  const {
+    description,
+    githubUsername,
+    githubToken,
+    jiraAccessKey, // Added to fix the auth issue
+    jiraBaseUrl,
+    jiraProjectKey,
+    jiraAccessToken,
+  } = body;
 
-    if (roadmap.id) {
-      const updated = await tx.roadmap.update({
-        where: { id: roadmap.id },
-        data: roadmapData(roadmap),
-      });
-      roadmapId = updated.id;
-    } else {
-      const created = await tx.roadmap.create({
-        data: {
-          ...roadmapData(roadmap),
-          projectId: Number(projectId),
-        },
-      });
-      roadmapId = created.id;
-    }
+  // 1. Check if project exists and user has permission
+  const existingProject = await prisma.project.findUnique({
+    where: { id: Number(projectId) },
+  });
 
-    // 3️⃣ Split items
-    const existingItems = roadmap.items.filter((i) => i.id);
-    const newItems = roadmap.items.filter((i) => !i.id);
+  if (!existingProject) {
+    throw new ApiError(404, "Project not found");
+  }
 
-    // 4️⃣ Update existing items (parallel)
-    await Promise.all(
-      existingItems.map((item) =>
-        tx.roadmapItem.update({
-          where: { id: item.id },
-          data: itemData(item),
-        }),
-      ),
-    );
+  /** * 2. Validate Connections 
+   * We only validate if the user is providing new credentials
+   */
+  const githubUser = githubUsername || existingProject.githubUsername;
+  const githubPass = githubToken || existingProject.githubToken;
 
-    // 5️⃣ Create new items (bulk)
-    if (newItems.length) {
-      await tx.roadmapItem.createMany({
-        data: newItems.map((i) => ({
-          ...itemData(i),
-          roadmapId,
-        })),
-      });
-    }
+  if (githubUser && githubPass) {
+    await validateGithubConnection(githubUser, githubPass);
+  }
 
-    return {
-      message: "Project updated successfully",
-    };
+  const jEmail = jiraAccessKey || existingProject.jiraAccessKey;
+  const jBase = jiraBaseUrl || existingProject.jiraBaseUrl;
+  const jKey = jiraProjectKey || existingProject.jiraProjectKey;
+  const jToken = jiraAccessToken || existingProject.jiraAccessToken;
+
+  if (jEmail && jBase && jKey && jToken) {
+    await validateJiraConnection(jBase, jKey, jEmail, jToken);
+  }
+
+  // 3. Update the database
+  return await prisma.project.update({
+    where: { id: Number(projectId) },
+    data: {
+      description,
+      githubUsername,
+      githubToken,
+      jiraAccessKey,
+      jiraBaseUrl,
+      jiraProjectKey,
+      jiraAccessToken,
+    },
   });
 };
-
 export const getJiraTicketsService = async (projectId, user) => {
   // 1️⃣ Access check
   const project = await assertProjectAccess(projectId, user);

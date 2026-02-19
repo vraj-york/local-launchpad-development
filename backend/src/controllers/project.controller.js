@@ -3,9 +3,9 @@ import {
     createProjectService, listProjectsService, setReleaseStatusService,
     getProjectLiveUrlService,
     listProjectVersionsService, getProjectByIdService, getProjectInfoService,
-    updateProjectService,
     getJiraTicketsService,
-    activateProjectVersionService
+    activateProjectVersionService,
+    updateProjectDetailsService
 } from "../services/project.service.js";
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
@@ -53,16 +53,11 @@ export const projectController = {
         res.status(201).json(project);
     }),
     update: async (req, res) => {
-        const { roadmap } = req.body;
 
-        // advanced validations
-        const validatedRoadmap = validateRoadmapTimelines([roadmap])[0];
-        validateRoadmapItemsTimeline(validatedRoadmap);
 
-        const project = await updateProjectService({
+        const project = await updateProjectDetailsService({
             projectId: Number(req.params.projectId),
-            user: req.user,
-            roadmap: validatedRoadmap,
+            userId: req.user.id, body: req.body,
         });
 
         res.json(project);

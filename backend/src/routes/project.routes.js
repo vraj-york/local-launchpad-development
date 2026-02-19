@@ -15,7 +15,7 @@ import config from "../config/index.js";
 import { validateProjectName } from "../utils/projectValidation.utils.js";
 import allowRoles from "../middleware/role.middleware.js";
 import { projectController } from "../controllers/project.controller.js";
-import { createProjectValidation } from "../validators/project.validator.js";
+import { createProjectValidation, updateProjectValidation } from "../validators/project.validator.js";
 import { validate } from "../validators/validate.middleware.js";
 dotenv.config();
 
@@ -1789,14 +1789,13 @@ router.get("/jira/test-connection", authenticateToken, async (req, res) => {
 });
 
 /**
- * Update project (single roadmap + items)
- */
-/**
  * @swagger
  * /projects/{projectId}:
  *   put:
- *     summary: Update project roadmap and items
- *     tags: [Projects]
+ *     summary: Update project details and integrations
+ *     description: Update project description and validate/update GitHub or Jira connection details.
+ *     tags:
+ *       - Projects
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -1805,24 +1804,27 @@ router.get("/jira/test-connection", authenticateToken, async (req, res) => {
  *         required: true
  *         schema:
  *           type: integer
+ *         description: Project ID
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
- *             required: [roadmap]
  *             properties:
- *               roadmap:
- *                 type: object
- *                 description: Single roadmap with editable items
+ *               description:
+ *                 type: string
+ *                 example: Updated project description
+ *               githubUsername:
+ *                 type: string
+ *                 example: octocat
  *     responses:
  *       200:
- *         description: Roadmap updated successfully
+ *         description: Project updated successfully
  *       400:
- *         description: Validation error
- *       403:
- *         description: Forbidden
+ *         description: Invalid input or integration connection failed
+ *       401:
+ *         description: Unauthorized
  *       404:
  *         description: Project not found
  */
@@ -1830,7 +1832,7 @@ router.get("/jira/test-connection", authenticateToken, async (req, res) => {
 router.put(
   "/:projectId",
   authenticateToken,
-  createProjectValidation, // reuse same validations
+  updateProjectValidation,
   projectController.update
 );
 
