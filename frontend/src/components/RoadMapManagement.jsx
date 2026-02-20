@@ -62,8 +62,6 @@ function RoadMapManagement({
 
   const roadmaps = value !== undefined ? value : internalRoadmaps;
 
-  console.log(roadmaps, "roadmaps");
-
   const setRoadmaps = (newRoadmaps) => {
     if (onChange) {
       onChange(newRoadmaps);
@@ -736,7 +734,7 @@ function RoadMapManagement({
                                           Item {idx + 1}
                                         </span>
 
-                                        <div className="flex flex-wrap gap-1.5 items-center">
+                                        <div className="flex flex-wrap gap-1.5 items-center max-w-full">
                                           {Array.isArray(
                                             item?.projectVersions,
                                           ) &&
@@ -744,11 +742,11 @@ function RoadMapManagement({
                                             item.projectVersions.map((pv) => (
                                               <Badge
                                                 key={pv.id ?? pv.version}
-                                                className="rounded-sm"
+                                                className="rounded-sm shrink-0"
                                                 size="sm"
                                               >
-                                                {pv.release?.name ?? "—"} (
-                                                v{pv.version})
+                                                {pv.release?.name ?? "—"} ( v
+                                                {pv.version})
                                               </Badge>
                                             ))}
                                         </div>
@@ -1062,7 +1060,7 @@ function RoadMapManagement({
                           <div>
                             <div className="flex items-start justify-between mb-4">
                               <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-1">
+                                <div className="flex items-center gap-3">
                                   <h3 className="text-xl font-bold text-slate-800">
                                     {roadmap.title}
                                   </h3>
@@ -1077,44 +1075,38 @@ function RoadMapManagement({
                                   )}
                                 </div>
                                 {roadmap.description && (
-                                  <p className="text-sm text-slate-500 mb-1">
+                                  <p className="text-xs text-slate-500">
                                     {roadmap.description}
                                   </p>
                                 )}
-                                {roadmap.timelineStart &&
-                                  roadmap.timelineEnd && (
-                                    <p className="text-sm text-slate-500">
-                                      {new Date(
-                                        roadmap.timelineStart,
-                                      ).toLocaleDateString("en-GB", {
-                                        day: "numeric",
-                                        month: "short",
-                                        year: "numeric",
-                                      })}{" "}
-                                      -{" "}
-                                      {new Date(
-                                        roadmap.timelineEnd,
-                                      ).toLocaleDateString("en-GB", {
-                                        day: "numeric",
-                                        month: "short",
-                                        year: "numeric",
-                                      })}
-                                    </p>
-                                  )}
                               </div>
+                              
                               <div className="flex items-center gap-3">
                                 <div className="text-right">
                                   <div className="text-sm font-medium text-slate-600">
                                     {Math.round(progress)}%
                                   </div>
-                                  <div className="text-xs text-slate-400">
-                                    {
-                                      roadmap.items.filter(
-                                        (i) => i.status === "COMPLETED",
-                                      ).length
-                                    }
-                                    /{roadmap.items.length} completed
-                                  </div>
+
+                                  {roadmap.timelineStart &&
+                                    roadmap.timelineEnd && (
+                                      <p className="text-xs text-slate-500">
+                                        {new Date(
+                                          roadmap.timelineStart,
+                                        ).toLocaleDateString("en-GB", {
+                                          day: "numeric",
+                                          month: "short",
+                                          year: "numeric",
+                                        })}{" "}
+                                        -{" "}
+                                        {new Date(
+                                          roadmap.timelineEnd,
+                                        ).toLocaleDateString("en-GB", {
+                                          day: "numeric",
+                                          month: "short",
+                                          year: "numeric",
+                                        })}
+                                      </p>
+                                    )}
                                 </div>
                                 {/* menu to edit items */}
                                 {!readOnly && (
@@ -1177,26 +1169,56 @@ function RoadMapManagement({
                                     )}
                                   </button>
                                   <div className="flex-1 min-w-0">
-                                    <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-start justify-between gap-8">
                                       <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-1">
-                                          {getPriorityIcon(item.priority)}
-                                          <span className="font-medium text-slate-700">
-                                            {item.title}
-                                          </span>
-                                          {item.type && (
-                                            <span className="px-1.5 py-0.5 text-xs text-slate-500 bg-slate-100 rounded">
-                                              {item.type}
+                                        <div>
+                                          <div className="flex items-center gap-2 mb-1">
+                                            {getPriorityIcon(item.priority)}
+                                            <span className="font-medium text-slate-700">
+                                              {item.title}
                                             </span>
+                                            {item.type && (
+                                              <span className="px-1.5 py-0.5 text-xs text-slate-500 bg-slate-100 rounded">
+                                                {item.type}
+                                              </span>
+                                            )}
+                                          </div>
+                                          {item.description && (
+                                            <p className="text-sm text-slate-500 mb-1">
+                                              {item.description}
+                                            </p>
                                           )}
                                         </div>
-                                        {item.description && (
-                                          <p className="text-sm text-slate-500 mb-1">
-                                            {item.description}
-                                          </p>
-                                        )}
+
+                                        {/* connected project versions - between details and status, max-width + wrap */}
+                                        {Array.isArray(item?.projectVersions) &&
+                                          item.projectVersions.length > 0 && (
+                                            <div className="flex flex-wrap gap-1.5 items-center max-w-full mt-2">
+                                              {item.projectVersions.map(
+                                                (pv) => (
+                                                  <Badge
+                                                    key={pv.id ?? pv.version}
+                                                    className="rounded-sm shrink-0"
+                                                    size="sm"
+                                                  >
+                                                    {pv.release?.name ?? "—"} (
+                                                    {pv.version})
+                                                  </Badge>
+                                                ),
+                                              )}
+                                            </div>
+                                          )}
+                                      </div>
+                                      <div className="flex flex-col items-end gap-2">
+                                        <span
+                                          className={`shrink-0 px-2 py-1 text-xs font-medium rounded ${getStatusColor(
+                                            item.status,
+                                          )}`}
+                                        >
+                                          {item.status.replace("_", " ")}
+                                        </span>
                                         {item.startDate && item.endDate && (
-                                          <p className="text-sm text-slate-500">
+                                          <p className="text-xs text-slate-500">
                                             {new Date(
                                               item.startDate,
                                             ).toLocaleDateString("en-GB", {
@@ -1214,31 +1236,6 @@ function RoadMapManagement({
                                             })}
                                           </p>
                                         )}
-                                      </div>
-                                      <div className="flex flex-col items-end gap-2">
-                                        <span
-                                          className={`px-2 py-1 text-xs font-medium rounded ${getStatusColor(
-                                            item.status,
-                                          )}`}
-                                        >
-                                          {item.status.replace("_", " ")}
-                                        </span>
-                                        <div className="flex flex-wrap gap-1.5 items-center">
-                                          {Array.isArray(
-                                            item?.projectVersions,
-                                          ) &&
-                                            item.projectVersions.length > 0 &&
-                                            item.projectVersions.map((pv) => (
-                                              <Badge
-                                                key={pv.id ?? pv.version}
-                                                className="rounded-sm"
-                                                size="sm"
-                                              >
-                                                {pv.release?.name ?? "—"} (
-                                                {pv.version})
-                                              </Badge>
-                                            ))}
-                                        </div>
                                       </div>
                                     </div>
                                   </div>
