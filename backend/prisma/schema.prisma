@@ -34,8 +34,8 @@ model Project {
 
   jiraBaseUrl      String?
   jiraProjectKey   String?
-  jiraAccessToken  String?
-  jiraAccessKey    String?
+  jiraApiToken  String?
+  jiraUsername    String?
   jiraIssueType    String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

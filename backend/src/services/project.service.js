@@ -73,8 +73,8 @@ export const createProjectService = async ({ userId, body }) => {
     githubToken,
     jiraBaseUrl,
     jiraProjectKey,
-    jiraAccessToken,
-    jiraAccessKey,
+    jiraApiToken,
+    jiraUsername,
     jiraIssueType,
     assignedManagerId,
     roadmaps,
@@ -100,7 +100,7 @@ export const createProjectService = async ({ userId, body }) => {
    */
   await Promise.all([
     validateGithubConnection(githubUsername, githubToken),
-    validateJiraConnection(jiraBaseUrl, jiraProjectKey, jiraAccessKey, jiraAccessToken)
+    validateJiraConnection(jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken)
   ]);
   return prisma.$transaction(async (tx) => {
     /**
@@ -114,8 +114,8 @@ export const createProjectService = async ({ userId, body }) => {
         githubToken,
         jiraBaseUrl,
         jiraProjectKey,
-        jiraAccessToken,
-        jiraAccessKey,
+        jiraApiToken,
+        jiraUsername,
         jiraIssueType,
         assignedManagerId: Number(assignedManagerId),
         createdById: userId,
@@ -422,10 +422,10 @@ export const updateProjectDetailsService = async ({ projectId, userId, body }) =
     description,
     githubUsername,
     githubToken,
-    jiraAccessKey, // Added to fix the auth issue
+    jiraUsername, // Added to fix the auth issue
     jiraBaseUrl,
     jiraProjectKey,
-    jiraAccessToken,
+    jiraApiToken,
   } = body;
 
   // 1. Check if project exists and user has permission
@@ -447,10 +447,10 @@ export const updateProjectDetailsService = async ({ projectId, userId, body }) =
     await validateGithubConnection(githubUser, githubPass);
   }
 
-  const jEmail = jiraAccessKey || existingProject.jiraAccessKey;
+  const jEmail = jiraUsername || existingProject.jiraUsername;
   const jBase = jiraBaseUrl || existingProject.jiraBaseUrl;
   const jKey = jiraProjectKey || existingProject.jiraProjectKey;
-  const jToken = jiraAccessToken || existingProject.jiraAccessToken;
+  const jToken = jiraApiToken || existingProject.jiraApiToken;
 
   if (jEmail && jBase && jKey && jToken) {
     await validateJiraConnection(jBase, jKey, jEmail, jToken);
@@ -463,10 +463,10 @@ export const updateProjectDetailsService = async ({ projectId, userId, body }) =
       description,
       githubUsername,
       githubToken,
-      jiraAccessKey,
+      jiraUsername,
       jiraBaseUrl,
       jiraProjectKey,
-      jiraAccessToken,
+      jiraApiToken,
     },
   });
 };
@@ -480,16 +480,16 @@ export const getJiraTicketsService = async (projectId, user) => {
     select: {
       jiraBaseUrl: true,
       jiraProjectKey: true,
-      jiraAccessToken: true,
-      jiraAccessKey: true, // This is expected to be the email/username
+      jiraApiToken: true,
+      jiraUsername: true, // This is expected to be the email/username
     },
   });
 
   if (
     !projectDetails.jiraBaseUrl ||
     !projectDetails.jiraProjectKey ||
-    !projectDetails.jiraAccessToken ||
-    !projectDetails.jiraAccessKey
+    !projectDetails.jiraApiToken ||
+    !projectDetails.jiraUsername
   ) {
     throw new ApiError(400, "Jira configuration missing for this project");
   }
@@ -498,8 +498,8 @@ export const getJiraTicketsService = async (projectId, user) => {
   const result = await fetchProjectJiraTickets({
     baseUrl: projectDetails.jiraBaseUrl,
     projectKey: projectDetails.jiraProjectKey,
-    apiToken: projectDetails.jiraAccessToken,
-    email: projectDetails.jiraAccessKey,
+    apiToken: projectDetails.jiraApiToken,
+    email: projectDetails.jiraUsername,
   });
 
   if (!result.success) {

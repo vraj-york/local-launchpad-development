@@ -91,9 +91,9 @@ export const createProjectValidation = [
         .notEmpty()
         .withMessage("GitHub Personal Access Token (PAT) is required"),
 
-    body("jiraAccessKey")
+    body("jiraUsername")
         .isEmail()
-        .withMessage("A valid Jira account email(access key) is required for authentication"),
+        .withMessage("A valid Jira account email is required for authentication"),
 
     body("jiraBaseUrl")
         .isURL()
@@ -104,7 +104,7 @@ export const createProjectValidation = [
         .notEmpty()
         .withMessage("Jira Project Key is required (e.g., PROJ)"),
 
-    body("jiraAccessToken")
+    body("jiraApiToken")
         .trim()
         .notEmpty()
         .withMessage("Jira API Token is required"),
@@ -128,7 +128,7 @@ export const updateProjectValidation = [
         .notEmpty()
         .withMessage("GitHub Personal Access Token (PAT) is required"),
 
-    body("jiraAccessKey")
+    body("jiraUsername")
         .isEmail()
         .withMessage("A valid Jira account email(access key) is required for authentication"),
 
@@ -141,7 +141,7 @@ export const updateProjectValidation = [
         .notEmpty()
         .withMessage("Jira Project Key is required (e.g., PROJ)"),
 
-    body("jiraAccessToken")
+    body("jiraApiToken")
         .trim()
         .notEmpty()
         .withMessage("Jira API Token is required"),
