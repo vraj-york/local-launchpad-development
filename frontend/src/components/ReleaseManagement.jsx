@@ -12,7 +12,14 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PageHeader } from "./PageHeader";
 import { Spinner } from "./ui/spinner";
-import { ChevronDown, Lock, Plus, Unlock, Upload } from "lucide-react";
+import {
+  CheckCircle,
+  ChevronDown,
+  Lock,
+  Plus,
+  Unlock,
+  Upload,
+} from "lucide-react";
 import { Badge } from "./ui/badge";
 import {
   Select,
@@ -55,6 +62,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [version, setVersion] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState("");
+  const [uploadSuccessBuildUrl, setUploadSuccessBuildUrl] = useState(null);
 
   const [roadmaps, setRoadmaps] = useState([]);
   const [roadmapsLoading, setRoadmapsLoading] = useState(false);
@@ -192,23 +200,25 @@ const ReleaseManagement = ({ projectId, projectName }) => {
         selectedRoadmapItemIds,
       );
 
+      console.log("upload release result", result);
+
       clearInterval(progressInterval);
       setUploadProgress(100);
 
+      const versionLabel = result?.version;
+      const buildUrlDisplay = result?.buildUrl ?? null;
       setUploadStatus(
-        `Upload successful! Version: ${result.version.version} - Build URL: ${result.buildUrl}`,
+        `Upload successful! Version: ${versionLabel}${buildUrlDisplay ? " - Build URL: " : ""}`,
       );
+      setUploadSuccessBuildUrl(buildUrlDisplay);
       setUploadFile(null);
       setSelectedRelease("");
       setVersion("");
       setSelectedRoadmapItemIds([]);
-      setShowUploadForm(false);
       const fileInput = document.getElementById("file-input");
       if (fileInput) fileInput.value = "";
       await loadReleases();
-      toast.success(
-        `Project uploaded successfully! Version: ${result.version.version}`,
-      );
+      toast.success(`Project uploaded successfully! Version: ${versionLabel}`);
     } catch (err) {
       const errorMessage = err.error || err.message || "Upload failed";
       setUploadStatus(`Upload failed: ${errorMessage}`);
@@ -234,6 +244,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     setVersion("");
     setSelectedRoadmapItemIds([]);
     setUploadStatus("");
+    setUploadSuccessBuildUrl(null);
     setUploadProgress(0);
     const fileInput = document.getElementById("file-input");
     if (fileInput) fileInput.value = "";
@@ -426,7 +437,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                         {release.versions.map((version) => (
                           <div
                             key={version.id}
-                            className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg hover:border-emerald-200 transition-colors"
+                            className={`flex justify-between items-center p-3 ${version.isActive ? "bg-primary/10 border border-primary" : "bg-white border border-slate-100"}  rounded-lg hover:border-primary transition-colors`}
                           >
                             <div className="flex flex-col gap-2">
                               <div className="flex items-center gap-3">
@@ -456,16 +467,23 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                 </div>
                               </div>
                             </div>
-                            {version.buildUrl && (
-                              <a
-                                href={version.buildUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-emerald-600 hover:text-emerald-700 text-xs font-medium flex items-center gap-1"
-                              >
-                                Live Build ↗
-                              </a>
-                            )}
+                            <div className="flex flex-col gap-3">
+                              {version.isActive && (
+                                <Badge className="bg-primary text-primary-foreground">
+                                  <CheckCircle size={14} /> Active
+                                </Badge>
+                              )}
+                              {version.buildUrl && (
+                                <a
+                                  href={version.buildUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-emerald-600 hover:text-emerald-700 text-xs font-medium flex items-center gap-1"
+                                >
+                                  Live Build ↗
+                                </a>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -515,6 +533,57 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 rows={3}
               />
             </div>
+
+            <div className="space-y-2">
+              <Label>Roadmaps (for reference)</Label>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full justify-between gap-2 p-2 hover:bg-transparent"
+                    disabled={roadmapsLoading || roadmaps.length === 0}
+                  >
+                    {roadmapsLoading ? (
+                      "Loading roadmaps..."
+                    ) : roadmaps.length === 0 ? (
+                      "No roadmaps found"
+                    ) : (
+                      "View roadmap items"
+                    )}
+                    <ChevronDown className="h-4 w-4 text-slate-500" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-80 max-h-[320px] overflow-y-auto">
+                  <DropdownMenuLabel>Roadmaps</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {roadmaps.map((roadmap) => (
+                    <div key={roadmap.id} className="py-1">
+                      <DropdownMenuLabel className="text-primary font-medium">
+                        {roadmap.title}
+                      </DropdownMenuLabel>
+                      {roadmap.items?.length ? (
+                        <ul className="list-none pl-3 space-y-1 mt-1">
+                          {roadmap.items.map((item) => (
+                            <li
+                              key={item.id}
+                              className="text-sm"
+                            >
+                              {item.title}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="px-2 py-1.5 text-sm text-slate-500">
+                          No items found for this roadmap.
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
             <DialogFooter className="gap-2 sm:gap-0">
               <Button
                 type="submit"
@@ -540,7 +609,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
           open={showUploadForm}
           onOpenChange={(open) => {
             setShowUploadForm(open);
-            ƒ;
             if (!open) resetUploadForm();
           }}
         >
@@ -628,7 +696,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               </div>
 
               <div className="space-y-2">
-                <Label>Roadmap Items Included</Label>
+                <Label>Completed Roadmap Items</Label>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -763,6 +831,20 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   }`}
                 >
                   {uploadStatus}
+                  {uploadStatus.includes("Upload successful") &&
+                    uploadSuccessBuildUrl && (
+                      <>
+                        {" "}
+                        <a
+                          href={uploadSuccessBuildUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline font-medium hover:opacity-80 break-all"
+                        >
+                          {uploadSuccessBuildUrl}
+                        </a>
+                      </>
+                    )}
                 </div>
               )}
 

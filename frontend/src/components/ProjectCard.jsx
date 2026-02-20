@@ -15,7 +15,6 @@ import DiffModal from "./DiffModal";
 import config from "@/config";
 
 const ProjectCard = ({ project }) => {
-  console.log(project, "project");
   const navigate = useNavigate();
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
 
