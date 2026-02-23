@@ -528,8 +528,6 @@ export const uploadReleaseVersionService = async (
     } else {
         fs.emptyDirSync(projectFolder);
     }
-    // fs.removeSync(projectRoot);
-    // fs.ensureDirSync(projectRoot);
 
     /* -------------------- 5. Extract zip -------------------- */
     await extract(zipPath, { dir: projectRoot });
@@ -582,6 +580,7 @@ project: '68b6da8e7a78dd9ff9cff850',
                 // Remove Script
                 html = html.replace(/<script>[\s\S]*?ZipSync Header functionality[\s\S]*?<\/script>/, "");
             }
+
             // Always inject the header if body exists
             if (html.toLowerCase().includes("<body")) {
 
@@ -593,11 +592,8 @@ project: '68b6da8e7a78dd9ff9cff850',
                     releaseName: release.name,
                     apiUrl: process.env.BASE_URL || "http://localhost:5000"
                 };
-                console.log('headerData', headerData)
+                console.log('🔧 Injecting release header with data:', headerData);
                 const generatedHeader = generateReleaseHeader(headerData);
-
-                // console.log("📝 Generated Header HTML:", generatedHeader); // Optional: uncomment if needed
-
                 html = html.replace(
                     /<body([^>]*)>/i,
                     `<body$1>\n${generatedHeader}`
@@ -624,13 +620,11 @@ project: '68b6da8e7a78dd9ff9cff850',
 
     // 1. If a .git folder exists in the parent, MOVE it into our new version folder
     if (fs.existsSync(permanentGitDir)) {
-        console.log("Found existing history. Moving .git to new version folder...");
         fs.moveSync(permanentGitDir, localGitDir);
     }
 
     // 2. Initialize if NO history was found (First time ever)
     if (!fs.existsSync(localGitDir)) {
-        console.log("No history found. Initializing fresh...");
         runCommand("git init", gitWorkingDir);
         runCommand("git branch -m main", gitWorkingDir);
         runCommand(`git config user.name "Zip Worker"`, gitWorkingDir);
@@ -676,39 +670,59 @@ project: '68b6da8e7a78dd9ff9cff850',
     if (!buildDir) throw new ApiError(400, "Build output not found");
 
     const buildDirPath = path.join(actualProjectPath, buildDir);
+
     // FIX: Patch index.html to use relative paths (e.g., /assets/ -> assets/)
     const indexPath = path.join(buildDirPath, "index.html");
     if (fs.existsSync(indexPath)) {
         let html = fs.readFileSync(indexPath, "utf-8");
 
-        // FIX 1: Look for any attribute followed by ="/ or ='/ and remove the slash
-        // This turns src="/assets/..." into src="assets/..."
-        html = html.replace(/=(['"])\//g, '=$1');
+        // This version handles:
+        // 1. src="/assets/..." -> src="assets/..."
+        // 2. href="/assets/..." -> href="assets/..."
+        // 3. Any quotes or lack thereof
+        html = html.replace(/(src|href)=["']?\/assets\//g, (match, p1) => {
+            return `${p1}="assets/`;
+        });
 
-        // FIX 2: Look for any standalone "/assets/" in scripts or meta tags
-        // This handles cases like: const path = "/assets/img.png"
-        html = html.replace(/(["'])\/assets\//g, '$1assets/');
+        // CATCH-ALL: Force any string starting with /assets, /images, or /vectors to be relative
+        html = html.replace(/["']\/(assets|images|vectors|static)\//g, (match, p1) => {
+            return `"${p1}/`;
+        });
 
         fs.writeFileSync(indexPath, html, "utf-8");
-        console.log("✅ Fixed: All absolute paths (images/favicons) are now relative.");
     }
-
     /* -------------------- 10. Upload ZIP to S3 -------------------- */
 
     const s3BaseKey = `projects/${release.project.id}/releases/${releaseId}/${versionNumber}`;
+    const patchAllAssets = (dir) => {
+        const files = fs.readdirSync(dir);
+        files.forEach(file => {
+            const filePath = path.join(dir, file);
+            if (fs.statSync(filePath).isDirectory()) {
+                patchAllAssets(filePath);
+            } else if (/\.(js|css|html)$/.test(file)) {
+                let content = fs.readFileSync(filePath, "utf-8");
 
+                // Replaces "/assets/" with "assets/" globally in JS/CSS/HTML
+                const updatedContent = content.replace(/(["'])\/(assets|images|vectors|static)\//g, '$1$2/');
+
+                if (content !== updatedContent) {
+                    fs.writeFileSync(filePath, updatedContent, "utf-8");
+                    console.log(`✨ Patched: ${file}`);
+                }
+            }
+        });
+    };
+
+    patchAllAssets(buildDirPath);
     // This uploads the contents of buildDirPath to S3 under the /build/ prefix
     await uploadDirectoryToS3(
         buildDirPath,
-        `${s3BaseKey}/${buildDir}`
+        s3BaseKey
     );
 
-    await uploadDirectoryToS3(
-        buildDirPath,
-        `${s3BaseKey}/${buildDir}`
-    );
-    const buildUrl = `https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${s3BaseKey}/${buildDir}/index.html`;
 
+    const buildUrl = `https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${s3BaseKey}/index.html`;
 
     /* -------------------- 11. DB transaction (OPTIMIZED) -------------------- */
     const newVersion = await prisma.$transaction(async (tx) => {
