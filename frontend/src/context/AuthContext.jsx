@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect } from 'react';
 import { loginUser } from '../api/index';
 import { googleLogout } from '@react-oauth/google';
+import { isTokenExpired } from '../utils/auth';
 
 export const AuthContext = createContext();
 
@@ -8,17 +9,25 @@ export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
+    const clearAuthStorage = () => {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        setUser(null);
+    };
+
     useEffect(() => {
         const storedUser = localStorage.getItem('user');
         const token = localStorage.getItem('token');
 
         if (storedUser && token) {
-            try {
-                setUser(JSON.parse(storedUser));
-            } catch (error) {
-                // Clear invalid data
-                localStorage.removeItem('user');
-                localStorage.removeItem('token');
+            if (isTokenExpired(token)) {
+                clearAuthStorage();
+            } else {
+                try {
+                    setUser(JSON.parse(storedUser));
+                } catch (error) {
+                    clearAuthStorage();
+                }
             }
         }
         setLoading(false);
@@ -36,22 +45,21 @@ export const AuthProvider = ({ children }) => {
 
     const logout = () => {
         googleLogout();
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        setUser(null);
+        clearAuthStorage();
     };
 
     const checkAuth = () => {
         const storedUser = localStorage.getItem('user');
         const token = localStorage.getItem('token');
 
-        if (storedUser && token) {
-            try {
-                setUser(JSON.parse(storedUser));
-            } catch (error) {
-                localStorage.removeItem('user');
-                localStorage.removeItem('token');
-            }
+        if (!storedUser || !token || isTokenExpired(token)) {
+            clearAuthStorage();
+            return;
+        }
+        try {
+            setUser(JSON.parse(storedUser));
+        } catch (error) {
+            clearAuthStorage();
         }
     };
 
