@@ -22,12 +22,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "./ui/button";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Lock, Unlock } from "lucide-react";
 
 export function SelectActiveVersion({
   release: releases = [],
   projectId,
   onActivated,
+  compact = false,
+  isPublic = false,
+  selectLabel = "Choose Version to Activate",
+  darkTrigger = false,
 }) {
   const [activating, setActivating] = useState(false);
   const [selectedValue, setSelectedValue] = useState("");
@@ -42,11 +46,29 @@ export function SelectActiveVersion({
     .flatMap((r) => r.versions || [])
     .find((v) => v.isActive)?.id;
 
-  const handleValueChange = (versionId) => {
+  const handleValueChange = async (versionId) => {
     if (!versionId || !projectId) return;
     if (String(versionId) === String(activeVersionId)) return;
     const versionObj = getVersionById(versionId);
     const versionLabel = versionObj ? `v${versionObj.version}` : "version";
+
+    if (isPublic) {
+      try {
+        setActivating(true);
+        setSelectedValue(versionId);
+        await activateReleaseVersions(projectId, Number(versionId));
+        toast.success(`${versionLabel} activated successfully`);
+        setPendingActivation(null);
+        onActivated?.();
+      } catch (err) {
+        toast.error(err.error || "Failed to activate version");
+        setSelectedValue(activeVersionId ? String(activeVersionId) : "");
+      } finally {
+        setActivating(false);
+      }
+      return;
+    }
+
     setSelectedValue(versionId);
     setPendingActivation({
       versionId,
@@ -87,19 +109,26 @@ export function SelectActiveVersion({
 
   if (!hasAnyVersions) return null;
 
+  const triggerClassName = cn(
+    compact && "h-8 text-sm",
+    darkTrigger &&
+      "border-0 bg-gradient-to-r from-slate-700 to-slate-800 text-white font-bold shadow-sm [&_svg]:text-white [&_svg]:opacity-100 min-w-[140px]",
+  );
+
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
-        <Label>Choose Version to Activate</Label>
+      <div className={cn("flex flex-wrap items-center gap-2", compact && "gap-1.5")}>
+        {!compact && !darkTrigger && <Label>{selectLabel}</Label>}
+        {compact && darkTrigger && <Label className="text-sm text-slate-700">{selectLabel}</Label>}
         <Select
         value={
           selectedValue || (activeVersionId ? String(activeVersionId) : "")
         }
         onValueChange={handleValueChange}
         disabled={activating}
-        className="w-full"
+        className={compact ? "w-auto min-w-[120px]" : "w-full"}
       >
-        <SelectTrigger className="w-full">
+        <SelectTrigger className={triggerClassName}>
           {activating ? (
             <span className="flex items-center gap-2">
               <Spinner className="size-4" />
@@ -115,7 +144,8 @@ export function SelectActiveVersion({
             if (versions.length === 0) return null;
             return (
               <SelectGroup key={release.id}>
-                <SelectLabel>{release.name}</SelectLabel>
+                <div className={cn("flex items-center gap-2")}>
+                <SelectLabel className={`${release.isLocked ? "text-red-500": "text-green-500"}`}>{release.name}</SelectLabel> {release.isLocked ? <Lock className="w-4 h-4 text-red-500" /> : <Unlock className="w-4 h-4 text-green-500" />}</div>
                 {versions.map((version) => (
                   <SelectItem
                     key={version.id}
@@ -125,7 +155,7 @@ export function SelectActiveVersion({
                         "bg-primary text-primary-foreground focus:bg-primary focus:text-primary-foreground ",
                     )}
                   >
-                    {getVersionLabel(version)}
+                    {release.name} · {getVersionLabel(version)}
                     {version.isActive && " (Active)"}
                   </SelectItem>
                 ))}
