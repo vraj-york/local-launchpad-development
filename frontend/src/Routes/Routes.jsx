@@ -13,15 +13,21 @@ import GitDiff from "@/pages/GitDiff";
 import Projects from "@/pages/Projects";
 import CreateProject from "@/pages/CreateProject";
 import { PublicProjectView } from "@/pages/PublicProjectView";
+import { ClientLink } from "@/pages/ClientLink";
 
 export const Routes = () => {
   const { user, loading } = useAuth();
 
   const publicRoutes = [
     { path: "/login", element: <LoginPage /> },
+    // {
+    //   path: "/projects/public/:projectId",
+    //   element: <PublicProjectView />,
+    //   publicOnly: false,
+    // },
     {
       path: "/projects/public/:projectId",
-      element: <PublicProjectView />,
+      element: <ClientLink />,
       publicOnly: false,
     },
   ];
