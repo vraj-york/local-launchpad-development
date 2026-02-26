@@ -4,6 +4,7 @@
 /backend/.env
 /backend/projects/
 /backend/uploads/
+/backend/screenshots
 
 /frontend/node_modules/
 /frontend/build/
@@ -17,3 +18,4 @@
 
 /feedback-widget/node_modules/
 /feedback-widget/.env
+/feedback-widget/dist
