@@ -31,19 +31,19 @@ export const projectController = {
     }),
 
     create: asyncHandler(async (req, res) => {
-        const { roadmaps } = req.body;
-        if (!Array.isArray(roadmaps) || roadmaps.length === 0) {
-            throw new ApiError(400, "roadmap is required");
-        }
+        //const { roadmaps } = req.body;
+        // if (!Array.isArray(roadmaps) || roadmaps.length === 0) {
+        //     throw new ApiError(400, "roadmap is required");
+        // }
         /**
-         * roadmap-level validations
-         * (basic required/enums already handled by middleware)
-         */
-        const validatedRoadmaps = validateRoadmapTimelines(roadmaps);
+        //  * roadmap-level validations
+        //  * (basic required/enums already handled by middleware)
+        //  */
+        // const validatedRoadmaps = validateRoadmapTimelines(roadmaps);
 
-        validatedRoadmaps.forEach((roadmap) => {
-            validateRoadmapItemsTimeline(roadmap);
-        });
+        // validatedRoadmaps.forEach((roadmap) => {
+        //     validateRoadmapItemsTimeline(roadmap);
+        // });
 
         const project = await createProjectService({
             userId: req.user.id,

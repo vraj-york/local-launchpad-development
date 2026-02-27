@@ -69,15 +69,13 @@ export const createProjectService = async ({ userId, body }) => {
   const {
     name,
     description,
-    githubUsername,
-    githubToken,
     jiraBaseUrl,
     jiraProjectKey,
     jiraApiToken,
     jiraUsername,
     jiraIssueType,
     assignedManagerId,
-    roadmaps,
+
   } = body;
   /**
    * 1. Validate assigned manager exists
@@ -99,7 +97,6 @@ export const createProjectService = async ({ userId, body }) => {
    * Perform these before opening the DB transaction to keep it lean.
    */
   await Promise.all([
-    validateGithubConnection(githubUsername, githubToken),
     validateJiraConnection(jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken)
   ]);
   return prisma.$transaction(async (tx) => {
@@ -110,8 +107,6 @@ export const createProjectService = async ({ userId, body }) => {
       data: {
         name,
         description,
-        githubUsername,
-        githubToken,
         jiraBaseUrl,
         jiraProjectKey,
         jiraApiToken,
@@ -125,9 +120,9 @@ export const createProjectService = async ({ userId, body }) => {
     /**
      * 4. Create roadmaps and items
      */
-    for (const roadmap of roadmaps) {
-      await createRoadmapWithItems(tx, project.id, roadmap);
-    }
+    // for (const roadmap of roadmaps) {
+    //   await createRoadmapWithItems(tx, project.id, roadmap);
+    // }
 
     return project;
   });
@@ -420,8 +415,6 @@ export async function getProjectInfoService(projectId) {
 export const updateProjectDetailsService = async ({ projectId, userId, body }) => {
   const {
     description,
-    githubUsername,
-    githubToken,
     jiraUsername, // Added to fix the auth issue
     jiraBaseUrl,
     jiraProjectKey,
@@ -437,15 +430,7 @@ export const updateProjectDetailsService = async ({ projectId, userId, body }) =
     throw new ApiError(404, "Project not found");
   }
 
-  /** * 2. Validate Connections 
-   * We only validate if the user is providing new credentials
-   */
-  const githubUser = githubUsername || existingProject.githubUsername;
-  const githubPass = githubToken || existingProject.githubToken;
 
-  if (githubUser && githubPass) {
-    await validateGithubConnection(githubUser, githubPass);
-  }
 
   const jEmail = jiraUsername || existingProject.jiraUsername;
   const jBase = jiraBaseUrl || existingProject.jiraBaseUrl;
@@ -461,8 +446,6 @@ export const updateProjectDetailsService = async ({ projectId, userId, body }) =
     where: { id: Number(projectId) },
     data: {
       description,
-      githubUsername,
-      githubToken,
       jiraUsername,
       jiraBaseUrl,
       jiraProjectKey,

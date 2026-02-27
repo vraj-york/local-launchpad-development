@@ -81,15 +81,6 @@ export const createProjectValidation = [
     body("assignedManagerId")
         .isInt()
         .withMessage("Assigned manager ID must be an integer"),
-    body("githubUsername")
-        .trim()
-        .notEmpty()
-        .withMessage("GitHub username is required"),
-
-    body("githubToken")
-        .trim()
-        .notEmpty()
-        .withMessage("GitHub Personal Access Token (PAT) is required"),
 
     body("jiraUsername")
         .isEmail()
@@ -107,26 +98,17 @@ export const createProjectValidation = [
     body("jiraApiToken")
         .trim()
         .notEmpty()
-        .withMessage("Jira API Token is required"),
-    body("roadmaps")
-        .isArray({ min: 1 })
-        .withMessage("At least one roadmap is required"),
+        .withMessage("Jira API Token is required")
+    // body("roadmaps")
+    //     .isArray({ min: 1 })
+    //     .withMessage("At least one roadmap is required"),
 
-    ...roadmapValidators("roadmaps.*"),
+    // ...roadmapValidators("roadmaps.*"),
 ];
 export const updateProjectValidation = [
     param("projectId")
         .isInt()
         .withMessage("Invalid project id"),
-    body("githubUsername")
-        .trim()
-        .notEmpty()
-        .withMessage("GitHub username is required"),
-
-    body("githubToken")
-        .trim()
-        .notEmpty()
-        .withMessage("GitHub Personal Access Token (PAT) is required"),
 
     body("jiraUsername")
         .isEmail()
