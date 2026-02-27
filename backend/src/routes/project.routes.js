@@ -1815,9 +1815,7 @@ router.get("/jira/test-connection", authenticateToken, async (req, res) => {
  *               description:
  *                 type: string
  *                 example: Updated project description
- *               githubUsername:
- *                 type: string
- *                 example: octocat
+
  *     responses:
  *       200:
  *         description: Project updated successfully
