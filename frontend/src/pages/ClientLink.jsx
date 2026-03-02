@@ -120,7 +120,7 @@ export const ClientLink = () => {
             </Button>
           )}
         </header>
-        <div className="flex-1 min-h-0 mt-0">
+        <div id="feedback-capture-area" className="flex-1 min-h-0 mt-0">
           {activeBuildUrl ? (
             <iframe
               key={activeBuildUrl}
@@ -133,7 +133,12 @@ export const ClientLink = () => {
               title="Build Preview"
             />
           ) : null}
-          {projectId && <FeedbackWidgetLoader projectId={projectId} />}
+          {projectId && (
+            <FeedbackWidgetLoader
+              projectId={projectId}
+              captureTargetSelector="#feedback-capture-area"
+            />
+          )}
         </div>
       </div>
     </div>
