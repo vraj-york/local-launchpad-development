@@ -922,4 +922,3 @@ export const getReleasePreviewUrl = async (
 
     return version.buildUrl;
 };
-
