@@ -159,14 +159,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     e.preventDefault();
 
     if (!selectedRelease || !uploadFile) return;
-    if (roadmaps.length > 0) {
-      if (selectedRoadmapItemIds.length === 0) {
-        const message = "Please select at least one roadmap item.";
-        setUploadStatus(message);
-        toast.error(message);
-        return;
-      }
-    }
 
     try {
       const selectedRoadmapIds = Array.from(
@@ -534,7 +526,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               />
             </div>
 
-            <div className="space-y-2">
+            {/* <div className="space-y-2">
               <Label>Roadmaps (for reference)</Label>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -582,7 +574,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-            </div>
+            </div> */}
 
             <DialogFooter className="gap-2 sm:gap-0">
               <Button
@@ -616,8 +608,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             <DialogHeader>
               <DialogTitle>Upload to Release</DialogTitle>
               <DialogDescription>
-                Choose a release, optional version and roadmap items, then
-                upload a ZIP file to build.
+                Choose a release and upload a ZIP file. Version and roadmap
+                items are optional.
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleUpload} className="space-y-4">
@@ -695,8 +687,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label>Completed Roadmap Items</Label>
+              {/* <div className="space-y-2"> */}
+              {/* <Label>Roadmap Items (Optional)</Label>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -721,7 +713,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                           ))}
                         </span>
                       ) : (
-                        "Select roadmap items"
+                        "None selected (optional)"
                       )}
                       <ChevronDown className="h-4 w-4 text-slate-500" />
                     </Button>
@@ -772,11 +764,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 </DropdownMenu>
                 {roadmapError && (
                   <p className="text-xs text-red-600">{roadmapError}</p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Select one or more items from the different roadmap.
-                </p>
-              </div>
+                )} */}
+              {/* <p className="text-xs text-muted-foreground">
+                  Optionally link this version to one or more roadmap items.
+                </p> */}
+              {/* </div> */}
 
               <div className="space-y-2">
                 <Label htmlFor="file-input">Upload ZIP File</Label>
