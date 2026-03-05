@@ -28,7 +28,8 @@ model Project {
   description       String?
   createdById       Int
   assignedManagerId Int
-
+  isUploading  Boolean  @default(false)
+  
   githubUsername   String?
   githubToken      String?
 
@@ -37,6 +38,12 @@ model Project {
   jiraApiToken  String?
   jiraUsername    String?
   jiraIssueType    String?
+  
+  port              Int?     @unique
+  projectPath       String?
+  gitRepoPath       String?
+  nginxConfigPath   String?
+  
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

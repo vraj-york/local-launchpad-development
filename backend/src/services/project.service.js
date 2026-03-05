@@ -5,7 +5,17 @@ import ApiError from "../utils/apiError.js";
 import { createRoadmapWithItems } from "./roadmap.service.js";
 import { fetchProjectJiraTickets } from "../utils/jiraIntegration.js";
 import axios from "axios";
+import path from "path";
+import { exec } from "child_process";
+import { promisify } from "util";
+import { execSync } from "child_process";
+import fsExtra from "fs-extra";
+import { simpleGit } from 'simple-git';
+import os from 'os';
+import { execa } from "execa";
+import fs from "fs-extra";
 
+const execAsync = promisify(exec);
 /**
  * Shared access check (PRIVATE helper inside same service)
  */
@@ -65,21 +75,192 @@ const validateJiraConnection = async (baseUrl, projectKey, email, apiToken) => {
 /**
  * create project
  */
+function generateNginxConfigTemplate(projectName, port) {
+  const serverName = `${projectName}.localhost`;
+  return `# Nginx configuration for ${projectName}
+server {
+    listen 80;
+    server_name ${serverName};
+    
+    location / {
+        proxy_pass http://localhost:${port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        
+        add_header X-Release-Version \$upstream_http_x_release_version;
+    }
+
+    location /health {
+        access_log off;
+        return 200 "healthy\\n";
+        add_header Content-Type text/plain;
+    }
+
+    access_log /var/log/nginx/${projectName}_access.log;
+    error_log /var/log/nginx/${projectName}_error.log;
+}`;
+}
+
+async function restartNginx() {
+  try {
+    // Force the absolute path to the executable
+    const nginxBin = '/opt/homebrew/bin/nginx';
+    const restartCmd = `sudo ${nginxBin} -s reload`;
+
+    const { stdout, stderr } = await execAsync(restartCmd);
+
+    if (stderr) console.warn('[WARN] Nginx stderr:', stderr);
+    return true;
+  } catch (error) {
+    // If it still fails, it's likely the password prompt blocking the sync execution
+    console.error('[ERROR] Nginx restart failed. Is NOPASSWD configured?');
+    return false;
+  }
+}
+/**
+ * Automatically opens a specific port on the Linux firewall (UFW).
+ * @param {number} port - The project's assigned port (e.g., 8001)
+ */
+export const allowPortThroughFirewall = async (port) => {
+  try {
+    // 1. Allow the specific TCP port
+    const { stdout } = await execAsync(`sudo ufw allow ${port}/tcp`);
+
+    // 2. Optional: Reload firewall to ensure changes take effect
+    // await execAsync(`sudo ufw reload`);
+
+    return true;
+  } catch (error) {
+    console.error(`[FIREWALL ERROR] Could not open port ${port}:`, error.message);
+    // We don't throw here so the project creation can still finish, 
+    // but we log the failure for the admin.
+    return false;
+  }
+};
+export const reloadNginx = async () => {
+  try {
+    // 1. Find where Nginx is actually installed
+    const { stdout } = await execAsync('which nginx');
+    const nginxBin = stdout.trim();
+
+    // 2. Execute reload
+    await execAsync(`sudo ${nginxBin} -s reload`);
+    return true;
+  } catch (error) {
+    console.error(`[NGINX RELOAD ERROR]: ${error.message}`);
+    // On Local Mac, we don't want to crash the whole app if Nginx isn't running
+    if (os.platform() !== 'darwin') throw error;
+  }
+};
 export const createProjectService = async ({ userId, body }) => {
+  const { name, assignedManagerId } = body;
+  const isLinux = os.platform() === 'linux';
+  const nginxBinary = isLinux ? '/usr/sbin/nginx' : '/opt/homebrew/bin/nginx';
+
+  try {
+    // 1. Validate Manager
+    const managerExists = await prisma.user.findFirst({
+      where: { id: Number(assignedManagerId), role: "manager" },
+      select: { id: true },
+    });
+    if (!managerExists) throw new ApiError(400, "Assigned manager not found");
+
+    // 2. Paths
+    const projectName = name.toLowerCase().replace(/\s+/g, '-');
+    const configFileName = `${projectName}.conf`;
+    const relativeProjectPath = path.join("projects", projectName);
+    const absoluteProjectPath = path.resolve(process.cwd(), relativeProjectPath);
+
+    const nginxAvailableDir = path.resolve(process.cwd(), 'nginx-configs');
+    // NOTE: On Mac Homebrew, the real 'enabled' dir is /opt/homebrew/etc/nginx/servers/
+    const nginxEnabledDir = isLinux
+      ? '/etc/nginx/sites-enabled'
+      : path.resolve(process.cwd(), 'nginx/sites-enabled');
+
+    const absoluteNginxConfigPath = path.join(nginxAvailableDir, configFileName);
+    const symlinkPath = path.join(nginxEnabledDir, configFileName);
+
+    // 3. Port & Firewall
+    const maxPortProject = await prisma.project.aggregate({ _max: { port: true } });
+    const port = (maxPortProject._max.port || 8000) + 1;
+
+    // --- FIX: Only run UFW on Linux ---
+    if (isLinux) {
+      await execPromise(`sudo ufw allow ${port}/tcp`).catch(err =>
+        console.warn(`[WARN] Firewall skip: ${err.message}`)
+      );
+    }
+
+    // 4. Directory Prep
+    await fsExtra.ensureDir(absoluteProjectPath);
+    await fsExtra.ensureDir(nginxAvailableDir);
+    // If on Mac, we only ensureDir if it's a local mock folder
+    if (!isLinux) await fsExtra.ensureDir(nginxEnabledDir);
+
+    // 5. Git Init
+    const git = simpleGit(absoluteProjectPath);
+    await git.init();
+    await git.addConfig('user.name', process.env.GIT_USER_NAME || 'binalc-web');
+    await git.addConfig('user.email', process.env.GIT_USER_EMAIL || 'binal.c@york.ie');
+    await fsExtra.writeFile(path.join(absoluteProjectPath, 'README.md'), `# ${name}`);
+    await git.add('.');
+    await git.commit('Initial project setup');
+
+    // 6. Nginx Config
+    const configContent = generateNginxConfigTemplate(projectName, port);
+    await fsExtra.writeFile(absoluteNginxConfigPath, configContent);
+
+    // 7. Symlink & Restart
+    try {
+      // Use sudo for symlink if it's a system directory
+      const linkCmd = isLinux
+        ? `sudo ln -sf ${absoluteNginxConfigPath} ${symlinkPath}`
+        : `ln -sf ${absoluteNginxConfigPath} ${symlinkPath}`;
+      await execPromise(linkCmd);
+
+      await reloadNginx();
+    } catch (err) {
+      console.warn(`[WARN] Nginx reload skipped/failed: ${err.message}`);
+    }
+
+    // 8. DB Persistence
+    return await prisma.$transaction(async (tx) => {
+      return await tx.project.create({
+        data: {
+          ...body,
+          assignedManagerId: Number(assignedManagerId),
+          createdById: userId,
+          port,
+          projectPath: relativeProjectPath,
+          gitRepoPath: path.join(relativeProjectPath, ".git"),
+          nginxConfigPath: path.join('nginx-configs', configFileName)
+        },
+      });
+    });
+
+  } catch (error) {
+    // 9. Cleanup
+    await fsExtra.remove(absoluteProjectPath);
+    await fsExtra.remove(absoluteNginxConfigPath).catch(() => { });
+    throw new ApiError(500, `Project creation failed: ${error.message}`);
+  }
+};
+export const createProjectService_old = async ({ userId, body }) => {
   const {
     name,
-    description,
-    jiraBaseUrl,
-    jiraProjectKey,
-    jiraApiToken,
-    jiraUsername,
-    jiraIssueType,
     assignedManagerId,
-
+    // ... other fields
   } = body;
+
   /**
-   * 1. Validate assigned manager exists
-   */
+     * 1. Validate assigned manager exists
+     */
   const managerExists = await prisma.user.findFirst({
     where: {
       id: Number(assignedManagerId),
@@ -97,35 +278,138 @@ export const createProjectService = async ({ userId, body }) => {
    * Perform these before opening the DB transaction to keep it lean.
    */
   await Promise.all([
-    validateJiraConnection(jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken)
+    // validateJiraConnection(jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken)
   ]);
-  return prisma.$transaction(async (tx) => {
-    /**
-     * 3. Create project
-     */
-    const project = await tx.project.create({
-      data: {
-        name,
-        description,
-        jiraBaseUrl,
-        jiraProjectKey,
-        jiraApiToken,
-        jiraUsername,
-        jiraIssueType,
-        assignedManagerId: Number(assignedManagerId),
-        createdById: userId,
-      },
+  const projectName = name.toLowerCase().replace(/\s+/g, '-');
+
+  // --- PATH CONFIGURATION ---
+  // 1. Define the relative paths for the Database
+  const relativeProjectPath = path.join("projects", projectName);
+  const relativeGitRepoPath = path.join(relativeProjectPath, ".git");
+
+  // 2. Define the absolute paths for the OS (fsExtra / execSync)
+  const absoluteProjectPath = path.resolve(process.cwd(), relativeProjectPath);
+  const absoluteNginxDir = path.resolve(process.env.NGINX_CONFIG_DIR || './nginx-configs');
+  const nginxConfigFileName = `${projectName}.conf`;
+  const absoluteNginxConfigPath = path.join(absoluteNginxDir, nginxConfigFileName);
+
+  // 3. Port Allocation
+  const maxPortProject = await prisma.project.aggregate({ _max: { port: true } });
+  const port = (maxPortProject._max.port || 8000) + 1;
+
+  try {
+    // 5. Directory Creation (Use ABSOLUTE paths)
+    await fsExtra.ensureDir(absoluteProjectPath);
+    await fsExtra.ensureDir(absoluteNginxDir);
+
+    // 6. Git Initialization (Use ABSOLUTE path)
+    execSync("git init", { cwd: absoluteProjectPath });
+
+    // 7. Nginx Configuration
+    const nginxTemplate = `server {
+    listen 80;
+    server_name ${projectName}.example.com;
+    
+    location / {
+        proxy_pass http://localhost:${port};
+        // ... rest of template
+    }
+}`;
+    await fsExtra.writeFile(absoluteNginxConfigPath, nginxTemplate);
+
+    // 8. Database Persistence (Use RELATIVE paths)
+    return await prisma.$transaction(async (tx) => {
+      const project = await tx.project.create({
+        data: {
+          ...body,
+          assignedManagerId: Number(assignedManagerId),
+          createdById: userId,
+          port,
+          // Store relative strings in DB
+          projectPath: relativeProjectPath,
+          gitRepoPath: relativeGitRepoPath,
+          nginxConfigPath: path.join('nginx-configs', nginxConfigFileName)
+        },
+      });
+
+      return project;
     });
+  } catch (error) {
+    // Cleanup on failure (Use ABSOLUTE paths)
+    if (await fsExtra.pathExists(absoluteProjectPath)) await fsExtra.remove(absoluteProjectPath);
+    if (await fsExtra.pathExists(absoluteNginxConfigPath)) await fsExtra.remove(absoluteNginxConfigPath);
+    throw new ApiError(500, `Project creation failed: ${error.message}`);
+  }
+};
+/**
+ * Dynamically finds where Nginx is installed on this specific machine
+ */
+export const getNginxPaths = async () => {
+  const isLinux = os.platform() === 'linux';
 
-    /**
-     * 4. Create roadmaps and items
-     */
-    // for (const roadmap of roadmaps) {
-    //   await createRoadmapWithItems(tx, project.id, roadmap);
-    // }
+  // Find the real binary path (e.g., /usr/local/bin/nginx or /usr/sbin/nginx)
+  let binary;
+  try {
+    const { stdout } = await execAsync('which nginx');
+    binary = stdout.trim();
+  } catch {
+    binary = isLinux ? '/usr/sbin/nginx' : '/usr/local/bin/nginx';
+  }
 
-    return project;
-  });
+  // Determine the enabled directory
+  const enabledDir = isLinux
+    ? '/etc/nginx/sites-enabled'
+    : path.resolve(process.cwd(), 'nginx/sites-enabled');
+
+  return { binary, enabledDir, isLinux };
+};
+
+export const deleteProjectService = async (projectId) => {
+  const id = Number(projectId);
+
+  const project = await prisma.project.findUnique({ where: { id } });
+  if (!project) {
+    throw new ApiError(404, "Project not found");
+  }
+
+  const { enabledDir: nginxEnabledDir, isLinux } = await getNginxPaths();
+
+  const absoluteProjectPath = path.resolve(process.cwd(), project.projectPath);
+  const absoluteNginxPath = path.resolve(process.cwd(), project.nginxConfigPath);
+
+  const projectName = path.basename(absoluteNginxPath, ".conf");
+  const symlinkPath = path.join(nginxEnabledDir, `${projectName}.conf`);
+
+  try {
+    /* ----------------------------------------
+     * 1. OS-LEVEL CLEANUP (Linux only)
+     * -------------------------------------- */
+    if (isLinux) {
+      await execAsync(
+        `sudo /usr/local/bin/project-cleanup.sh ${project.port || ""} "${symlinkPath}"`
+      );
+    }
+
+    /* ----------------------------------------
+     * 2. FILESYSTEM CLEANUP (App-owned files)
+     * -------------------------------------- */
+    await Promise.all([
+      fsExtra.remove(absoluteProjectPath),
+      fsExtra.remove(absoluteNginxPath),
+      !isLinux && fsExtra.remove(symlinkPath).catch(() => { })
+    ]);
+
+    /* ----------------------------------------
+     * 3. DATABASE CLEANUP
+     * -------------------------------------- */
+    await prisma.project.delete({ where: { id } });
+
+    return { message: "Project deleted successfully" };
+
+  } catch (error) {
+    console.error("[DeleteProjectService]", error);
+    throw new ApiError(500, `Delete failed: ${error.message}`);
+  }
 };
 
 /*LIST PROJECTS*/
@@ -491,3 +775,144 @@ export const getJiraTicketsService = async (projectId, user) => {
 
   return result.issues;
 };
+
+
+
+const PREVIEW_ROOT = path.join(process.cwd(), "_previews");
+const PREVIEW_TTL = 10 * 60 * 1000; // ✅ Correct 10 minutes
+
+export const switchProjectVersion = async (
+  projectId,
+  versionId,
+  isPermanent = false
+) => {
+
+  const targetVersion = await prisma.projectVersion.findUnique({
+    where: { id: Number(versionId) },
+    include: { project: true },
+  });
+
+  if (!targetVersion || targetVersion.projectId !== Number(projectId)) {
+    throw new ApiError(404, "Version not found for this project");
+  }
+
+  const projectRoot = path.resolve(
+    process.cwd(),
+    targetVersion.project.projectPath
+  );
+
+  const git = simpleGit(projectRoot);
+  await fs.ensureDir(PREVIEW_ROOT);
+
+  try {
+    // =====================================================
+    // 🟢 PERMANENT SWITCH
+    // =====================================================
+    if (isPermanent) {
+
+      await git.checkout(["-f", targetVersion.zipFilePath]);
+
+      await execa("npm", ["ci"], { cwd: projectRoot, stdio: "inherit" });
+      await execa("npm", ["run", "build"], {
+        cwd: projectRoot,
+        stdio: "inherit",
+      });
+
+      await prisma.$transaction([
+        prisma.projectVersion.updateMany({
+          where: { projectId: Number(projectId) },
+          data: { isActive: false },
+        }),
+        prisma.projectVersion.update({
+          where: { id: Number(versionId) },
+          data: { isActive: true },
+        }),
+      ]);
+
+      return {
+        tag: targetVersion.zipFilePath,
+        version: targetVersion.version,
+        isPermanent: true,
+        url: `http://localhost:${targetVersion.project.port}`,
+      };
+    }
+
+    // =====================================================
+    // 🔵 TEMP PREVIEW SWITCH
+    // =====================================================
+
+    const previewId = `preview_${projectId}_${Date.now()}`;
+    const previewDir = path.join(PREVIEW_ROOT, previewId);
+
+
+    await git.raw([
+      "worktree",
+      "add",
+      "--detach",
+      previewDir,
+      targetVersion.zipFilePath,
+    ]);
+
+    // ✅ Copy .env if exists
+    const envPath = path.join(projectRoot, ".env");
+    if (await fs.pathExists(envPath)) {
+      await fs.copy(envPath, path.join(previewDir, ".env"));
+    }
+
+    try {
+      await execa("npm", ["ci", "--prefer-offline"], {
+        cwd: previewDir,
+        stdio: "inherit",
+      });
+
+      await execa("npm", ["run", "build"], {
+        cwd: previewDir,
+        stdio: "inherit",
+      });
+    } catch (buildError) {
+      console.error("BUILD FAILED:", buildError.message);
+
+      // Cleanup failed preview
+      await git.raw(["worktree", "remove", previewDir, "--force"]);
+      await fs.remove(previewDir);
+
+      throw new ApiError(
+        500,
+        `Build failed for tag ${targetVersion.zipFilePath}`
+      );
+    }
+
+    // Detect build folder (vite = dist, CRA = build)
+    let buildFolder = "dist";
+    if (!(await fs.pathExists(path.join(previewDir, "dist")))) {
+      buildFolder = "build";
+    }
+
+    const previewUrl = `http://localhost:${targetVersion.project.port}/previews/${previewId}/${buildFolder}/index.html`;
+
+    // ===============================
+    // 🧹 AUTO CLEANUP
+    // ===============================
+    setTimeout(async () => {
+      try {
+        await git.raw(["worktree", "remove", previewDir, "--force"]);
+        await fs.remove(previewDir);
+      } catch (err) {
+        console.error("Preview cleanup failed:", err.message);
+      }
+    }, PREVIEW_TTL);
+
+    return {
+      tag: targetVersion.zipFilePath,
+      version: targetVersion.version,
+      isPermanent: false,
+      previewId,
+      url: previewUrl,
+    };
+  } catch (error) {
+    console.error("Switch failed:", error);
+    throw new ApiError(500, `Git Switch Failed: ${error.message}`);
+  }
+};
+
+

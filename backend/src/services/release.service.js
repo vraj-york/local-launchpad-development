@@ -2,13 +2,18 @@ import { PrismaClient } from "@prisma/client";
 import path from "path";
 import fs from "fs-extra";
 import extract from "extract-zip";
-import { execSync } from "child_process";
+import { execSync, spawn, exec } from "child_process";
 import crypto from "crypto";
 import fetch from "node-fetch";
 import ApiError from "../utils/apiError.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
 import { uploadFileToS3Multipart, uploadDirectoryToS3 } from "../utils/uploadFiletoS3.js";
+import simpleGit from 'simple-git';
+import { promisify } from "util";
+import os from 'os';
+import { execa } from "execa";
 
+const execAsync = promisify(exec);
 const prisma = new PrismaClient();
 
 // Environment variables
@@ -447,7 +452,308 @@ export const lockReleaseService = async (releaseId, locked, user) => {
 };
 
 
+/**
+ * Generates the next semantic version for a release (e.g., 1.0.1 -> 1.0.2)
+ */
+export const autoGenerateVersion = async (releaseId) => {
+    const lastVersion = await prisma.projectVersion.findFirst({
+        where: { releaseId },
+        orderBy: { createdAt: "desc" },
+        select: { version: true },
+    });
+
+    if (!lastVersion) {
+        return "1.0.0";
+    }
+
+    const parts = lastVersion.version.split(".").map(Number);
+
+    // Basic Semantic Versioning: Incrementing the Patch (third digit)
+    if (parts.length === 3) {
+        parts[2] += 1;
+        return parts.join(".");
+    }
+
+    return `${lastVersion.version}.1`; // Fallback for non-standard versions
+};
+/**
+ * Executes the build sequence for the extracted ZIP content.
+ * @param {string} tempExtractPath - The directory where the ZIP was extracted.
+ * @returns {Promise<string>} - The absolute path to the production build folder (dist/build).
+ */
+// export const runBuildSequence = async (tempExtractPath) => {
+//     try {
+//         console.log(`[BUILD] Starting build sequence in: ${tempExtractPath}`);
+
+//         // 1. Install Dependencies (Using --prefer-offline for speed)
+//         // We use execSync for simplicity, but you can wrap it in a Promise for better async handling
+//         execSync('npm install --prefer-offline --no-audit', {
+//             cwd: tempExtractPath,
+//             stdio: 'inherit'
+//         });
+
+//         // 2. Run the Build Script
+//         execSync('npm run build', {
+//             cwd: tempExtractPath,
+//             stdio: 'inherit'
+//         });
+//         // For Vite projects
+//         execSync('npm run build -- --base ./', { cwd: tempExtractPath });
+//         // 3. Identify the Output Folder
+//         const possibleDirs = ['dist', 'build', 'out'];
+//         let buildDir = null;
+
+//         for (const dir of possibleDirs) {
+//             const fullPath = path.join(tempExtractPath, dir);
+//             if (await fs.pathExists(fullPath)) {
+//                 buildDir = fullPath;
+//                 break;
+//             }
+//         }
+
+//         if (!buildDir) {
+//             throw new Error("Build succeeded but no 'dist' or 'build' folder was found.");
+//         }
+
+//         return buildDir;
+//     } catch (error) {
+//         console.error("!!! CRITICAL: UPLOAD FAILED !!!", error.message);
+
+//         // Cleanup the temp folder so the NEXT attempt starts fresh
+//         await fsExtra.remove(tempExtractPath).catch(() => { });
+
+//         // Reset Git so the project folder isn't left in a "dirty" state
+//         await git.checkout(['-f', 'main']).catch(() => { });
+//         await git.reset(['--hard', 'HEAD']).catch(() => { });
+
+//         throw new ApiError(500, `Upload failed: ${error.message}`);
+//     }
+// };
+
+/**
+ * Runs npm install and npm run build within the provided temp directory.
+ * Streams output to the main console for real-time debugging.
+ */
+export const runBuildSequence = async (buildContextPath) => {
+    const pkgPath = path.join(buildContextPath, 'package.json');
+    if (!(await fs.pathExists(pkgPath))) {
+        throw new Error(`package.json missing at ${buildContextPath}`);
+    }
+
+    await execa('npm', ['install'], {
+        cwd: buildContextPath,
+        stdio: 'inherit',
+    });
+
+    await execa('npm', ['run', 'build'], {
+        cwd: buildContextPath,
+        stdio: 'inherit',
+    });
+
+    // return actual build output folder
+    if (await fs.pathExists(path.join(buildContextPath, 'dist'))) {
+        return path.join(buildContextPath, 'dist');
+    }
+
+    if (await fs.pathExists(path.join(buildContextPath, 'build'))) {
+        return path.join(buildContextPath, 'build');
+    }
+
+    throw new Error('Build output folder not found (dist/build)');
+};
+
+export const reloadNginx = async () => {
+    try {
+        // 1. Find where Nginx is actually installed
+        const { stdout } = await execAsync('which nginx');
+        const nginxBin = stdout.trim();
+
+        // 2. Execute reload
+        await execAsync(`sudo ${nginxBin} -s reload`);
+        return true;
+    } catch (error) {
+        console.error(`[NGINX RELOAD ERROR]: ${error.message}`);
+        // On Local Mac, we don't want to crash the whole app if Nginx isn't running
+        if (os.platform() !== 'darwin') throw error;
+    }
+};
+
+
 export const uploadReleaseVersionService = async (
+    releaseId,
+    file,
+    versionInput,
+    roadmapItemIds,
+    user
+) => {
+    const { id: userId } = user;
+
+    const release = await prisma.release.findUnique({
+        where: { id: releaseId },
+        include: { project: true },
+    });
+
+    if (!release) {
+        throw new ApiError(404, "Release not found");
+    }
+
+    const project = release.project;
+    const projectRoot = path.resolve(process.cwd(), project.projectPath);
+
+    // 🔑 TEMP FOLDER OUTSIDE PROJECT
+    const tempRoot = path.join(
+        process.cwd(),
+        "_tmp_builds",
+        `project_${project.id}_${Date.now()}`
+    );
+
+
+    const git = simpleGit(projectRoot);
+
+    // ---------- PROJECT LOCK (atomic) ----------
+    const lock = await prisma.project.updateMany({
+        where: {
+            id: project.id,
+            isUploading: false,
+        },
+        data: {
+            isUploading: true,
+        },
+    });
+
+    if (lock.count === 0) {
+        throw new ApiError(
+            409,
+            "Upload already in progress for this project"
+        );
+    }
+
+    try {
+        // ---------- RESET PROJECT ----------
+        await git.reset(["--hard"]);
+        await git.clean("f", ["-d"]);
+
+        // ---------- EXTRACT ZIP ----------
+        await fs.ensureDir(tempRoot);
+        await extract(file.path, { dir: tempRoot });
+
+        // ---------- RESOLVE BUILD ROOT ----------
+        const items = (await fs.readdir(tempRoot))
+            .filter(i => !["__MACOSX", ".DS_Store"].includes(i));
+
+        let buildRoot = tempRoot;
+
+        if (items.length === 1) {
+            const nested = path.join(tempRoot, items[0]);
+            if ((await fs.stat(nested)).isDirectory()) {
+                buildRoot = nested;
+            }
+        }
+
+        // ---------- VALIDATE ----------
+        if (!(await fs.pathExists(path.join(buildRoot, "package.json")))) {
+            throw new ApiError(
+                400,
+                "Invalid ZIP: package.json not found"
+            );
+        }
+
+        // ---------- BUILD ----------
+        await execa("npm", ["install"], {
+            cwd: buildRoot,
+            stdio: "inherit",
+        });
+
+        await execa("npm", ["run", "build"], {
+            cwd: buildRoot,
+            stdio: "inherit",
+        });
+
+        // ---------- FIND BUILD OUTPUT ----------
+        const outputCandidates = ["dist", "build", "out"];
+        let buildOutputPath = null;
+
+        for (const dir of outputCandidates) {
+            const fullPath = path.join(buildRoot, dir);
+            if (await fs.pathExists(fullPath)) {
+                buildOutputPath = fullPath;
+                break;
+            }
+        }
+
+        if (!buildOutputPath) {
+            const contents = await fs.readdir(buildRoot);
+            throw new Error(
+                `Build completed but output folder not found. Found: ${contents.join(", ")}`
+            );
+        }
+
+        // ---------- DEPLOY (ATOMIC REPLACE) ----------
+        const protectedItems = [".git", "node_modules"];
+
+        for (const item of await fs.readdir(projectRoot)) {
+            if (!protectedItems.includes(item)) {
+                await fs.remove(path.join(projectRoot, item));
+            }
+        }
+
+        await fs.copy(buildOutputPath, projectRoot);
+
+        // ---------- VERSIONING ----------
+        const version =
+            versionInput || (await autoGenerateVersion(releaseId));
+
+        const tag = `proj-${project.id}-rel-${releaseId}-v${version}`;
+
+        await git.add(".");
+        await git.commit(`Release ${project.name} v${version}`);
+        await git.addTag(tag);
+
+        await reloadNginx();
+
+        const domain = process.env.BASE_DOMAIN || "localhost";
+        const buildUrl = `http://${domain}:${project.port}/index.html`;
+
+        await prisma.$transaction(async (tx) => {
+            await tx.projectVersion.updateMany({
+                where: { projectId: project.id },
+                data: { isActive: false },
+            });
+
+            await tx.projectVersion.create({
+                data: {
+                    projectId: project.id,
+                    releaseId,
+                    version,
+                    buildUrl,
+                    isActive: true,
+                    zipFilePath: tag,
+                    uploadedBy: userId,
+                },
+            });
+        });
+
+        return {
+            message: "Upload successful",
+            version,
+            url: buildUrl,
+        };
+
+    } finally {
+        // ---------- CLEANUP + UNLOCK ----------
+        await fs.remove(tempRoot).catch(() => { });
+        await fs.remove(file.path).catch(() => { });
+
+        await prisma.project.update({
+            where: { id: project.id },
+            data: { isUploading: false },
+        });
+    }
+};
+
+
+
+export const uploadReleaseVersionService_working_s3 = async (
     releaseId,
     file,
     versionInput,
@@ -592,7 +898,6 @@ project: '68b6da8e7a78dd9ff9cff850',
                     releaseName: release.name,
                     apiUrl: process.env.BASE_URL || "http://localhost:5000"
                 };
-                console.log('🔧 Injecting release header with data:', headerData);
                 const generatedHeader = generateReleaseHeader(headerData);
                 html = html.replace(
                     /<body([^>]*)>/i,
@@ -771,6 +1076,7 @@ project: '68b6da8e7a78dd9ff9cff850',
         buildUrl
     };
 };
+
 
 
 /**

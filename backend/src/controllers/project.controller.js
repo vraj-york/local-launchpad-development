@@ -5,7 +5,9 @@ import {
     listProjectVersionsService, getProjectByIdService, getProjectInfoService,
     getJiraTicketsService,
     activateProjectVersionService,
-    updateProjectDetailsService
+    updateProjectDetailsService,
+    deleteProjectService,
+    switchProjectVersion
 } from "../services/project.service.js";
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
@@ -17,7 +19,11 @@ export const projectController = {
         const projects = await listProjectsService(req.user);
         res.json(projects);
     }),
-
+    deleteProject: asyncHandler(async (req, res) => {
+        const { projectId } = req.params;
+        const result = await deleteProjectService(projectId, req.user);
+        res.json(result);
+    }),
     // GET /api/projects/:projectId
     getById: asyncHandler(async (req, res) => {
         const projectId = Number(req.params.projectId);
@@ -129,5 +135,19 @@ export const projectController = {
         }
 
         res.json(project);
-    }),
+    })
+    ,
+    switchVersion: asyncHandler(async (req, res) => {
+        const { projectId } = req.params;
+        const { versionId, isPermanent } = req.body;
+        console.log('Switching project version', versionId, typeof versionId);
+        // Default isPermanent to false if not provided
+        const result = await switchProjectVersion(
+            projectId,
+            versionId,
+            isPermanent || false
+        );
+
+        res.json(result);
+    })
 };
