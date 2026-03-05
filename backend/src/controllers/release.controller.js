@@ -8,7 +8,7 @@ import {
     getReleaseInfoService,
     publicLockReleaseService,
     uploadReleaseVersionService,
-    getReleasePreviewUrl
+    getReleasePreviewUrl,
 } from "../services/release.service.js";
 
 export const releaseController = {
@@ -70,10 +70,10 @@ export const releaseController = {
         let roadmapItemIds = [];
         if (req.body.roadmapItemIds) {
             // Handle comma-separated string from FormData
-            const rawIds = typeof req.body.roadmapItemIds === 'string' 
-                ? req.body.roadmapItemIds.split(',') 
+            const rawIds = typeof req.body.roadmapItemIds === 'string'
+                ? req.body.roadmapItemIds.split(',')
                 : (Array.isArray(req.body.roadmapItemIds) ? req.body.roadmapItemIds : []);
-            
+
             roadmapItemIds = rawIds
                 .map(id => parseInt(id, 10))
                 .filter(id => !isNaN(id));
@@ -113,4 +113,5 @@ export const releaseController = {
         // Redirect browser directly to build
         return res.redirect(previewUrl);
     })
+
 };

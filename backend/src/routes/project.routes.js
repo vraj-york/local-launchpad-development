@@ -17,6 +17,7 @@ import allowRoles from "../middleware/role.middleware.js";
 import { projectController } from "../controllers/project.controller.js";
 import { createProjectValidation, updateProjectValidation } from "../validators/project.validator.js";
 import { validate } from "../validators/validate.middleware.js";
+import { switchProjectVersion } from "../services/project.service.js";
 dotenv.config();
 
 const router = express.Router();
@@ -1250,6 +1251,7 @@ router.post(
   projectController.activateVersion
 );
 
+
 /**
  * @swagger
  * /projects/{id}/releases/{releaseId}/activate:
@@ -1299,6 +1301,87 @@ router.post(
  *         description: Success
  */
 router.get('/:projectId', authenticateToken, projectController.getById);
+
+
+/**
+ * @swagger
+ * /projects/{projectId}:
+ *   delete:
+ *     summary: Delete a project and its associated files
+ *     description: Deletes a project from the database, and removes its project folder, git repository, and Nginx configuration. Only admins or the project's creator can delete a project.
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         description: The ID of the project to delete
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Project deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Project 'Example Project' and all associated files deleted."
+ *       403:
+ *         description: Forbidden - User does not have permission
+ *       404:
+ *         description: Project not found
+ *       500:
+ *         description: Cleanup failed
+ */
+router.delete('/:projectId', authenticateToken, projectController.deleteProject);
+
+
+/**
+ * @swagger
+ * /projects/{projectId}/switch:
+ *   post:
+ *     summary: Switch UI to a specific version (Preview or Rollback)
+ *     description: Swaps physical files in the project folder to match a Git Tag.
+ *     tags:
+ *       - Projects
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - versionId
+ *             properties:
+ *               versionId:
+ *                 type: number
+ *                 example: 12
+ *               isPermanent:
+ *                 type: boolean
+ *                 description: Set to true to make this the primary 'Active' version.
+ *                 example: false
+ *     responses:
+ *       200:
+ *         description: Successfully switched files.
+ *       404:
+ *         description: Project or Version not found.
+ */
+router.post('/:projectId/switch', projectController.switchVersion);
+
+
 
 // Get diff summary for a project
 router.get("/:id/diff-summary", authenticateToken, async (req, res) => {
