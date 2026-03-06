@@ -45,7 +45,12 @@ export const Routes = () => {
   }
 
   return (
-    <BrowserRouter>
+    <BrowserRouter
+      future={{
+        v7_startTransition: true,
+        v7_relativeSplatPath: true,
+      }}
+    >
       <RouterRoutes>
         {publicRoutes.map((route, index) => (
           <Route
