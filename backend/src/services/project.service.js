@@ -10,7 +10,6 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { execSync } from "child_process";
 import fsExtra from "fs-extra";
-import { simpleGit } from 'simple-git';
 import os from 'os';
 import { execa } from "execa";
 import fs from "fs-extra";
@@ -159,7 +158,7 @@ export const reloadNginx = async () => {
   }
 };
 export const createProjectService = async ({ userId, body }) => {
-  const { name, assignedManagerId } = body;
+  const { name, assignedManagerId, jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken, githubUsername, githubToken } = body;
   const isLinux = os.platform() === 'linux';
   const nginxBinary = isLinux ? '/usr/sbin/nginx' : '/opt/homebrew/bin/nginx';
 
@@ -170,7 +169,10 @@ export const createProjectService = async ({ userId, body }) => {
       select: { id: true },
     });
     if (!managerExists) throw new ApiError(400, "Assigned manager not found");
-
+    await Promise.all([
+      validateJiraConnection(jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken),
+      validateGithubConnection(githubUsername, githubToken)
+    ]);
     // 2. Paths
     const projectName = name.toLowerCase().replace(/\s+/g, '-');
     const configFileName = `${projectName}.conf`;
@@ -202,15 +204,6 @@ export const createProjectService = async ({ userId, body }) => {
     await fsExtra.ensureDir(nginxAvailableDir);
     // If on Mac, we only ensureDir if it's a local mock folder
     if (!isLinux) await fsExtra.ensureDir(nginxEnabledDir);
-
-    // 5. Git Init
-    const git = simpleGit(absoluteProjectPath);
-    await git.init();
-    await git.addConfig('user.name', process.env.GIT_USER_NAME || 'binalc-web');
-    await git.addConfig('user.email', process.env.GIT_USER_EMAIL || 'binal.c@york.ie');
-    await fsExtra.writeFile(path.join(absoluteProjectPath, 'README.md'), `# ${name}`);
-    await git.add('.');
-    await git.commit('Initial project setup');
 
     // 6. Nginx Config
     const configContent = generateNginxConfigTemplate(projectName, port);
@@ -246,8 +239,6 @@ export const createProjectService = async ({ userId, body }) => {
 
   } catch (error) {
     // 9. Cleanup
-    await fsExtra.remove(absoluteProjectPath);
-    await fsExtra.remove(absoluteNginxConfigPath).catch(() => { });
     throw new ApiError(500, `Project creation failed: ${error.message}`);
   }
 };
@@ -778,140 +769,57 @@ export const getJiraTicketsService = async (projectId, user) => {
 
 
 
-const PREVIEW_ROOT = path.join(process.cwd(), "_previews");
-const PREVIEW_TTL = 10 * 60 * 1000; // ✅ Correct 10 minutes
-
 export const switchProjectVersion = async (
   projectId,
-  versionId,
-  isPermanent = false
+  versionTag
 ) => {
 
-  const targetVersion = await prisma.projectVersion.findUnique({
-    where: { id: Number(versionId) },
-    include: { project: true },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId }
   });
 
-  if (!targetVersion || targetVersion.projectId !== Number(projectId)) {
-    throw new ApiError(404, "Version not found for this project");
+  if (!project) {
+    throw new ApiError(404, "Project not found");
   }
 
   const projectRoot = path.resolve(
     process.cwd(),
-    targetVersion.project.projectPath
+    project.projectPath
   );
 
-  const git = simpleGit(projectRoot);
-  await fs.ensureDir(PREVIEW_ROOT);
-
   try {
-    // =====================================================
-    // 🟢 PERMANENT SWITCH
-    // =====================================================
-    if (isPermanent) {
 
-      await git.checkout(["-f", targetVersion.zipFilePath]);
+    runCommand("git fetch --tags", projectRoot);
 
-      await execa("npm", ["ci"], { cwd: projectRoot, stdio: "inherit" });
-      await execa("npm", ["run", "build"], {
-        cwd: projectRoot,
-        stdio: "inherit",
-      });
+    runCommand(`git checkout ${versionTag}`, projectRoot);
 
-      await prisma.$transaction([
-        prisma.projectVersion.updateMany({
-          where: { projectId: Number(projectId) },
-          data: { isActive: false },
-        }),
-        prisma.projectVersion.update({
-          where: { id: Number(versionId) },
-          data: { isActive: true },
-        }),
-      ]);
+    await reloadNginx();
 
-      return {
-        tag: targetVersion.zipFilePath,
-        version: targetVersion.version,
-        isPermanent: true,
-        url: `http://localhost:${targetVersion.project.port}`,
-      };
-    }
+    await prisma.projectVersion.updateMany({
+      where: { projectId },
+      data: { isActive: false }
+    });
 
-    // =====================================================
-    // 🔵 TEMP PREVIEW SWITCH
-    // =====================================================
-
-    const previewId = `preview_${projectId}_${Date.now()}`;
-    const previewDir = path.join(PREVIEW_ROOT, previewId);
-
-
-    await git.raw([
-      "worktree",
-      "add",
-      "--detach",
-      previewDir,
-      targetVersion.zipFilePath,
-    ]);
-
-    // ✅ Copy .env if exists
-    const envPath = path.join(projectRoot, ".env");
-    if (await fs.pathExists(envPath)) {
-      await fs.copy(envPath, path.join(previewDir, ".env"));
-    }
-
-    try {
-      await execa("npm", ["ci", "--prefer-offline"], {
-        cwd: previewDir,
-        stdio: "inherit",
-      });
-
-      await execa("npm", ["run", "build"], {
-        cwd: previewDir,
-        stdio: "inherit",
-      });
-    } catch (buildError) {
-      console.error("BUILD FAILED:", buildError.message);
-
-      // Cleanup failed preview
-      await git.raw(["worktree", "remove", previewDir, "--force"]);
-      await fs.remove(previewDir);
-
-      throw new ApiError(
-        500,
-        `Build failed for tag ${targetVersion.zipFilePath}`
-      );
-    }
-
-    // Detect build folder (vite = dist, CRA = build)
-    let buildFolder = "dist";
-    if (!(await fs.pathExists(path.join(previewDir, "dist")))) {
-      buildFolder = "build";
-    }
-
-    const previewUrl = `http://localhost:${targetVersion.project.port}/previews/${previewId}/${buildFolder}/index.html`;
-
-    // ===============================
-    // 🧹 AUTO CLEANUP
-    // ===============================
-    setTimeout(async () => {
-      try {
-        await git.raw(["worktree", "remove", previewDir, "--force"]);
-        await fs.remove(previewDir);
-      } catch (err) {
-        console.error("Preview cleanup failed:", err.message);
-      }
-    }, PREVIEW_TTL);
+    await prisma.projectVersion.updateMany({
+      where: {
+        projectId,
+        zipFilePath: versionTag
+      },
+      data: { isActive: true }
+    });
 
     return {
-      tag: targetVersion.zipFilePath,
-      version: targetVersion.version,
-      isPermanent: false,
-      previewId,
-      url: previewUrl,
+      message: "Version switched successfully",
+      version: versionTag
     };
-  } catch (error) {
-    console.error("Switch failed:", error);
-    throw new ApiError(500, `Git Switch Failed: ${error.message}`);
+
+  } catch (err) {
+
+    throw new ApiError(
+      500,
+      "Failed to switch version"
+    );
+
   }
 };
 
