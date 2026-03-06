@@ -10,7 +10,6 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { execSync } from "child_process";
 import fsExtra from "fs-extra";
-import { simpleGit } from 'simple-git';
 import os from 'os';
 import { execa } from "execa";
 import fs from "fs-extra";
@@ -206,15 +205,6 @@ export const createProjectService = async ({ userId, body }) => {
     // If on Mac, we only ensureDir if it's a local mock folder
     if (!isLinux) await fsExtra.ensureDir(nginxEnabledDir);
 
-    // // 5. Git Init
-    // const git = simpleGit(absoluteProjectPath);
-    // await git.init();
-    // await git.addConfig('user.name', process.env.GIT_USER_NAME || 'binalc-web');
-    // await git.addConfig('user.email', process.env.GIT_USER_EMAIL || 'binal.c@york.ie');
-    // await fsExtra.writeFile(path.join(absoluteProjectPath, 'README.md'), `# ${name}`);
-    // await git.add('.');
-    // await git.commit('Initial project setup');
-
     // 6. Nginx Config
     const configContent = generateNginxConfigTemplate(projectName, port);
     await fsExtra.writeFile(absoluteNginxConfigPath, configContent);
@@ -249,8 +239,6 @@ export const createProjectService = async ({ userId, body }) => {
 
   } catch (error) {
     // 9. Cleanup
-    // await fsExtra.remove(absoluteProjectPath);
-    // await fsExtra.remove(absoluteNginxConfigPath).catch(() => { });
     throw new ApiError(500, `Project creation failed: ${error.message}`);
   }
 };

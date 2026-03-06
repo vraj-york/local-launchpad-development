@@ -8,7 +8,6 @@ import fetch from "node-fetch";
 import ApiError from "../utils/apiError.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
 import { uploadFileToS3Multipart, uploadDirectoryToS3 } from "../utils/uploadFiletoS3.js";
-import simpleGit from 'simple-git';
 import { promisify } from "util";
 import os from 'os';
 import { execa } from "execa";
