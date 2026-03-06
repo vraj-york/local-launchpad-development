@@ -577,8 +577,6 @@ export const reloadNginx = async () => {
         if (os.platform() !== 'darwin') throw error;
     }
 };
-
-
 export const uploadReleaseVersionService = async (
     releaseId,
     file,
@@ -586,6 +584,7 @@ export const uploadReleaseVersionService = async (
     roadmapItemIds,
     user
 ) => {
+
     const { id: userId } = user;
 
     const release = await prisma.release.findUnique({
@@ -598,19 +597,21 @@ export const uploadReleaseVersionService = async (
     }
 
     const project = release.project;
-    const projectRoot = path.resolve(process.cwd(), project.projectPath);
 
-    // 🔑 TEMP FOLDER OUTSIDE PROJECT
+    const projectRoot = path.resolve(process.cwd(), project.projectPath);
+    const projectFolder = path.dirname(projectRoot);
+
+    console.log("Project root determined as:", projectRoot);
+    console.log("Project folder determined as:", projectFolder);
+
     const tempRoot = path.join(
         process.cwd(),
         "_tmp_builds",
         `project_${project.id}_${Date.now()}`
     );
+    console.log("tempRoot:", tempRoot);
+    await fs.ensureDir(tempRoot);
 
-
-    const git = simpleGit(projectRoot);
-
-    // ---------- PROJECT LOCK (atomic) ----------
     const lock = await prisma.project.updateMany({
         where: {
             id: project.id,
@@ -622,22 +623,15 @@ export const uploadReleaseVersionService = async (
     });
 
     if (lock.count === 0) {
-        throw new ApiError(
-            409,
-            "Upload already in progress for this project"
-        );
+        throw new ApiError(409, "Upload already in progress for this project");
     }
 
     try {
-        // ---------- RESET PROJECT ----------
-        await git.reset(["--hard"]);
-        await git.clean("f", ["-d"]);
 
-        // ---------- EXTRACT ZIP ----------
-        await fs.ensureDir(tempRoot);
+        /* -------------------- 1️⃣ Extract ZIP -------------------- */
+
         await extract(file.path, { dir: tempRoot });
 
-        // ---------- RESOLVE BUILD ROOT ----------
         const items = (await fs.readdir(tempRoot))
             .filter(i => !["__MACOSX", ".DS_Store"].includes(i));
 
@@ -650,71 +644,152 @@ export const uploadReleaseVersionService = async (
             }
         }
 
-        // ---------- VALIDATE ----------
+        /* -------------------- 2️⃣ Validate Project -------------------- */
+
         if (!(await fs.pathExists(path.join(buildRoot, "package.json")))) {
-            throw new ApiError(
-                400,
-                "Invalid ZIP: package.json not found"
-            );
+            throw new ApiError(400, "Invalid ZIP: package.json not found");
         }
 
-        // ---------- BUILD ----------
-        await execa("npm", ["install"], {
-            cwd: buildRoot,
-            stdio: "inherit",
-        });
+        /* -------------------- 3️⃣ Detect Build Output -------------------- */
 
-        await execa("npm", ["run", "build"], {
-            cwd: buildRoot,
-            stdio: "inherit",
-        });
-
-        // ---------- FIND BUILD OUTPUT ----------
         const outputCandidates = ["dist", "build", "out"];
         let buildOutputPath = null;
 
         for (const dir of outputCandidates) {
-            const fullPath = path.join(buildRoot, dir);
-            if (await fs.pathExists(fullPath)) {
-                buildOutputPath = fullPath;
+            const full = path.join(buildRoot, dir);
+            if (await fs.pathExists(full)) {
+                buildOutputPath = full;
                 break;
             }
         }
 
         if (!buildOutputPath) {
-            const contents = await fs.readdir(buildRoot);
-            throw new Error(
-                `Build completed but output folder not found. Found: ${contents.join(", ")}`
+            throw new ApiError(
+                400,
+                "Build folder not found (dist/build/out required in ZIP)"
             );
         }
 
-        // ---------- DEPLOY (ATOMIC REPLACE) ----------
-        const protectedItems = [".git", "node_modules"];
+        /* -------------------- 4️⃣ Version -------------------- */
 
-        for (const item of await fs.readdir(projectRoot)) {
-            if (!protectedItems.includes(item)) {
-                await fs.remove(path.join(projectRoot, item));
-            }
-        }
-
-        await fs.copy(buildOutputPath, projectRoot);
-
-        // ---------- VERSIONING ----------
         const version =
             versionInput || (await autoGenerateVersion(releaseId));
 
+        console.log("Version determined as:", version);
+
+        /* -------------------- 5️⃣ Git Setup -------------------- */
+
+        const validatedProjectName = validateProjectName(project.name);
+
+        const gitWorkingDir = buildRoot;
+        console.log("Git working directory:", gitWorkingDir);
+        const permanentGitDir = path.join(projectFolder, ".git");
+        const localGitDir = path.join(gitWorkingDir, ".git");
+
+        console.log("Permanent .git directory:", permanentGitDir);
+        console.log("Local .git directory:", localGitDir);
+
+        /* Move git history into temp working directory */
+
+        if (fs.existsSync(permanentGitDir)) {
+            fs.moveSync(permanentGitDir, localGitDir, { overwrite: true });
+        }
+
+        /* Initialize repo if first time */
+
+        if (!fs.existsSync(localGitDir)) {
+
+            runCommand("git init", gitWorkingDir);
+            runCommand("git branch -m main", gitWorkingDir);
+
+            runCommand(`git config user.name "Zip Worker"`, gitWorkingDir);
+            runCommand(`git config user.email "worker@zip.com"`, gitWorkingDir);
+
+            const repoExists = await checkRepoExists(validatedProjectName);
+
+            if (!repoExists) {
+                await createGithubRepo(validatedProjectName);
+            }
+
+            const remoteUrl =
+                `https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GITHUB_USERNAME}/${validatedProjectName}.git`;
+
+            runCommand(`git remote add origin ${remoteUrl}`, gitWorkingDir);
+        }
+
+        /* -------------------- 6️⃣ Git Ignore -------------------- */
+        const gitignoreContent = "node_modules\n.DS_Store\n.env\ndist\nbuild\nout";
+
+        fs.writeFileSync(
+            path.join(gitWorkingDir, ".gitignore"),
+            gitignoreContent
+        );
+
+        /* -------------------- 7️⃣ Commit -------------------- */
+
+        runCommand("git add .", gitWorkingDir);
+
+        try {
+            runCommand(`git commit -m "Release ${version}"`, gitWorkingDir);
+        } catch {
+            console.log("No changes detected.");
+        }
+
+        /* -------------------- 8️⃣ Create Tag -------------------- */
+
         const tag = `proj-${project.id}-rel-${releaseId}-v${version}`;
 
-        await git.add(".");
-        await git.commit(`Release ${project.name} v${version}`);
-        await git.addTag(tag);
+        console.log("Tag to be created:", tag);
+
+        try {
+            runCommand(`git tag -a ${tag} -m "Release ${version}"`, gitWorkingDir);
+        } catch {
+            console.log("Tag already exists");
+        }
+
+        /* -------------------- 9️⃣ Push -------------------- */
+
+        console.log("🚀 Pushing update...");
+
+        try {
+
+            runCommand("git pull origin main --rebase", gitWorkingDir);
+
+            runCommand("git push origin main", gitWorkingDir);
+
+            runCommand(`git push origin ${tag}`, gitWorkingDir);
+
+        } catch {
+
+            console.log("⚠️ Push failed → force pushing");
+
+            runCommand("git push origin main --force", gitWorkingDir);
+            runCommand(`git push origin ${tag} --force`, gitWorkingDir);
+
+        }
+
+        /* Move git history back to permanent location */
+
+        fs.moveSync(localGitDir, permanentGitDir, { overwrite: true });
+
+        /* -------------------- 🔟 Deploy Build -------------------- */
+
+        await fs.emptyDir(projectRoot);
+
+        await fs.copy(buildOutputPath, projectRoot);
+
+        /* -------------------- 11️⃣ Reload Nginx -------------------- */
 
         await reloadNginx();
 
         const domain = process.env.BASE_DOMAIN || "localhost";
+
         const buildUrl = `http://${domain}:${project.port}/index.html`;
 
+        /* -------------------- 12️⃣ DB Update -------------------- */
+
         await prisma.$transaction(async (tx) => {
+
             await tx.projectVersion.updateMany({
                 where: { projectId: project.id },
                 data: { isActive: false },
@@ -731,6 +806,7 @@ export const uploadReleaseVersionService = async (
                     uploadedBy: userId,
                 },
             });
+
         });
 
         return {
@@ -740,7 +816,7 @@ export const uploadReleaseVersionService = async (
         };
 
     } finally {
-        // ---------- CLEANUP + UNLOCK ----------
+
         await fs.remove(tempRoot).catch(() => { });
         await fs.remove(file.path).catch(() => { });
 
@@ -748,8 +824,10 @@ export const uploadReleaseVersionService = async (
             where: { id: project.id },
             data: { isUploading: false },
         });
+
     }
 };
+
 
 
 
