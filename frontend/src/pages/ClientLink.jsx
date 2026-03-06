@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Lock, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import { Spinner } from "@/components/ui/spinner";
-import FeedbackWidgetLoader from "@/components/FeedbackWidgetLoader";
 
 export const ClientLink = () => {
   const [publicProject, setPublicProject] = useState(null);
@@ -133,12 +132,6 @@ export const ClientLink = () => {
               title="Build Preview"
             />
           ) : null}
-          {projectId && (
-            <FeedbackWidgetLoader
-              projectId={projectId}
-              captureTargetSelector="#feedback-capture-area"
-            />
-          )}
         </div>
       </div>
     </div>
