@@ -2,13 +2,11 @@
 # Usage: docker compose up -d
 #
 # Database: set DATABASE_URL in repo root .env
-# - Same DB as local: DATABASE_URL=postgresql://USER:PASS@host.docker.internal:5432/DB  then: docker compose up -d
-# - New DB in Docker: DATABASE_URL=postgresql://USER:PASS@db:5432/DB  then: docker compose --profile with-db up -d
+# - Use DB in Docker (default): DATABASE_URL=postgresql://USER:PASS@db:5432/DB
+# - Use host/external DB: DATABASE_URL=postgresql://USER:PASS@host.docker.internal:5432/DB  (db container will run but not be used)
 
 services:
   db:
-    profiles:
-      - with-db
     image: postgres:16-alpine
     restart: unless-stopped
     ports:
