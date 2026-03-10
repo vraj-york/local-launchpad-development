@@ -1,36 +1,53 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
+import { captureWithDisplayMedia, canvasToDataURL } from '../services/screenshot.service';
 
-const ScreenshotCapture = ({ onCapture, captureTarget }) => {
-  const [capturing, setCapturing] = useState(false);
+// Minimum time to show the "Capturing Screenshot..." screen so it's visible every time
+const MIN_CAPTURE_SCREEN_MS = 1200;
 
-  // Auto-capture on mount
+const ScreenshotCapture = ({ onCapture, onBack, captureTarget }) => {
+  const [capturing, setCapturing] = useState(true);
+  const mountedAtRef = useRef(Date.now());
+
+  // Auto-capture on mount; always show loading screen first, then capture
   React.useEffect(() => {
-    handleCapture();
+    let cancelled = false;
+
+    const runCapture = async () => {
+      setCapturing(true);
+      mountedAtRef.current = Date.now();
+
+      try {
+        const canvas = await captureWithDisplayMedia();
+        if (cancelled) return;
+
+        const elapsed = Date.now() - mountedAtRef.current;
+        const remaining = Math.max(0, MIN_CAPTURE_SCREEN_MS - elapsed);
+        await new Promise((r) => setTimeout(r, remaining));
+
+        if (cancelled) return;
+        const dataUrl = canvasToDataURL(canvas);
+        onCapture(canvas, dataUrl);
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Screenshot capture failed:', err);
+          setCapturing(false);
+        }
+      }
+    };
+
+    runCapture();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const handleCapture = async () => {
-    setCapturing(true);
-
-    try {
-      // Import dynamically to avoid loading html2canvas until needed
-      const { captureViewport, canvasToDataURL } = await import('../../../feedback-widget/src/services/screenshot.service');
-      const canvas = await captureViewport();
-      const dataUrl = canvasToDataURL(canvas);
-      onCapture(canvas, dataUrl);
-    } catch (err) {
-      console.error('Screenshot capture failed:', err);
-      setCapturing(false);
-    }
-  };
-
+  // Always show the "Capturing Screenshot..." screen (like the reference image) until we transition to annotate
   return (
-    <div className="feedback-widget-capture">
-      <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-        <div className="feedback-widget-spinner" style={{ margin: '0 auto 20px' }} />
-        <h3 style={{ marginTop: 0, color: '#111827', fontFamily: 'system-ui' }}>
-          Capturing Screenshot...
-        </h3>
-        <p style={{ color: '#6b7280', fontSize: '14px', fontFamily: 'system-ui' }}>
+    <div className="feedback-widget-capture feedback-widget-capture-loading">
+      <div className="feedback-widget-capture-loading-content">
+        <div className="feedback-widget-spinner feedback-widget-capture-spinner" />
+        <h3 className="feedback-widget-capture-title">Capturing Screenshot...</h3>
+        <p className="feedback-widget-capture-subtitle">
           Please wait while we capture your screen
         </p>
       </div>

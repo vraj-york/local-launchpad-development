@@ -1,5 +1,50 @@
-// Screenshot Service - Capture page screenshots (html2canvas-pro supports oklch/modern CSS colors)
+// Screenshot Service - Native getDisplayMedia + optional html2canvas fallback
 import html2canvas from 'html2canvas-pro';
+
+/**
+ * Capture screen/window/tab using the native getDisplayMedia API.
+ * User chooses what to share (screen, window, or browser tab).
+ * @returns {Promise<HTMLCanvasElement>}
+ */
+export const captureWithDisplayMedia = async () => {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error(
+      'Screen capture is not supported in this browser. Use HTTPS and a modern browser (Chrome, Firefox, Edge, Safari).'
+    );
+  }
+
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: true,
+  });
+
+  try {
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = () => {
+        video.play().then(resolve).catch(reject);
+      };
+      video.onerror = () => reject(new Error('Video failed to load'));
+    });
+
+    const width = video.videoWidth || 1920;
+    const height = video.videoHeight || 1080;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, width, height);
+
+    return canvas;
+  } finally {
+    stream.getTracks().forEach((t) => t.stop());
+  }
+};
 
 // Shared options for better fidelity. foreignObjectRendering uses the browser's native
 // renderer so colors, gradients, and text match the live page (avoids oklch/gradient quirks).

@@ -2,9 +2,9 @@ import React, { useState, useRef } from "react";
 import Modal from "./components/Modal";
 import ScreenshotCapture from "./components/ScreenshotCapture";
 import AnnotationEditor from "./components/AnnotationEditor";
-import { collectMetadata } from "feedback-widget/src/services/metadata.service";
-import { submitFeedback } from "feedback-widget/src/services/api.service";
-import { blobToFile } from "feedback-widget/src/services/screenshot.service";
+import { collectMetadata } from "./services/metadata.service";
+import { submitFeedback } from "./services/api.service";
+import { blobToFile } from "./services/screenshot.service";
 import "./styles/widget.css";
 
 const STEPS = {
