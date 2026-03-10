@@ -102,7 +102,7 @@ const ProjectCard = ({ project }) => {
             Project Link
           </Button>
           <Button
-            disabled={!clientUrl}
+            disabled={!activeVersionUrl}
             onClick={() => window.open(clientUrl, "_blank")}
             variant="outline"
             size="sm"
@@ -115,18 +115,18 @@ const ProjectCard = ({ project }) => {
           <Button
             onClick={() => navigate(`/projects/${project.id}`)}
             size="sm"
-            className="h-8 text-white"
+            className="h-8 text-white col-span-2"
           >
             Manage Project
           </Button>
-          <Button
+          {/* <Button
             onClick={() => setIsDiffModalOpen(true)}
             size="sm"
             variant="outline"
             className="h-8"
           >
             Summary
-          </Button>
+          </Button> */}
         </CardFooter>
       </Card>
 
