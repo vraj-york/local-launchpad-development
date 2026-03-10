@@ -130,7 +130,7 @@ const LoginPage = () => {
                         <div className="flex justify-center mb-4">
                             <img
                                 src="/logo.png"
-                                alt="Launchpad Logo"
+                                alt="LaunchPad Logo"
                                 className="w-[200px] h-auto block"
                             />
                         </div>

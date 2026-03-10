@@ -10,13 +10,13 @@ import {
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Calendar, Hash, ExternalLink } from "lucide-react";
-import ProjectActionsDropdown from "./ProjectActionsDropdown";
-import DiffModal from "./DiffModal";
+// import ProjectActionsDropdown from "./ProjectActionsDropdown";
+// import DiffModal from "./DiffModal";
 import config from "@/config";
 
 const ProjectCard = ({ project }) => {
   const navigate = useNavigate();
-  const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
+  // const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
 
   const activeVersionUrl = project ? project.versions[0]?.buildUrl : null;
   const activeVersionNumber = project ? project.versions[0]?.version : null;
@@ -91,7 +91,7 @@ const ProjectCard = ({ project }) => {
           </div>
         </CardContent>
         <CardFooter className="grid grid-cols-2 gap-2">
-          <Button
+          {/* <Button
             disabled={!activeVersionUrl}
             onClick={() => window.open(activeVersionUrl, "_blank")}
             variant="outline"
@@ -100,7 +100,7 @@ const ProjectCard = ({ project }) => {
           >
             <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
             Project Link
-          </Button>
+          </Button> */}
           <Button
             disabled={!activeVersionUrl}
             onClick={() => window.open(clientUrl, "_blank")}
@@ -115,7 +115,7 @@ const ProjectCard = ({ project }) => {
           <Button
             onClick={() => navigate(`/projects/${project.id}`)}
             size="sm"
-            className="h-8 text-white col-span-2"
+            className="h-8 text-white"
           >
             Manage Project
           </Button>
@@ -130,12 +130,12 @@ const ProjectCard = ({ project }) => {
         </CardFooter>
       </Card>
 
-      <DiffModal
+      {/* <DiffModal
         isOpen={isDiffModalOpen}
         onClose={() => setIsDiffModalOpen(false)}
         projectId={project.id}
         projectName={project.name}
-      />
+      /> */}
     </>
   );
 };
