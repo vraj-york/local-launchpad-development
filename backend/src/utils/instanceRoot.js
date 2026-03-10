@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /**
  * Instance root: directory that contains frontend, backend, projects, and nginx-configs.
  * Set INSTANCE_ROOT on the server so projects folder is shared at instance level
- * (e.g. /home/ubuntu/zip-sync). If unset, falls back to process.cwd().
+ * (e.g. /home/ubuntu/launchpad). If unset, falls back to process.cwd().
  */
 export function getInstanceRoot() {
   const root = process.env.INSTANCE_ROOT;

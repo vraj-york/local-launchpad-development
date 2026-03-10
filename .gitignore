@@ -13,15 +13,15 @@
 /backend/screenshots
 /frontend/node_modules/
 /frontend/build/
-/zip-sync-frontend/node_modules/
-/zip-sync-frontend/build/
+/launchpad-frontend/node_modules/
+/launchpad-frontend/build/
 /feedback-widget/node_modules/
 /feedback-widget/dist
 
 # Env files (secrets) – .env.example is tracked for reference
 /backend/.env
 /frontend/.env
-/zip-sync-frontend/.env
+/launchpad-frontend/.env
 /feedback-widget/.env
 
 # Runtime preview (switch version) – recreated on demand

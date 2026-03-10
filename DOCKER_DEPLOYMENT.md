@@ -1,6 +1,9 @@
 # Docker deployment
 
-Run the full stack (PostgreSQL, backend, frontend) with Docker Compose.
+Run the full stack (backend, frontend, nginx) with Docker Compose.
+
+- **Production**: Use **Supabase** for PostgreSQL. Set `DATABASE_URL` to your Supabase connection string and run `docker compose up -d --build` (no `db` container). See [EC2_DEPLOYMENT.md](./EC2_DEPLOYMENT.md).
+- **Local dev**: Use the Docker `db` service (`docker compose --profile with-db up -d --build`) or your existing Postgres and `DATABASE_URL`.
 
 ---
 
@@ -9,14 +12,14 @@ Run the full stack (PostgreSQL, backend, frontend) with Docker Compose.
 | File | When it’s used | Why it exists |
 |------|----------------|----------------|
 | **Repo root `.env`** | **Only when you run Docker** (`docker compose up` from repo root). | Compose runs from the root; `env_file: - .env` is relative to the folder that contains `docker-compose.yml`. One file feeds **all** services (db, backend, frontend) so you don’t have to duplicate DB URL, JWT_SECRET, VITE_* etc. in each app folder. |
-| **`backend/.env`** | **Only when you run the backend without Docker** (e.g. `cd backend && npm start`). | Node loads it via `dotenv.config()` from the backend directory. Used for local dev or PM2 on the host. |
+| **`backend/.env`** | **Only when you run the backend without Docker** (e.g. `cd backend && npm start`). | Node loads it via `dotenv.config()` from the backend directory. Used for local dev only. |
 | **`frontend/.env`** (or `.env.local`) | **Only when you run the frontend without Docker** (e.g. `cd frontend && npm run dev`). | Vite reads it when building/serving. Used for local dev or a non-Docker frontend deploy. |
 
 **Summary:**  
 - **Docker** → **only** the **root** `.env` is used. Backend and frontend containers do **not** read `backend/.env` or `frontend/.env`; they get env from Compose (which reads root `.env` and the `environment:` blocks).  
 - **No Docker (local dev)** → use **`backend/.env`** and **`frontend/.env`**; the root `.env` is ignored by the apps.
 
-Copy **`/.env.example`** to **`/.env`** in the repo root for Docker. For non-Docker runs, create `backend/.env` and `frontend/.env` as needed (see DEVELOPER_GUIDE.md or PM2 docs).
+Copy **`/.env.example`** to **`/.env`** in the repo root for Docker. For non-Docker runs, create `backend/.env` and `frontend/.env` as needed (see DEVELOPER_GUIDE.md).
 
 ---
 
@@ -26,12 +29,12 @@ Copy **`/.env.example`** to **`/.env`** in the repo root for Docker. For non-Doc
 |---|----------------------------------|---------------------------------------------------|
 | **How you start** | `docker compose up -d` from **repo root** | e.g. `cd backend && npm start`, `cd frontend && npm run dev` |
 | **Where config is read** | **Repo root** `.env` (same folder as `docker-compose.yml`) | **Backend:** `backend/.env` — **Frontend:** `frontend/.env` (or `.env.local`) |
-| **Database** | The **`db`** container (Postgres in Docker). Credentials from repo root `.env`: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. | Your **existing** Postgres (local or remote). Credentials in `backend/.env` as `DATABASE_URL`. |
-| **Backend env** | Set in `docker-compose.yml` + repo root `.env` (e.g. `DATABASE_URL` built from `POSTGRES_*`). | Read from `backend/.env` (e.g. `DATABASE_URL`, `PORT`, `JWT_SECRET`). |
+| **Database** | **Production:** Supabase (set `DATABASE_URL` in root `.env`; no `db` container). **Local:** optional `db` container (`--profile with-db`) or existing Postgres. | Your **existing** Postgres (local or remote). Credentials in `backend/.env` as `DATABASE_URL`. |
+| **Backend env** | Set in `docker-compose.yml` + repo root `.env` (e.g. `DATABASE_URL` from Supabase or `POSTGRES_*` for local Docker DB). | Read from `backend/.env` (e.g. `DATABASE_URL`, `PORT`, `JWT_SECRET`). |
 | **Frontend env** | Baked at **build time** from repo root `.env`: `VITE_API_URL`, `VITE_FRONTEND_URL`. | Read from `frontend/.env`: `VITE_API_URL`, etc. |
 
 **Summary:**  
-- **Docker** → use **repo root** `.env` and the `db` service; backend/frontend get config from Compose + that file.  
+- **Docker** → use **repo root** `.env`. Production: `DATABASE_URL` = Supabase (no `db` container). Local: optional `db` service (`--profile with-db`) or existing Postgres.  
 - **Normal** → use **backend/.env** and **frontend/.env**; backend uses your existing DB and its own env.
 
 ---
@@ -55,20 +58,26 @@ To use your **existing** Postgres (same DB as when you run the app normally) so 
 
 ---
 
-## Quick start (with Docker DB)
+## Quick start
+
+**Production (Supabase):** Set `DATABASE_URL` in root `.env` to your Supabase connection string, then run `docker compose up -d --build`. No `db` container. See [EC2_DEPLOYMENT.md](./EC2_DEPLOYMENT.md).
+
+**Local (with Docker DB):**
 
 1. **Create env file** (optional; defaults work for local):
 
    ```bash
    cp .env.example .env
-   # Edit .env and set POSTGRES_PASSWORD, JWT_SECRET, VITE_API_URL if needed
+   # Edit .env and set POSTGRES_PASSWORD, JWT_SECRET, VITE_API_URL if needed (or use Supabase for DATABASE_URL)
    ```
 
-2. **Build and start** (this starts the `db` container too):
+2. **Build and start** (this starts the `db` container too; for local dev only):
 
    ```bash
    docker compose --profile with-db up -d --build
    ```
+
+   Or use Supabase/local Postgres and run without the profile: `docker compose up -d --build`.
 
 3. **Open**:
    - Frontend: http://localhost:3000  
@@ -110,7 +119,7 @@ Project apps must still be **run** (e.g. dev server or process) inside the backe
 
 ## Volumes
 
-- `postgres_data` – database files
+- `postgres_data` – database files (only when using `--profile with-db` for local dev; production uses Supabase)
 - `./backend/projects` → `/app/projects` – **bind mount**: project folders (same as repo’s `backend/projects`, so dynamic port and API serve the same files)
 - `backend_nginx_configs` – per-project nginx configs (shared by backend and nginx)
 - `backend_uploads` – upload temp files
@@ -130,7 +139,9 @@ These paths are in **.gitignore** and must **not** be pushed. They are created a
 
 ## Check database entries
 
-The DB is exposed on **localhost:5432** (use the same `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` from your `.env`).
+**When using Supabase:** Use the Supabase Dashboard (SQL Editor, Table Editor) or any PostgreSQL client with your `DATABASE_URL` to inspect data.
+
+**When using the Docker `db` service** (local dev with `--profile with-db`): the DB is exposed on **localhost:5432** (use the same `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` from your `.env`).
 
 **1. Command line (psql inside container)**  
 No port needed; run from repo root:

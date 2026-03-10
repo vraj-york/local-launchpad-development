@@ -933,7 +933,7 @@ window.markerConfig = {
             }
 
             // Check if project header is already injected to avoid duplicates
-            if (!htmlContent.includes('zip-sync-header')) {
+            if (!htmlContent.includes('launchpad-header')) {
               // Inject project header after opening body tag
               if (htmlContent.includes('<body>')) {
                 htmlContent = htmlContent.replace('<body>', `<body>\n${projectHeader}`);

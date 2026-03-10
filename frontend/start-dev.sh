@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🚀 Starting Zip Sync Frontend Development Server"
+echo "🚀 Starting Launchpad Frontend Development Server"
 echo "================================================"
 
 # Check if node_modules exists

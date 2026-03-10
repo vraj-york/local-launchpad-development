@@ -1,7 +1,7 @@
 export default {
   apps: [
     {
-      name: 'zip-sync-frontend',
+      name: 'launchpad-frontend',
       script: 'npm',
       args: 'run dev -- --host 0.0.0.0 --port 5173',
       cwd: process.cwd(),
@@ -48,8 +48,8 @@ export default {
       user: 'ubuntu',
       host: '43.205.121.85',
       ref: 'origin/main',
-      repo: 'git@github.com:your-repo/zip-sync.git',
-      path: '/home/ubuntu/zip-sync/frontend',
+      repo: 'git@github.com:your-repo/launchpad.git',
+      path: '/home/ubuntu/launchpad/frontend',
       'pre-deploy-local': '',
       'post-deploy': 'npm install && npm run build && pm2 reload ecosystem.config.js --env production',
       'pre-setup': ''
