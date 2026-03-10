@@ -107,6 +107,20 @@ To use your **existing** Postgres (same DB as when you run the app normally) so 
 
 For production, set `VITE_API_URL` and `VITE_FRONTEND_URL` to your public URLs **before** building the frontend image (e.g. in `.env` when running `docker compose build`).
 
+## Nginx main config (`nginx/nginx.conf`)
+
+The **nginx** service bind-mounts **`./nginx/nginx.conf`** onto `/etc/nginx/nginx.conf` inside the container. That path must be a **file** in the repo, not a directory.
+
+- **Error:** `mount ... not a directory: unknown: Are you trying to mount a directory onto a file`  
+  **Cause:** `nginx/nginx.conf` was missing on the host; Docker created a **directory** with that name.  
+  **Fix:** Ensure the repo has `nginx/nginx.conf` (committed), then on the server remove the wrongly created directory and pull again:
+  ```bash
+  docker compose down
+  rm -rf nginx/nginx.conf   # only if it is a directory; then git checkout nginx/nginx.conf
+  git pull
+  docker compose up -d --build
+  ```
+
 ## Nginx and project ports (automatic with Docker)
 
 When you run `docker compose up`, the **nginx** service starts and reads per-project configs from the same volume as the backend (`backend_nginx_configs`). The backend writes configs with `proxy_pass http://backend:<port>` so nginx (in its own container) can reach each project’s port on the backend container.
