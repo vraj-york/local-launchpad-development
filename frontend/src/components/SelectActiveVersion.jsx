@@ -42,6 +42,11 @@ export function SelectActiveVersion({
       .flatMap((r) => r.versions || [])
       .find((v) => String(v.id) === String(versionId));
 
+  const getReleaseByVersionId = (versionId) =>
+    releases.find((r) =>
+      (r.versions || []).some((v) => String(v.id) === String(versionId))
+    );
+
   const activeVersionId = releases
     .flatMap((r) => r.versions || [])
     .find((v) => v.isActive)?.id;
@@ -135,7 +140,18 @@ export function SelectActiveVersion({
               Activating...
             </span>
           ) : (
-            <SelectValue placeholder="Select version to activate" />
+            <SelectValue placeholder="Select version to activate">
+              {(() => {
+                const currentId = selectedValue || (activeVersionId ? String(activeVersionId) : "");
+                if (!currentId) return null;
+                const version = getVersionById(currentId);
+                const release = getReleaseByVersionId(currentId);
+                const versionLabel = version ? getVersionLabel(version) : "";
+                const releaseName = release?.name ?? "";
+                const activeSuffix = version?.isActive ? " (Active)" : "";
+                return releaseName ? `${releaseName} – ${versionLabel}${activeSuffix}` : `${versionLabel}${activeSuffix}`;
+              })()}
+            </SelectValue>
           )}
         </SelectTrigger>
         <SelectContent>
@@ -155,7 +171,7 @@ export function SelectActiveVersion({
                         "bg-primary text-primary-foreground focus:bg-primary focus:text-primary-foreground ",
                     )}
                   >
-                    {release.name} · {getVersionLabel(version)}
+                    {getVersionLabel(version)}
                     {version.isActive && " (Active)"}
                   </SelectItem>
                 ))}
