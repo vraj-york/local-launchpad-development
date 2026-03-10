@@ -1,6 +1,8 @@
-# Zip-Sync Backend PM2 Deployment Guide
+# Launchpad Backend PM2 Deployment Guide
 
-This guide explains how to deploy the Zip-Sync backend using PM2 on EC2.
+**Note:** Production deployment for Launchpad uses **Docker + Supabase** only; see [EC2_DEPLOYMENT.md](../EC2_DEPLOYMENT.md) in the repo root. This PM2 guide is for alternative setups where you run the backend without Docker.
+
+This guide explains how to deploy the Launchpad backend using PM2 on EC2.
 
 ## Prerequisites
 
@@ -15,10 +17,10 @@ This guide explains how to deploy the Zip-Sync backend using PM2 on EC2.
 
 ```bash
 # Clone the repository (if not already done)
-git clone <your-repo-url> /home/ubuntu/zip-sync
+git clone <your-repo-url> /home/ubuntu/launchpad
 
 # Navigate to backend directory
-cd /home/ubuntu/zip-sync/backend
+cd /home/ubuntu/launchpad/backend
 
 # Make setup script executable and run it
 chmod +x setup-ec2.sh
@@ -67,7 +69,7 @@ pm2 startup
 - Deployment script for updates
 - Handles dependency updates, migrations, and service restart
 
-### zip-sync-backend.service
+### launchpad-backend.service
 
 - Systemd service file for better system integration
 - Enables automatic startup on boot
@@ -81,16 +83,16 @@ pm2 startup
 pm2 status
 
 # View logs
-pm2 logs zip-sync-backend
+pm2 logs launchpad-backend
 
 # Restart service
-pm2 restart zip-sync-backend
+pm2 restart launchpad-backend
 
 # Stop service
-pm2 stop zip-sync-backend
+pm2 stop launchpad-backend
 
 # Delete service
-pm2 delete zip-sync-backend
+pm2 delete launchpad-backend
 
 # Monitor processes
 pm2 monit
@@ -100,19 +102,19 @@ pm2 monit
 
 ```bash
 # Start service
-sudo systemctl start zip-sync-backend
+sudo systemctl start launchpad-backend
 
 # Stop service
-sudo systemctl stop zip-sync-backend
+sudo systemctl stop launchpad-backend
 
 # Restart service
-sudo systemctl restart zip-sync-backend
+sudo systemctl restart launchpad-backend
 
 # Check status
-sudo systemctl status zip-sync-backend
+sudo systemctl status launchpad-backend
 
 # Enable auto-start
-sudo systemctl enable zip-sync-backend
+sudo systemctl enable launchpad-backend
 ```
 
 ## Environment Variables
@@ -121,7 +123,7 @@ Create a `.env` file in the backend directory with:
 
 ```env
 # Database
-DATABASE_URL="postgresql://username:password@localhost:5432/zip_sync"
+DATABASE_URL="postgresql://username:password@localhost:5432/project_management"
 
 # JWT
 JWT_SECRET="your-jwt-secret"
@@ -150,7 +152,7 @@ JIRA_ISSUE_TYPE="Task"
 
 1. Pull latest changes: `git pull origin main`
 2. Run `./deploy.sh` to update the service
-3. Or manually: `pm2 restart zip-sync-backend`
+3. Or manually: `pm2 restart launchpad-backend`
 
 ## Monitoring
 
@@ -180,7 +182,7 @@ JIRA_ISSUE_TYPE="Task"
 2. **Permission issues**
 
    ```bash
-   sudo chown -R ubuntu:ubuntu /home/ubuntu/zip-sync
+   sudo chown -R ubuntu:ubuntu /home/ubuntu/launchpad
    ```
 
 3. **Database connection issues**
@@ -202,7 +204,7 @@ JIRA_ISSUE_TYPE="Task"
 curl http://43.205.121.85:5000/api/health
 
 # View real-time logs
-pm2 logs zip-sync-backend --lines 100
+pm2 logs launchpad-backend --lines 100
 
 # Check system resources
 pm2 monit

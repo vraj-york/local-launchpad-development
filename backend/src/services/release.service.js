@@ -919,13 +919,13 @@ project: '68b6da8e7a78dd9ff9cff850',
             }
 
             // Remove existing header if present to ensure we invoke with latest data
-            if (html.includes("zip-sync-header")) {
+            if (html.includes("launchpad-header")) {
                 // Remove Style
-                html = html.replace(/<style>[\s\S]*?\.zip-sync-header[\s\S]*?<\/style>/, "");
+                html = html.replace(/<style>[\s\S]*?\.launchpad-header[\s\S]*?<\/style>/, "");
                 // Remove Div
-                html = html.replace(/<div class="zip-sync-header"[\s\S]*?<\/div>/, "");
+                html = html.replace(/<div class="launchpad-header"[\s\S]*?<\/div>/, "");
                 // Remove Script
-                html = html.replace(/<script>[\s\S]*?ZipSync Header functionality[\s\S]*?<\/script>/, "");
+                html = html.replace(/<script>[\s\S]*?Launchpad Header functionality[\s\S]*?<\/script>/, "");
             }
 
             // Always inject the header if body exists

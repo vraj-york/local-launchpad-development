@@ -43,13 +43,13 @@ Set these on the server (e.g. in backend `.env` or systemd):
 
 | Variable          | Description |
 |-------------------|-------------|
-| `INSTANCE_ROOT`   | Absolute path to the instance root (e.g. `/home/ubuntu/zip-sync`). Backend and nginx use this for `projects/` and `nginx-configs/`. If unset, the backend uses its current working directory. |
+| `INSTANCE_ROOT`   | Absolute path to the instance root (e.g. `/home/ubuntu/launchpad`). Backend and nginx use this for `projects/` and `nginx-configs/`. If unset, the backend uses its current working directory. |
 | `NGINX_BASE_DOMAIN` or `BASE_DOMAIN` | Base domain for subdomains (e.g. `example.com`). Default: `localhost`. |
 
 ## Checklist for a new instance
 
 1. Clone or deploy the repo so the instance root has `frontend/`, `backend/`, and (after first run) `projects/` and `nginx-configs/`.
-2. Set **`INSTANCE_ROOT`** to that root path when running the backend (e.g. in PM2 ecosystem or `.env`).
+2. Set **`INSTANCE_ROOT`** to that root path when running the backend (e.g. in Docker env or `.env`). Production uses Docker; see EC2_DEPLOYMENT.md.
 3. Set **`NGINX_BASE_DOMAIN`** (or `BASE_DOMAIN`) if you are not using `localhost`.
 4. Install and configure nginx so it includes the dynamic project configs (e.g. `include /etc/nginx/sites-enabled/*.conf;` on Linux).
 5. Run backend (and frontend) from the usual setup; the backend will create `projects/<name>` and `nginx-configs/<name>.conf` and, on Linux, symlink into `sites-enabled` and reload nginx so each project runs on its dynamic port and subdomain.

@@ -1,13 +1,13 @@
-# Zip-Sync Developer Guide
+# Launchpad Developer Guide
 
-Welcome to Zip-Sync! This guide will help you get started quickly.
+Welcome to Launchpad! This guide will help you get started quickly.
 
 ---
 
 ## 📁 Project Structure
 
 ```
-zip-sync/
+launchpad/
 ├── backend/                    # Express.js Backend
 │   ├── src/
 │   │   ├── config/
@@ -22,7 +22,7 @@ zip-sync/
 │   ├── prisma/
 │   │   └── schema.prisma      # Database schema
 │   ├── projects/              # Uploaded project files
-│   ├── ecosystem.config.cjs   # PM2 config for EC2
+│   ├── ecosystem.config.cjs   # PM2 config (optional; production uses Docker)
 │   └── package.json
 │
 ├── frontend/                   # React + Vite Frontend
@@ -35,7 +35,7 @@ zip-sync/
 │   │   ├── pages/
 │   │   ├── context/
 │   │   └── styles/
-│   ├── ecosystem.config.cjs   # PM2 config for EC2
+│   ├── ecosystem.config.cjs   # PM2 config (optional; production uses Docker)
 │   └── package.json
 │
 └── DEVELOPER_GUIDE.md         # This file
@@ -132,22 +132,22 @@ cd backend && npm start
 cd frontend && npm run dev
 ```
 
-### Deploying to EC2
+### Deploying to EC2 (production)
+
+Production deployment uses **Docker** and **Supabase** only (no PM2, no PostgreSQL on the server). See **[EC2_DEPLOYMENT.md](./EC2_DEPLOYMENT.md)** for the full steps. On EC2 you run:
 
 ```bash
-# On EC2 instance
-cd /home/ubuntu/zip-sync/backend
-./deploy.sh
-
-cd /home/ubuntu/zip-sync/frontend
-./deploy.sh
+cd /home/ubuntu/launchpad
+cp .env.example .env
+# Edit .env: set DATABASE_URL (Supabase), VITE_API_URL, VITE_FRONTEND_URL, BASE_URL, JWT_SECRET
+docker compose up -d --build
 ```
 
 ---
 
-## 🔄 PM2 Commands (Production)
+## 🔄 PM2 Commands (local / alternative)
 
-PM2 is used to manage processes on EC2. Both backend and frontend have PM2 configured.
+PM2 is available for running backend and frontend **without Docker** (e.g. local dev or alternative host setup). Production deploy uses Docker; see EC2_DEPLOYMENT.md.
 
 ### Quick Reference
 
@@ -165,7 +165,7 @@ PM2 is used to manage processes on EC2. Both backend and frontend have PM2 confi
 ### Backend PM2 Commands
 
 ```bash
-cd /home/ubuntu/zip-sync/backend
+cd /home/ubuntu/launchpad/backend
 
 # Start backend with PM2
 pm2 start ecosystem.config.cjs --env production
@@ -181,7 +181,7 @@ npm run status             # Check status
 ### Frontend PM2 Commands
 
 ```bash
-cd /home/ubuntu/zip-sync/frontend
+cd /home/ubuntu/launchpad/frontend
 
 # Start frontend with PM2 (runs Vite dev server)
 pm2 start ecosystem.config.cjs --env production
@@ -201,15 +201,15 @@ npm run status             # Check status
 pm2 list
 
 # View detailed status
-pm2 show zip-sync-backend
-pm2 show zip-sync-frontend
+pm2 show launchpad-backend
+pm2 show launchpad-frontend
 
 # View logs for all processes
 pm2 logs
 
 # View logs for specific process
-pm2 logs zip-sync-backend
-pm2 logs zip-sync-frontend
+pm2 logs launchpad-backend
+pm2 logs launchpad-frontend
 
 # Monitor all processes (CPU, Memory)
 pm2 monit
@@ -233,30 +233,32 @@ pm2 startup
 pm2 flush
 ```
 
-### EC2 Deployment with PM2
+### Running with PM2 (optional, non-Docker)
 
 ```bash
 # Initial setup (run once)
-cd /home/ubuntu/zip-sync/backend
+cd /home/ubuntu/launchpad/backend
 ./setup-ec2.sh
 
-cd /home/ubuntu/zip-sync/frontend
+cd /home/ubuntu/launchpad/frontend
 ./setup-ec2.sh
 
 # Deploy updates
-cd /home/ubuntu/zip-sync/backend
+cd /home/ubuntu/launchpad/backend
 ./deploy.sh
 
-cd /home/ubuntu/zip-sync/frontend
+cd /home/ubuntu/launchpad/frontend
 ./deploy.sh
 ```
+
+Production deployment uses Docker + Supabase; see [EC2_DEPLOYMENT.md](./EC2_DEPLOYMENT.md).
 
 ### PM2 Process Names
 
 | Service | PM2 Process Name |
 |---------|------------------|
-| Backend | `zip-sync-backend` |
-| Frontend | `zip-sync-frontend` |
+| Backend | `launchpad-backend` |
+| Frontend | `launchpad-frontend` |
 
 ### Useful PM2 Tips
 
@@ -268,15 +270,15 @@ pm2 status
 # ┌─────────────────────┬────┬─────────┬──────┬───────┐
 # │ Name                │ id │ status  │ cpu  │ memory│
 # ├─────────────────────┼────┼─────────┼──────┼───────┤
-# │ zip-sync-backend    │ 0  │ online  │ 0.1% │ 80MB  │
-# │ zip-sync-frontend   │ 1  │ online  │ 0.2% │ 60MB  │
+# │ launchpad-backend    │ 0  │ online  │ 0.1% │ 80MB  │
+# │ launchpad-frontend   │ 1  │ online  │ 0.2% │ 60MB  │
 # └─────────────────────┴────┴─────────┴──────┴───────┘
 
 # If a process shows 'errored' or 'stopped', check logs:
-pm2 logs zip-sync-backend --lines 50
+pm2 logs launchpad-backend --lines 50
 
 # Force restart a crashed process
-pm2 restart zip-sync-backend --update-env
+pm2 restart launchpad-backend --update-env
 ```
 
 ---

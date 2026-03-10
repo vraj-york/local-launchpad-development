@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'zip-sync-backend',
+      name: 'launchpad-backend',
       script: 'src/server.js',
       cwd: process.cwd(),
       instances: 1,
@@ -9,8 +9,8 @@ module.exports = {
       env: {
         NODE_ENV: 'development',
         PORT: 5000,
-        NODE_PATH: '/home/ubuntu/zip-sync/backend/node_modules',
-        PATH: process.env.PATH + ':/home/ubuntu/zip-sync/backend/node_modules/.bin',
+        NODE_PATH: '/home/ubuntu/launchpad/backend/node_modules',
+        PATH: process.env.PATH + ':/home/ubuntu/launchpad/backend/node_modules/.bin',
         HOME: process.env.HOME,
         USER: process.env.USER
       },
@@ -51,8 +51,8 @@ module.exports = {
       user: 'ubuntu',
       host: '43.205.121.85',
       ref: 'origin/main',
-      repo: 'git@github.com:your-repo/zip-sync.git',
-      path: '/home/ubuntu/zip-sync',
+      repo: 'git@github.com:your-repo/launchpad.git',
+      path: '/home/ubuntu/launchpad',
       'pre-deploy-local': '',
       'post-deploy': 'npm install && pm2 reload ecosystem.config.js --env production',
       'pre-setup': ''

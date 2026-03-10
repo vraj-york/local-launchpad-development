@@ -29,7 +29,7 @@ function generateHeader(type = 'project', data = {}) {
 
   return `
 <style>
-  .zip-sync-header {
+  .launchpad-header {
     position: fixed; top: 0; left: 0; right: 0; height: 70px;
     background: #00B48B; color: #ffffff; display: flex;
     align-items: center; justify-content: space-between;
@@ -39,7 +39,7 @@ function generateHeader(type = 'project', data = {}) {
   }
 
   /* Center Container for Name and Version */
-  .zip-sync-header-center {
+  .launchpad-header-center {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
@@ -49,7 +49,7 @@ function generateHeader(type = 'project', data = {}) {
     justify-content: center;
   }
 
-  .zip-sync-header-project-name { 
+  .launchpad-header-project-name { 
     font-weight: 800; 
     font-size: 18px; 
     color: #ffffff;
@@ -58,7 +58,7 @@ function generateHeader(type = 'project', data = {}) {
     line-height: 1.2;
   }
 
-  .zip-sync-header-version { 
+  .launchpad-header-version { 
     font-size: 12px; 
     color: rgba(255, 255, 255, 0.9);
     background: rgba(0, 0, 0, 0.1);
@@ -69,15 +69,15 @@ function generateHeader(type = 'project', data = {}) {
     margin: 2px auto 0;
   }
   
-  .zip-sync-lock-btn {
+  .launchpad-lock-btn {
     background: #ffffff; border: none; color: #00B48B; padding: 8px 18px;
     border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 700;
     transition: all 0.2s ease; display: flex; align-items: center; gap: 8px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   }
-  .zip-sync-lock-btn:hover { background: #f8f9fa; transform: translateY(-1px); }
+  .launchpad-lock-btn:hover { background: #f8f9fa; transform: translateY(-1px); }
   
-  .zip-sync-lock-btn.locked { 
+  .launchpad-lock-btn.locked { 
     background: rgba(255, 255, 255, 0.2); 
     color: #ffffff;
     cursor: not-allowed; 
@@ -86,7 +86,7 @@ function generateHeader(type = 'project', data = {}) {
   
   body { margin-top: 70px !important; }
   
-  .zip-sync-lock-overlay {
+  .launchpad-lock-overlay {
     position: fixed; top: 70px; left: 0; right: 0; bottom: 0;
     background: rgba(23, 42, 58, 0.95); z-index: 9999;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -99,22 +99,22 @@ function generateHeader(type = 'project', data = {}) {
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   
   @media (max-width: 768px) {
-    .zip-sync-header-project-name { font-size: 14px; }
-    .zip-sync-lock-btn { padding: 6px 12px; font-size: 11px; }
+    .launchpad-header-project-name { font-size: 14px; }
+    .launchpad-lock-btn { padding: 6px 12px; font-size: 11px; }
   }
 </style>
 
-<div class="zip-sync-header" id="zip-sync-header">
-  <div class="zip-sync-header-left">
+<div class="launchpad-header" id="launchpad-header">
+  <div class="launchpad-header-left">
      <div style="font-weight: 900; font-size: 20px;"></div>
   </div>
 
-  <div class="zip-sync-header-center">
-    <span class="zip-sync-header-project-name" id="zip-sync-project-name">Loading...</span>
-    <span class="zip-sync-header-version" id="zip-sync-project-version">v0.0.0</span>
+  <div class="launchpad-header-center">
+    <span class="launchpad-header-project-name" id="launchpad-project-name">Loading...</span>
+    <span class="launchpad-header-version" id="launchpad-project-version">v0.0.0</span>
   </div>
 
-  <button class="zip-sync-lock-btn" id="zip-sync-lock-btn">
+  <button class="launchpad-lock-btn" id="launchpad-lock-btn">
     <span id="lock-btn-text">Lock Project</span>
   </button>
 </div>
@@ -129,7 +129,7 @@ function generateHeader(type = 'project', data = {}) {
     let apiBase = ${injectedApiUrl};
     let headerType = ${headerType};
 
-    const lockBtn = document.getElementById('zip-sync-lock-btn');
+    const lockBtn = document.getElementById('launchpad-lock-btn');
     const lockText = document.getElementById('lock-btn-text');
 
     function extractFromUrl() {
@@ -162,7 +162,7 @@ function generateHeader(type = 'project', data = {}) {
         const response = await fetch(\`\${getApiUrl()}/api/releases/\${releaseId}/public-lock\`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ locked: true, token: window.zipSyncLockToken })
+          body: JSON.stringify({ locked: true, token: window.LaunchpadLockToken })
         });
 
         if (response.ok) {
@@ -184,14 +184,14 @@ function generateHeader(type = 'project', data = {}) {
       const label = headerType === 'release' ? 'Release' : 'Project';
       
       if (isLocked) {
-        lockBtn.className = 'zip-sync-lock-btn locked';
+        lockBtn.className = 'launchpad-lock-btn locked';
         lockText.textContent = \`\${label} Locked\`;
         lockBtn.disabled = true;
 
-        if (!document.getElementById('zip-sync-lock-overlay')) {
+        if (!document.getElementById('launchpad-lock-overlay')) {
           const div = document.createElement('div');
-          div.id = 'zip-sync-lock-overlay';
-          div.className = 'zip-sync-lock-overlay';
+          div.id = 'launchpad-lock-overlay';
+          div.className = 'launchpad-lock-overlay';
           div.innerHTML = \`
             <div class="overlay-title">🔒 Project Locked</div>
             <div class="overlay-msg">This \${label.toLowerCase()} has been secured. Please contact your Project Manager to request an unlock.</div>
@@ -199,18 +199,18 @@ function generateHeader(type = 'project', data = {}) {
           document.body.appendChild(div);
         }
       } else {
-        lockBtn.className = 'zip-sync-lock-btn';
+        lockBtn.className = 'launchpad-lock-btn';
         lockText.textContent = \`Lock \${label}\`;
         lockBtn.disabled = false;
-        const existingOverlay = document.getElementById('zip-sync-lock-overlay');
+        const existingOverlay = document.getElementById('launchpad-lock-overlay');
         if (existingOverlay) existingOverlay.remove();
       }
     }
 
     async function init() {
       extractFromUrl();
-      document.getElementById('zip-sync-project-name').textContent = projectName;
-      document.getElementById('zip-sync-project-version').textContent = 'v' + version;
+      document.getElementById('launchpad-project-name').textContent = projectName;
+      document.getElementById('launchpad-project-version').textContent = 'v' + version;
 
       if (releaseId) {
         try {
@@ -218,7 +218,7 @@ function generateHeader(type = 'project', data = {}) {
           if (res.ok) {
             const info = await res.json();
             isLocked = info.locked;
-            window.zipSyncLockToken = info.lockToken;
+            window.LaunchpadLockToken = info.lockToken;
             renderUI();
           }
         } catch (e) { console.warn("API Offline"); }

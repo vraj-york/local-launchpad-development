@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Zip-Sync Backend Deployment Script for EC2
+# Launchpad Backend Deployment Script for EC2
 # This script handles the complete deployment process
 
-echo "🚀 Deploying Zip-Sync Backend to EC2..."
+echo "🚀 Deploying Launchpad Backend to EC2..."
 
 # Set variables
-BACKEND_DIR="/home/ubuntu/zip-sync/backend"
-SERVICE_NAME="zip-sync-backend"
+BACKEND_DIR="/home/ubuntu/launchpad/backend"
+SERVICE_NAME="launchpad-backend"
 
 # Navigate to backend directory
 cd $BACKEND_DIR

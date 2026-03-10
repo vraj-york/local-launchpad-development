@@ -1,6 +1,8 @@
-# PM2 Deployment Guide for Zip Sync Frontend (EC2)
+# PM2 Deployment Guide for Launchpad Frontend (EC2)
 
-This guide explains how to deploy and manage the Zip Sync frontend application using PM2 on EC2.
+**Note:** Production deployment for Launchpad uses **Docker + Supabase** only; see [EC2_DEPLOYMENT.md](../EC2_DEPLOYMENT.md) in the repo root. This PM2 guide is for alternative setups where you run the frontend without Docker.
+
+This guide explains how to deploy and manage the Launchpad frontend application using PM2 on EC2.
 
 ## Prerequisites
 
@@ -53,13 +55,13 @@ npm run start
 
 The PM2 configuration is defined in `ecosystem.config.cjs`:
 
-- **App Name**: `zip-sync-frontend`
+- **App Name**: `launchpad-frontend`
 - **Script**: Uses `npm run dev -- --host 0.0.0.0 --port 5173` to run Vite dev server
 - **Port**: 5173 (both production and development)
-- **Working Directory**: `/home/ubuntu/zip-sync/frontend`
+- **Working Directory**: `/home/ubuntu/launchpad/frontend`
 - **Memory Limit**: 512MB
 - **Auto Restart**: Enabled
-- **Logging**: Configured to write to `/home/ubuntu/zip-sync/frontend/logs/` directory
+- **Logging**: Configured to write to `/home/ubuntu/launchpad/frontend/logs/` directory
 - **EC2 Optimized**: Paths configured for EC2 Ubuntu environment
 
 ## Environment Variables
@@ -74,7 +76,7 @@ VITE_API_URL=http://43.205.121.85:5000
 
 ## Logs
 
-Logs are stored in the `/home/ubuntu/zip-sync/frontend/logs/` directory:
+Logs are stored in the `/home/ubuntu/launchpad/frontend/logs/` directory:
 
 - `combined.log` - All logs combined
 - `out.log` - Standard output
@@ -103,7 +105,7 @@ npm run status
 ### System Monitoring
 
 ```bash
-pm2 show zip-sync-frontend
+pm2 show launchpad-frontend
 ```
 
 ## EC2 Production Deployment
@@ -174,7 +176,7 @@ server {
 
    ```bash
    # Check PM2 logs
-   pm2 logs zip-sync-frontend
+   pm2 logs launchpad-frontend
 
    # Check if node_modules exists
    ls -la node_modules/
@@ -187,7 +189,7 @@ server {
    pm2 monit
 
    # Restart if needed
-   pm2 restart zip-sync-frontend
+   pm2 restart launchpad-frontend
    ```
 
 ### Useful Commands
@@ -206,7 +208,7 @@ pm2 stop all
 pm2 delete all
 
 # View system information
-pm2 show zip-sync-frontend
+pm2 show launchpad-frontend
 
 # Flush logs
 pm2 flush
@@ -263,7 +265,7 @@ pm2 flush
 2. **Navigate to the frontend directory**
 
    ```bash
-   cd /home/ubuntu/zip-sync/frontend
+   cd /home/ubuntu/launchpad/frontend
    ```
 
 3. **Run the initial setup (one-time)**
@@ -288,7 +290,7 @@ Ensure your EC2 security group allows:
 ### EC2 File Structure
 
 ```
-/home/ubuntu/zip-sync/
+/home/ubuntu/launchpad/
 ├── frontend/
 │   ├── ecosystem.config.cjs
 │   ├── deploy.sh

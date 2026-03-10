@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Zip-Sync Frontend Deployment Script for EC2
+# Launchpad Frontend Deployment Script for EC2
 # This script handles the complete deployment process
 
-echo "🚀 Deploying Zip-Sync Frontend to EC2..."
+echo "🚀 Deploying Launchpad Frontend to EC2..."
 
 # Set variables
-FRONTEND_DIR="/home/ubuntu/zip-sync/frontend"
-SERVICE_NAME="zip-sync-frontend"
+FRONTEND_DIR="/home/ubuntu/launchpad/frontend"
+SERVICE_NAME="launchpad-frontend"
 
 # Navigate to frontend directory
 cd $FRONTEND_DIR

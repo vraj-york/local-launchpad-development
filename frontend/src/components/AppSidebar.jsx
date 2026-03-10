@@ -44,8 +44,8 @@ export function AppSidebar() {
         <Sidebar>
             <SidebarHeader>
                 <div className="flex items-center gap-2 px-2 py-2">
-                    <img src={logo} alt="Zip Sync Logo" className="w-8 h-8" />
-                    <span className="text-lg font-bold truncate">Zip Sync</span>
+                    <img src={logo} alt="Launchpad Logo" className="w-8 h-8" />
+                    <span className="text-lg font-bold truncate">Launchpad</span>
                 </div>
             </SidebarHeader>
             <SidebarContent>
