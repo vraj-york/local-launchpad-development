@@ -12,12 +12,14 @@ import crypto from "crypto";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
 import config from "../config/index.js";
+import { getBackendRoot, getProjectsDir } from "../utils/instanceRoot.js";
 import { validateProjectName } from "../utils/projectValidation.utils.js";
 import allowRoles from "../middleware/role.middleware.js";
 import { projectController } from "../controllers/project.controller.js";
 import { createProjectValidation, updateProjectValidation } from "../validators/project.validator.js";
 import { validate } from "../validators/validate.middleware.js";
 import { switchProjectVersion } from "../services/project.service.js";
+import { clearProjectLock as releaseClearProjectLock } from "../services/release.service.js";
 dotenv.config();
 
 const router = express.Router();
@@ -824,7 +826,7 @@ router.post("/:id/upload", authenticateToken, upload.single("project"), async (r
       return res.status(400).json({ error: 'Uploaded file not found on server' });
     }
 
-    const projectFolder = path.join(process.cwd(), "projects", String(projectId));
+    const projectFolder = path.join(getBackendRoot(), "projects", String(projectId));
 
     // Use file locking to prevent concurrent uploads
     const result = await withProjectLock(validatedProjectName, async () => {
@@ -1064,7 +1066,7 @@ window.markerConfig = {
 
         // Calculate build URL
         const relativeBuildPath = path.relative(
-          path.join(process.cwd(), "projects"),
+          getProjectsDir(),
           path.join(actualProjectPath, outputDir)
         );
         const buildUrl = `${config.BASE_URL}/apps/${relativeBuildPath}`;
@@ -1340,7 +1342,13 @@ router.get('/:projectId', authenticateToken, projectController.getById);
  *       500:
  *         description: Cleanup failed
  */
-router.delete('/:projectId', authenticateToken, projectController.deleteProject);
+router.delete('/:projectId', authenticateToken, (req, res, next) => {
+  req.clearProjectLocksAfterDelete = (projectName) => {
+    projectLocks.delete(projectName);
+    releaseClearProjectLock(projectName);
+  };
+  projectController.deleteProject(req, res, next);
+});
 
 
 /**
@@ -1399,7 +1407,7 @@ router.get("/:id/diff-summary", authenticateToken, async (req, res) => {
     if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
     // Get project folder path
-    const projectFolder = path.join(process.cwd(), "projects", String(projectId));
+    const projectFolder = path.join(getBackendRoot(), "projects", String(projectId));
 
     // Ensure project exists
     if (!fs.existsSync(projectFolder)) {
@@ -1495,7 +1503,7 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
     if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
     // Get project folder path
-    const projectFolder = path.join(process.cwd(), "projects", String(projectId));
+    const projectFolder = path.join(getBackendRoot(), "projects", String(projectId));
 
     // Ensure project exists
     if (!fs.existsSync(projectFolder)) {
@@ -1752,7 +1760,7 @@ router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) =>
     if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
     // Get project folder path
-    const projectFolder = path.join(process.cwd(), "projects", String(projectId));
+    const projectFolder = path.join(getBackendRoot(), "projects", String(projectId));
 
     if (!fs.existsSync(projectFolder)) {
       return res.status(404).json({ error: "Project folder not found" });

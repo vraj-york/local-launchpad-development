@@ -6,8 +6,9 @@ import { execSync, spawn, exec } from "child_process";
 import crypto from "crypto";
 import fetch from "node-fetch";
 import ApiError from "../utils/apiError.js";
+import { getBackendRoot } from "../utils/instanceRoot.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
-import { uploadFileToS3Multipart, uploadDirectoryToS3 } from "../utils/uploadFiletoS3.js";
+// import { uploadFileToS3Multipart, uploadDirectoryToS3 } from "../utils/uploadFiletoS3.js";
 import { promisify } from "util";
 import os from 'os';
 import { execa } from "execa";
@@ -90,6 +91,7 @@ function findProjectRoot(dir) {
 
     return dir;
 }
+
 async function findHtmlEntry(projectRoot) {
     const candidates = [
         path.join(projectRoot, "index.html"),              // Vite
@@ -115,6 +117,11 @@ async function withProjectLock(projectName, operation) {
     } finally {
         projectLocks.delete(projectName);
     }
+}
+
+/** Call after deleting a project so the lock map does not retain the name. */
+export function clearProjectLock(projectName) {
+    projectLocks.delete(projectName);
 }
 
 function checkRateLimit() {
@@ -597,18 +604,15 @@ export const uploadReleaseVersionService = async (
 
     const project = release.project;
 
-    const projectRoot = path.resolve(process.cwd(), project.projectPath);
+    const projectRoot = path.join(getBackendRoot(), project.projectPath);
     const projectFolder = path.dirname(projectRoot);
 
-    console.log("Project root determined as:", projectRoot);
-    console.log("Project folder determined as:", projectFolder);
 
     const tempRoot = path.join(
-        process.cwd(),
+        getBackendRoot(),
         "_tmp_builds",
         `project_${project.id}_${Date.now()}`
     );
-    console.log("tempRoot:", tempRoot);
     await fs.ensureDir(tempRoot);
 
     const lock = await prisma.project.updateMany({
@@ -627,118 +631,91 @@ export const uploadReleaseVersionService = async (
 
     try {
 
-        /* -------------------- 1️⃣ Extract ZIP -------------------- */
+        /* -------------------- 1️⃣ Extract whole ZIP -------------------- */
 
         await extract(file.path, { dir: tempRoot });
 
         const items = (await fs.readdir(tempRoot))
             .filter(i => !["__MACOSX", ".DS_Store"].includes(i));
 
-        let buildRoot = tempRoot;
+        let extractRoot = tempRoot;
 
         if (items.length === 1) {
             const nested = path.join(tempRoot, items[0]);
             if ((await fs.stat(nested)).isDirectory()) {
-                buildRoot = nested;
+                extractRoot = nested;
             }
         }
 
-        /* -------------------- 2️⃣ Validate Project -------------------- */
+        /* -------------------- 2️⃣ Validate: package.json required -------------------- */
 
-        if (!(await fs.pathExists(path.join(buildRoot, "package.json")))) {
-            throw new ApiError(400, "Invalid ZIP: package.json not found");
+        const sourceRoot = findProjectRoot(extractRoot);
+        const hasPackageJson = await fs.pathExists(path.join(sourceRoot, "package.json"));
+
+        if (!hasPackageJson) {
+            throw new ApiError(400, "Invalid ZIP: package.json required");
         }
 
-        /* -------------------- 3️⃣ Detect Build Output -------------------- */
+        /* -------------------- 3️⃣ Generate build: npm install + npm run build -------------------- */
 
-        const outputCandidates = ["dist", "build", "out"];
-        let buildOutputPath = null;
-
-        for (const dir of outputCandidates) {
-            const full = path.join(buildRoot, dir);
-            if (await fs.pathExists(full)) {
-                buildOutputPath = full;
-                break;
-            }
-        }
-
-        if (!buildOutputPath) {
-            throw new ApiError(
-                400,
-                "Build folder not found (dist/build/out required in ZIP)"
-            );
-        }
+        const buildOutputPath = await runBuildSequence(sourceRoot);
 
         /* -------------------- 4️⃣ Version -------------------- */
 
         const version =
             versionInput || (await autoGenerateVersion(releaseId));
 
-        console.log("Version determined as:", version);
 
-        /* -------------------- 5️⃣ Git Setup -------------------- */
+        /* -------------------- 5️⃣ Git: tag and push all data except .gitignore content -------------------- */
+
+        const tag = `proj-${project.id}-rel-${releaseId}-v${version}`;
+
 
         const validatedProjectName = validateProjectName(project.name);
-
-        const gitWorkingDir = buildRoot;
-        console.log("Git working directory:", gitWorkingDir);
+        const gitWorkingDir = sourceRoot;
         const permanentGitDir = path.join(projectFolder, ".git");
         const localGitDir = path.join(gitWorkingDir, ".git");
 
-        console.log("Permanent .git directory:", permanentGitDir);
-        console.log("Local .git directory:", localGitDir);
-
         /* Move git history into temp working directory */
-
         if (fs.existsSync(permanentGitDir)) {
             fs.moveSync(permanentGitDir, localGitDir, { overwrite: true });
         }
 
         /* Initialize repo if first time */
-
         if (!fs.existsSync(localGitDir)) {
-
             runCommand("git init", gitWorkingDir);
             runCommand("git branch -m main", gitWorkingDir);
-
             runCommand(`git config user.name "Zip Worker"`, gitWorkingDir);
             runCommand(`git config user.email "worker@zip.com"`, gitWorkingDir);
 
             const repoExists = await checkRepoExists(validatedProjectName);
-
             if (!repoExists) {
                 await createGithubRepo(validatedProjectName);
             }
 
             const remoteUrl =
                 `https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GITHUB_USERNAME}/${validatedProjectName}.git`;
-
             runCommand(`git remote add origin ${remoteUrl}`, gitWorkingDir);
         }
 
-        /* -------------------- 6️⃣ Git Ignore -------------------- */
-        const gitignoreContent = "node_modules\n.DS_Store\n.env\ndist\nbuild\nout";
+        /* .gitignore: push all data except ignored (node_modules, dist, build, .env, etc.) */
+        const defaultGitignore = "node_modules\n.DS_Store\n.env\ndist\nbuild\nout\n.env.local\n.env.*.local\n*.log\n.cache";
+        const gitignorePath = path.join(gitWorkingDir, ".gitignore");
+        const existingIgnore = await fs.pathExists(gitignorePath)
+            ? await fs.readFile(gitignorePath, "utf-8").catch(() => "")
+            : "";
+        const gitignoreContent = existingIgnore.trim()
+            ? existingIgnore
+            : defaultGitignore;
+        await fs.writeFile(gitignorePath, gitignoreContent);
 
-        fs.writeFileSync(
-            path.join(gitWorkingDir, ".gitignore"),
-            gitignoreContent
-        );
-
-        /* -------------------- 7️⃣ Commit -------------------- */
-
+        /* Commit: git add . respects .gitignore */
         runCommand("git add .", gitWorkingDir);
-
         try {
             runCommand(`git commit -m "Release ${version}"`, gitWorkingDir);
         } catch {
             console.log("No changes detected.");
         }
-
-        /* -------------------- 8️⃣ Create Tag -------------------- */
-
-        const tag = `proj-${project.id}-rel-${releaseId}-v${version}`;
-
-        console.log("Tag to be created:", tag);
 
         try {
             runCommand(`git tag -a ${tag} -m "Release ${version}"`, gitWorkingDir);
@@ -746,35 +723,22 @@ export const uploadReleaseVersionService = async (
             console.log("Tag already exists");
         }
 
-        /* -------------------- 9️⃣ Push -------------------- */
-
-        console.log("🚀 Pushing update...");
-
+        console.log("🚀 Pushing update (all files except .gitignore content)...");
         try {
-
-            runCommand("git pull origin main --rebase", gitWorkingDir);
-
             runCommand("git push origin main", gitWorkingDir);
-
             runCommand(`git push origin ${tag}`, gitWorkingDir);
-
         } catch {
-
             console.log("⚠️ Push failed → force pushing");
-
             runCommand("git push origin main --force", gitWorkingDir);
             runCommand(`git push origin ${tag} --force`, gitWorkingDir);
-
         }
-
-        /* Move git history back to permanent location */
 
         fs.moveSync(localGitDir, permanentGitDir, { overwrite: true });
 
-        /* -------------------- 🔟 Deploy Build -------------------- */
+
+        /* -------------------- 🔟 Deploy: store only build/dist into projects/project name -------------------- */
 
         await fs.emptyDir(projectRoot);
-
         await fs.copy(buildOutputPath, projectRoot);
 
         /* -------------------- 11️⃣ Reload Nginx -------------------- */
@@ -783,7 +747,7 @@ export const uploadReleaseVersionService = async (
 
         const domain = process.env.BASE_DOMAIN || "localhost";
 
-        const buildUrl = `http://${domain}:${project.port}/index.html`;
+        const buildUrl = `http://${domain}:${project.port}`;
 
         /* -------------------- 12️⃣ DB Update -------------------- */
 
@@ -888,13 +852,13 @@ export const uploadReleaseVersionService_working_s3 = async (
 
     /* -------------------- 4. Prepare project folder -------------------- */
     const projectRoot = path.join(
-        process.cwd(),
+        getBackendRoot(),
         "projects",
         String(release.project.id),
         versionNumber
     );
     const projectFolder = path.join(
-        process.cwd(),
+        getBackendRoot(),
         "projects",
         String(release.project.id)
     );

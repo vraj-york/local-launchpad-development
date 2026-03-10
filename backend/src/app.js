@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import path from "path";
+import { getProjectsDir } from "./utils/instanceRoot.js";
 import authRoutes from "./routes/auth.routes.js";
 import projectRoutes from "./routes/project.routes.js";
 import releaseRoutes from "./routes/release.routes.js";
@@ -13,7 +14,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.use("/apps", express.static(path.join(process.cwd(), "projects")));
+app.use("/apps", express.static(getProjectsDir()));
 
 app.use("/api/auth", authRoutes);
 // app.use("/api/projects", projectRoutes);
