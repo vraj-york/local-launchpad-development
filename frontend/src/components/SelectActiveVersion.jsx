@@ -44,7 +44,7 @@ export function SelectActiveVersion({
 
   const getReleaseByVersionId = (versionId) =>
     releases.find((r) =>
-      (r.versions || []).some((v) => String(v.id) === String(versionId))
+      (r.versions || []).some((v) => String(v.id) === String(versionId)),
     );
 
   const activeVersionId = releases
@@ -122,75 +122,99 @@ export function SelectActiveVersion({
 
   return (
     <>
-      <div className={cn("flex flex-wrap items-center gap-2", compact && "gap-1.5")}>
-        {!compact && !darkTrigger && <Label>{selectLabel}</Label>}
-        {compact && darkTrigger && <Label className="text-sm text-slate-700">{selectLabel}</Label>}
-        <Select
-        value={
-          selectedValue || (activeVersionId ? String(activeVersionId) : "")
-        }
-        onValueChange={handleValueChange}
-        disabled={activating}
-        className={compact ? "w-auto min-w-[120px]" : "w-full"}
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-2",
+          compact && "gap-1.5",
+        )}
       >
-        <SelectTrigger className={triggerClassName}>
-          {activating ? (
-            <span className="flex items-center gap-2">
-              <Spinner className="size-4" />
-              Activating...
-            </span>
-          ) : (
-            <SelectValue placeholder="Select version to activate">
-              {(() => {
-                const currentId = selectedValue || (activeVersionId ? String(activeVersionId) : "");
-                if (!currentId) return null;
-                const version = getVersionById(currentId);
-                const release = getReleaseByVersionId(currentId);
-                const versionLabel = version ? getVersionLabel(version) : "";
-                const releaseName = release?.name ?? "";
-                const activeSuffix = version?.isActive ? " (Active)" : "";
-                return releaseName ? `${releaseName} – ${versionLabel}${activeSuffix}` : `${versionLabel}${activeSuffix}`;
-              })()}
-            </SelectValue>
-          )}
-        </SelectTrigger>
-        <SelectContent>
-          {releases.map((release) => {
-            const versions = release.versions || [];
-            if (versions.length === 0) return null;
-            return (
-              <SelectGroup key={release.id}>
-                <div className={cn("flex items-center gap-2")}>
-                <SelectLabel className={`${release.isLocked ? "text-red-500": "text-green-500"}`}>{release.name}</SelectLabel> {release.isLocked ? <Lock className="w-4 h-4 text-red-500" /> : <Unlock className="w-4 h-4 text-green-500" />}</div>
-                {versions.map((version) => (
-                  <SelectItem
-                    key={version.id}
-                    value={String(version.id)}
-                    className={cn(
-                      version.isActive &&
-                        "bg-primary text-primary-foreground focus:bg-primary focus:text-primary-foreground ",
+        {!compact && !darkTrigger && <Label>{selectLabel}</Label>}
+        {compact && darkTrigger && (
+          <Label className="text-sm text-slate-700">{selectLabel}</Label>
+        )}
+        <Select
+          value={
+            selectedValue || (activeVersionId ? String(activeVersionId) : "")
+          }
+          onValueChange={handleValueChange}
+          disabled={activating}
+          className={compact ? "w-auto min-w-[120px]" : "w-full"}
+        >
+          <SelectTrigger className={triggerClassName}>
+            {activating ? (
+              <span className="flex items-center gap-2">
+                <Spinner className="size-4" />
+                Activating...
+              </span>
+            ) : (
+              <SelectValue placeholder="Select version to activate">
+                {(() => {
+                  const currentId =
+                    selectedValue ||
+                    (activeVersionId ? String(activeVersionId) : "");
+                  if (!currentId) return null;
+                  const version = getVersionById(currentId);
+                  const release = getReleaseByVersionId(currentId);
+                  const versionLabel = version ? getVersionLabel(version) : "";
+                  const releaseName = release?.name ?? "";
+                  const activeSuffix = version?.isActive ? " (Active)" : "";
+                  return releaseName
+                    ? `${releaseName} – ${versionLabel}${activeSuffix}`
+                    : `${versionLabel}${activeSuffix}`;
+                })()}
+              </SelectValue>
+            )}
+          </SelectTrigger>
+          <SelectContent>
+            {releases.map((release) => {
+              const versions = release.versions || [];
+              if (versions.length === 0) return null;
+              return (
+                <SelectGroup key={release.id}>
+                  <div className={cn("flex items-center gap-2")}>
+                    <SelectLabel
+                      className={`${release.isLocked ? "text-red-500" : "text-green-500"}`}
+                    >
+                      {release.name}
+                    </SelectLabel>{" "}
+                    {release.isLocked ? (
+                      <Lock className="w-4 h-4 text-red-500" />
+                    ) : (
+                      <Unlock className="w-4 h-4 text-green-500" />
                     )}
-                  >
-                    {getVersionLabel(version)}
-                    {version.isActive && " (Active)"}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            );
-          })}
-        </SelectContent>
-      </Select>
-    </div>
+                  </div>
+                  {versions.map((version) => (
+                    <SelectItem
+                      key={version.id}
+                      value={String(version.id)}
+                      className={cn(
+                        version.isActive &&
+                          "bg-primary text-primary-foreground focus:bg-primary focus:text-primary-foreground ",
+                      )}
+                    >
+                      {getVersionLabel(version)}
+                      {version.isActive && " (Active)"}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              );
+            })}
+          </SelectContent>
+        </Select>
+      </div>
 
-      <Dialog open={!!pendingActivation} onOpenChange={(open) => !open && handleCancelActivate()}>
+      <Dialog
+        open={!!pendingActivation}
+        onOpenChange={(open) => !open && handleCancelActivate()}
+      >
         <DialogContent showCloseButton={false} className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
               Activate {pendingActivation?.versionLabel}?
             </DialogTitle>
             <DialogDescription>
-              Once activated, clients will see this version when they open
-              their shared link.
+              Once activated, clients will see this version when they open their
+              shared link.
             </DialogDescription>
           </DialogHeader>
           {pendingActivation?.buildUrl && (
@@ -200,7 +224,11 @@ export function SelectActiveVersion({
                 variant="outline"
                 size="sm"
                 onClick={() =>
-                  window.open(pendingActivation.buildUrl, "_blank", "noopener,noreferrer")
+                  window.open(
+                    pendingActivation.buildUrl,
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
                 }
                 className="hover:text-primary"
               >
@@ -209,8 +237,12 @@ export function SelectActiveVersion({
               </Button>
             </div>
           )}
-          <DialogFooter showCloseButton={false} >
-            <Button variant="outline" onClick={handleCancelActivate} disabled={activating}>
+          <DialogFooter showCloseButton={false}>
+            <Button
+              variant="outline"
+              onClick={handleCancelActivate}
+              disabled={activating}
+            >
               Cancel
             </Button>
             <Button onClick={handleConfirmActivate} disabled={activating}>

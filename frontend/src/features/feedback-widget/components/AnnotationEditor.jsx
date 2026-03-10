@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Tldraw, exportToBlob } from 'tldraw';
+import { Tldraw } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 const AnnotationEditor = ({ screenshot, metadata, onSave }) => {

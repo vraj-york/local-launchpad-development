@@ -140,7 +140,10 @@ export const ClientLink = () => {
                       </Button>
                     </span>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-[240px] text-center">
+                  <TooltipContent
+                    side="bottom"
+                    className="max-w-[240px] text-center"
+                  >
                     You cannot unlock it from here. If you want to unlock it,
                     contact the product manager.
                   </TooltipContent>

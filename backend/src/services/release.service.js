@@ -624,7 +624,19 @@ export const uploadReleaseVersionService = async (
 
   const project = release.project;
 
-  const projectRoot = path.resolve(process.cwd(), project.projectPath);
+  let projectPath = project.projectPath;
+  if (!projectPath || typeof projectPath !== "string" || !projectPath.trim()) {
+    const projectName = project.name.toLowerCase().replace(/\s+/g, "-");
+    projectPath = path.join("projects", projectName);
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { projectPath },
+    });
+    const absolutePath = path.resolve(process.cwd(), projectPath);
+    await fs.ensureDir(absolutePath);
+  }
+
+  const projectRoot = path.resolve(process.cwd(), projectPath);
   const projectFolder = path.dirname(projectRoot);
 
   console.log("Project root determined as:", projectRoot);
