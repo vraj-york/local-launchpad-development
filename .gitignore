@@ -1,21 +1,32 @@
+# Root env (secrets) – use .env.example as template
+.env
+.env.local
+.env.*.local
+
+# Dependencies and build outputs
+/node_modules/
 /backend/node_modules/
 /backend/backend/
 /backend/dist/
-/backend/.env
 /backend/projects/
 /backend/uploads/
 /backend/screenshots
-
 /frontend/node_modules/
 /frontend/build/
-/frontend/.env
-
 /zip-sync-frontend/node_modules/
 /zip-sync-frontend/build/
-/zip-sync-frontend/.env
-
-/node_modules/
-
 /feedback-widget/node_modules/
-/feedback-widget/.env
 /feedback-widget/dist
+
+# Env files (secrets) – .env.example is tracked for reference
+/backend/.env
+/frontend/.env
+/zip-sync-frontend/.env
+/feedback-widget/.env
+
+# Runtime preview (switch version) – recreated on demand
+/backend/_preview/
+
+# --- Tracked for deployment (do not ignore): ---
+# docker-compose.yml, Dockerfile(s), entrypoint.sh, nginx-configs/, nginx-frontend.conf,
+# DOCKER_DEPLOYMENT.md, INSTANCE_SETUP.md, .env.example

@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs-extra";
 import extract from "extract-zip"; // ✅ use extract-zip
 import cors from "cors";
+import { getProjectsDir, getBackendRoot } from "./src/utils/instanceRoot.js";
 
 const app = express();
 const PORT = 5000;
@@ -12,23 +13,23 @@ const PORT = 5000;
 app.use(cors());
 app.use(express.json());
 
-const upload = multer({ dest: "backend/uploads/" });
+const projectsDir = getProjectsDir();
+const uploadsDir = path.join(getBackendRoot(), "uploads");
+const upload = multer({ dest: uploadsDir });
 
 app.post("/upload", upload.single("project"), async (req, res) => {
   try {
     const projectId = Date.now().toString();
-    const projectPath = path.join("backend/projects", projectId);
+    const projectPath = path.join(projectsDir, projectId);
 
     // Ensure folder exists
-    await fs.ensureDir(path.resolve(projectPath));
+    await fs.ensureDir(projectPath);
 
     // ✅ Extract ZIP into project folder using absolute paths
-    await extract(path.resolve(req.file.path), { 
-      dir: path.resolve(projectPath) 
-    });
+    await extract(req.file.path, { dir: projectPath });
 
     // Detect actual project folder (where package.json exists)
-    let actualProjectPath = path.resolve(projectPath);
+    let actualProjectPath = projectPath;
     const pkgPath = path.join(actualProjectPath, "package.json");
     const dirs = await fs.readdir(actualProjectPath);
 
@@ -121,7 +122,7 @@ exec(`cd ${actualProjectPath} && npm install && npm run build`, async (err, stdo
 
   // ✅ Calculate correct relative URL
   const relativeBuildPath = path.relative(
-    path.resolve("backend/projects"),
+    projectsDir,
     path.join(actualProjectPath, outputDir)
   );
 
@@ -140,8 +141,8 @@ exec(`cd ${actualProjectPath} && npm install && npm run build`, async (err, stdo
 });
 
 
-// Serve built apps
-app.use("/apps", express.static(path.join("backend/projects")));
+// Serve built apps (always backend/projects, never frontend)
+app.use("/apps", express.static(projectsDir));
 
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on http://localhost:${PORT}`);

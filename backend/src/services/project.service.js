@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 import ApiError from "../utils/apiError.js";
 import { createRoadmapWithItems } from "./roadmap.service.js";
 import { fetchProjectJiraTickets } from "../utils/jiraIntegration.js";
+import { getBackendRoot, getProjectsDir, getNginxConfigsDir, getNginxBaseDomain, getNginxUpstreamHost } from "../utils/instanceRoot.js";
 import axios from "axios";
 import path from "path";
 import { exec } from "child_process";
@@ -13,8 +14,39 @@ import fsExtra from "fs-extra";
 import os from 'os';
 import { execa } from "execa";
 import fs from "fs-extra";
+import { startProjectServer } from "../projectServers.js";
+import { runBuildSequence } from "./release.service.js";
+import { configDotenv } from "dotenv";
 
 const execAsync = promisify(exec);
+
+function runCommand(command, cwd, options = {}) {
+  return execSync(command, {
+    cwd,
+    encoding: "utf-8",
+    timeout: 300000,
+    maxBuffer: 10 * 1024 * 1024,
+    ...options,
+  });
+}
+
+/** Find directory containing package.json (for worktree build) */
+function findProjectRoot(dir) {
+  const pkgPath = path.join(dir, "package.json");
+  if (fs.existsSync(pkgPath)) return dir;
+  try {
+    const items = fs.readdirSync(dir);
+    for (const name of items) {
+      if (["node_modules", "build", "dist", ".git"].includes(name)) continue;
+      const sub = path.join(dir, name);
+      if (!fs.statSync(sub).isDirectory()) continue;
+      const found = findProjectRoot(sub);
+      if (found) return found;
+    }
+  } catch (_) { }
+  return dir;
+}
+
 /**
  * Shared access check (PRIVATE helper inside same service)
  */
@@ -40,6 +72,23 @@ export async function assertProjectAccess(projectId, user) {
 
   return project;
 }
+
+/** Allow admin, project creator, or assigned manager to delete. */
+export async function assertProjectDeleteAccess(projectId, user) {
+  const project = await prisma.project.findUnique({
+    where: { id: Number(projectId) },
+    select: { id: true, createdById: true, assignedManagerId: true },
+  });
+  if (!project) throw new ApiError(404, "Project not found");
+  const { role, id: userId } = user;
+  const allowed =
+    role === "admin" ||
+    project.createdById === userId ||
+    (role === "manager" && project.assignedManagerId === userId);
+  if (!allowed) throw new ApiError(403, "Forbidden");
+  return project;
+}
+
 const validateGithubConnection = async (username, token) => {
   try {
     // We check the user profile; it's the lightest way to verify a token
@@ -75,14 +124,16 @@ const validateJiraConnection = async (baseUrl, projectKey, email, apiToken) => {
  * create project
  */
 function generateNginxConfigTemplate(projectName, port) {
-  const serverName = `${projectName}.localhost`;
-  return `# Nginx configuration for ${projectName}
+  const baseDomain = getNginxBaseDomain();
+  const upstreamHost = getNginxUpstreamHost();
+  const serverName = `${projectName}.${baseDomain}`;
+  return `# Nginx configuration for ${projectName} (dynamic port ${port})
 server {
     listen 80;
     server_name ${serverName};
     
     location / {
-        proxy_pass http://localhost:${port};
+        proxy_pass http://${upstreamHost}:${port};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -173,17 +224,18 @@ export const createProjectService = async ({ userId, body }) => {
       validateJiraConnection(jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken),
       validateGithubConnection(githubUsername, githubToken)
     ]);
-    // 2. Paths
+    // 2. Paths: projects and nginx-configs live under backend (backend/projects, backend/nginx-configs)
+    const backendRoot = getBackendRoot();
     const projectName = name.toLowerCase().replace(/\s+/g, '-');
     const configFileName = `${projectName}.conf`;
     const relativeProjectPath = path.join("projects", projectName);
-    const absoluteProjectPath = path.resolve(process.cwd(), relativeProjectPath);
+    const absoluteProjectPath = path.join(getProjectsDir(), projectName);
 
-    const nginxAvailableDir = path.resolve(process.cwd(), 'nginx-configs');
+    const nginxAvailableDir = getNginxConfigsDir();
     // NOTE: On Mac Homebrew, the real 'enabled' dir is /opt/homebrew/etc/nginx/servers/
     const nginxEnabledDir = isLinux
       ? '/etc/nginx/sites-enabled'
-      : path.resolve(process.cwd(), 'nginx/sites-enabled');
+      : path.join(backendRoot, 'nginx', 'sites-enabled');
 
     const absoluteNginxConfigPath = path.join(nginxAvailableDir, configFileName);
     const symlinkPath = path.join(nginxEnabledDir, configFileName);
@@ -223,7 +275,7 @@ export const createProjectService = async ({ userId, body }) => {
     }
 
     // 8. DB Persistence
-    return await prisma.$transaction(async (tx) => {
+    const project = await prisma.$transaction(async (tx) => {
       return await tx.project.create({
         data: {
           ...body,
@@ -237,6 +289,10 @@ export const createProjectService = async ({ userId, body }) => {
       });
     });
 
+    // 9. Start static server on this project's port (so http://localhost:8004/ works)
+    startProjectServer(port, absoluteProjectPath);
+
+    return project;
   } catch (error) {
     // 9. Cleanup
     throw new ApiError(500, `Project creation failed: ${error.message}`);
@@ -273,14 +329,14 @@ export const createProjectService_old = async ({ userId, body }) => {
   ]);
   const projectName = name.toLowerCase().replace(/\s+/g, '-');
 
-  // --- PATH CONFIGURATION ---
+  // --- PATH CONFIGURATION (always under backend, never frontend) ---
   // 1. Define the relative paths for the Database
   const relativeProjectPath = path.join("projects", projectName);
   const relativeGitRepoPath = path.join(relativeProjectPath, ".git");
 
   // 2. Define the absolute paths for the OS (fsExtra / execSync)
-  const absoluteProjectPath = path.resolve(process.cwd(), relativeProjectPath);
-  const absoluteNginxDir = path.resolve(process.env.NGINX_CONFIG_DIR || './nginx-configs');
+  const absoluteProjectPath = path.join(getProjectsDir(), projectName);
+  const absoluteNginxDir = getNginxConfigsDir();
   const nginxConfigFileName = `${projectName}.conf`;
   const absoluteNginxConfigPath = path.join(absoluteNginxDir, nginxConfigFileName);
 
@@ -347,28 +403,34 @@ export const getNginxPaths = async () => {
     binary = isLinux ? '/usr/sbin/nginx' : '/usr/local/bin/nginx';
   }
 
-  // Determine the enabled directory
+  // Determine the enabled directory (Linux: system; else: under backend for local dev)
   const enabledDir = isLinux
     ? '/etc/nginx/sites-enabled'
-    : path.resolve(process.cwd(), 'nginx/sites-enabled');
+    : path.join(getBackendRoot(), 'nginx', 'sites-enabled');
 
   return { binary, enabledDir, isLinux };
 };
 
-export const deleteProjectService = async (projectId) => {
+export const deleteProjectService = async (projectId, user) => {
   const id = Number(projectId);
 
+  await assertProjectDeleteAccess(id, user);
+
   const project = await prisma.project.findUnique({ where: { id } });
-  if (!project) {
-    throw new ApiError(404, "Project not found");
-  }
+  if (!project) throw new ApiError(404, "Project not found");
 
   const { enabledDir: nginxEnabledDir, isLinux } = await getNginxPaths();
+  const backendRoot = getBackendRoot();
 
-  const absoluteProjectPath = path.resolve(process.cwd(), project.projectPath);
-  const absoluteNginxPath = path.resolve(process.cwd(), project.nginxConfigPath);
-
-  const projectName = path.basename(absoluteNginxPath, ".conf");
+  const absoluteProjectPath = project.projectPath
+    ? path.join(backendRoot, project.projectPath)
+    : null;
+  const absoluteNginxPath = project.nginxConfigPath
+    ? path.join(backendRoot, project.nginxConfigPath)
+    : null;
+  const projectName = project.nginxConfigPath
+    ? path.basename(project.nginxConfigPath, ".conf")
+    : project.name?.toLowerCase().replace(/\s+/g, "-") ?? "project";
   const symlinkPath = path.join(nginxEnabledDir, `${projectName}.conf`);
 
   try {
@@ -378,25 +440,25 @@ export const deleteProjectService = async (projectId) => {
     if (isLinux) {
       await execAsync(
         `sudo /usr/local/bin/project-cleanup.sh ${project.port || ""} "${symlinkPath}"`
-      );
+      ).catch((err) => console.warn("[DeleteProjectService] cleanup script:", err.message));
     }
 
     /* ----------------------------------------
      * 2. FILESYSTEM CLEANUP (App-owned files)
      * -------------------------------------- */
     await Promise.all([
-      fsExtra.remove(absoluteProjectPath),
-      fsExtra.remove(absoluteNginxPath),
-      !isLinux && fsExtra.remove(symlinkPath).catch(() => { })
+      absoluteProjectPath && fsExtra.remove(absoluteProjectPath).catch(() => { }),
+      absoluteNginxPath && fsExtra.remove(absoluteNginxPath).catch(() => { }),
+      !isLinux && fsExtra.remove(symlinkPath).catch(() => { }),
     ]);
 
     /* ----------------------------------------
-     * 3. DATABASE CLEANUP
+     * 3. DATABASE: remove ProjectAccess first (no cascade), then project (cascades releases, roadmaps, versions)
      * -------------------------------------- */
+    await prisma.projectAccess.deleteMany({ where: { projectId: id } });
     await prisma.project.delete({ where: { id } });
 
-    return { message: "Project deleted successfully" };
-
+    return { message: "Project deleted successfully", projectName };
   } catch (error) {
     console.error("[DeleteProjectService]", error);
     throw new ApiError(500, `Delete failed: ${error.message}`);
@@ -544,22 +606,21 @@ export const getProjectByIdService = async (projectId, user = null) => {
 };
 
 /**
- * NEW: Activate project version
+ * Activate a project version: updates DB (isActive) only.
+ * projects/ folder is only updated at upload time.
  */
-
 export async function activateProjectVersionService({
   projectId,
   versionId,
   user,
 }) {
-  // 1️⃣ Access check
   await assertProjectAccess(projectId, user);
 
-  // 2️⃣ Transaction-safe activation
+  let versionRow;
   await prisma.$transaction(async (tx) => {
     const version = await tx.projectVersion.findFirst({
       where: { id: versionId, projectId },
-      select: { id: true, isActive: true },
+      select: { id: true, isActive: true, buildUrl: true, version: true },
     });
 
     if (!version) {
@@ -579,7 +640,15 @@ export async function activateProjectVersionService({
       where: { id: versionId },
       data: { isActive: true },
     });
+
+    versionRow = { buildUrl: version.buildUrl, version: version.version };
   });
+
+  return {
+    message: "Version activated successfully",
+    version: versionRow.version,
+    buildUrl: versionRow.buildUrl,
+  };
 }
 
 /**
@@ -614,7 +683,7 @@ export async function setReleaseStatusService({ projectId, releaseId, user }) {
     });
   });
 }
-/*GET LIVE URL*/
+/*GET LIVE URL - always reflects projects/ folder (set at last upload only; switch version is UI preview only) */
 export async function getProjectLiveUrlService({ projectId, user }) {
   await assertProjectAccess(projectId, user);
 
@@ -769,57 +838,140 @@ export const getJiraTicketsService = async (projectId, user) => {
 
 
 
+/** Remove _preview dirs older than this (ms) to free disk when preview is unused. */
+const PREVIEW_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
+
+/**
+ * Delete stale preview dirs under _preview/ to free disk. Keeps only build output (serve), not repo.
+ * Call periodically or at start of switchProjectVersion.
+ */
+export async function cleanupStalePreviews() {
+  const backendRoot = getBackendRoot();
+  const previewRoot = path.join(backendRoot, "_preview");
+  if (!fs.existsSync(previewRoot)) return;
+  const now = Date.now();
+  try {
+    const entries = await fs.readdir(previewRoot);
+    for (const name of entries) {
+      if (!name.startsWith("project_")) continue;
+      const dirPath = path.join(previewRoot, name);
+      const stat = await fs.stat(dirPath).catch(() => null);
+      if (!stat || !stat.isDirectory()) continue;
+      const mtime = stat.mtime ? stat.mtime.getTime() : now;
+      if (now - mtime > PREVIEW_TTL_MS) {
+        await fs.remove(dirPath).catch((e) => console.warn("[cleanupStalePreviews]", dirPath, e.message));
+      }
+    }
+  } catch (e) {
+    console.warn("[cleanupStalePreviews]", e.message);
+  }
+}
+
+/**
+ * Switch version: temporary preview only. Checkouts tag, builds, copies to serve, then removes
+ * worktree so only serve/ (build output) is kept. Does NOT touch projects/ (live).
+ * Old preview for this project is removed at start; stale previews (other projects, >1hr) are cleaned.
+ */
 export const switchProjectVersion = async (
   projectId,
-  versionTag
+  versionIdOrTag,
+  isPermanent = false
 ) => {
-
   const project = await prisma.project.findUnique({
-    where: { id: projectId }
+    where: { id: Number(projectId) },
+    select: { id: true, name: true, projectPath: true, port: true },
   });
-
   if (!project) {
     throw new ApiError(404, "Project not found");
   }
+  if (!project.port) {
+    throw new ApiError(400, "Project has no port; cannot serve preview.");
+  }
 
-  const projectRoot = path.resolve(
-    process.cwd(),
-    project.projectPath
-  );
+  let tag;
+  let versionLabel;
+  const idNum = Number(versionIdOrTag);
+  const byId = Number.isInteger(idNum) && String(idNum) === String(versionIdOrTag);
+  if (byId) {
+    const versionRow = await prisma.projectVersion.findFirst({
+      where: { id: idNum, projectId: Number(projectId) },
+      select: { zipFilePath: true, version: true },
+    });
+    if (!versionRow) {
+      throw new ApiError(404, "Version not found");
+    }
+    tag = versionRow.zipFilePath;
+    versionLabel = versionRow.version;
+  } else {
+    tag = String(versionIdOrTag);
+    const versionRow = await prisma.projectVersion.findFirst({
+      where: { projectId, zipFilePath: tag },
+      select: { version: true },
+    });
+    versionLabel = versionRow?.version ?? tag;
+  }
+
+  const backendRoot = getBackendRoot();
+  const projectsDir = getProjectsDir();
+  const gitDir = path.join(projectsDir, ".git");
+  if (!fs.existsSync(gitDir)) {
+    throw new ApiError(
+      503,
+      "Preview unavailable: git repo not found. Deploy at least one release first."
+    );
+  }
+
+  const previewDir = path.join(backendRoot, "_preview", `project_${projectId}`);
+  const previewRepo = path.join(previewDir, "repo");
+  const previewServe = path.join(previewDir, "serve");
 
   try {
+    await cleanupStalePreviews();
 
-    runCommand("git fetch --tags", projectRoot);
+    await fs.remove(previewDir).catch(() => {});
+    await fs.ensureDir(previewDir);
 
-    runCommand(`git checkout ${versionTag}`, projectRoot);
+    runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
+    runCommand(`git --git-dir="${gitDir}" worktree add "${previewRepo}" "${tag}"`, backendRoot);
 
-    await reloadNginx();
+    const sourceRoot = findProjectRoot(previewRepo);
+    const buildOutputPath = await runBuildSequence(sourceRoot);
+    await fs.ensureDir(previewServe);
+    await fs.emptyDir(previewServe);
+    await fs.copy(buildOutputPath, previewServe);
 
-    await prisma.projectVersion.updateMany({
-      where: { projectId },
-      data: { isActive: false }
-    });
+    try {
+      runCommand(
+        `git --git-dir="${gitDir}" worktree remove "${previewRepo}" --force`,
+        backendRoot
+      );
+    } catch (e) {
+      await fs.remove(previewRepo).catch(() => { });
+    }
 
-    await prisma.projectVersion.updateMany({
-      where: {
-        projectId,
-        zipFilePath: versionTag
-      },
-      data: { isActive: true }
-    });
+    const domain = process.env.BASE_DOMAIN || "localhost";
+    const projectUrl = `http://${domain}:${project.port}`;
+    const previewUrl = `${projectUrl}?preview=1`;
 
     return {
-      message: "Version switched successfully",
-      version: versionTag
+      message: "Temporary preview ready. Same URL; refresh the page to see live (projects/) again.",
+      version: versionLabel,
+      buildUrl: previewUrl,
     };
-
   } catch (err) {
-
+    if (err instanceof ApiError) throw err;
+    try {
+      runCommand(
+        `git --git-dir="${gitDir}" worktree remove "${previewRepo}" --force`,
+        backendRoot
+      );
+    } catch (_) { }
+    await fs.remove(previewDir).catch(() => { });
+    console.error("[switchProjectVersion] Preview failed:", err.message);
     throw new ApiError(
       500,
-      "Failed to switch version"
+      err.message || "Failed to build preview (checkout + build). Live app unchanged."
     );
-
   }
 };
 
