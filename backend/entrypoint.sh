@@ -4,6 +4,13 @@ set -e
 # Ensure instance root dirs exist (volumes may mount over them)
 mkdir -p /app/projects /app/nginx-configs /app/uploads
 
+# Nginx container includes /etc/nginx/sites-enabled/*.conf; empty dir breaks nginx.
+# If no configs yet, write a placeholder so the shared volume has at least one .conf
+if [ -z "$(ls -A /app/nginx-configs/*.conf 2>/dev/null)" ]; then
+  echo '# Placeholder until first project is created; nginx include requires at least one .conf' > /app/nginx-configs/_placeholder.conf
+  echo 'server { listen 127.0.0.1:65535; return 503; }' >> /app/nginx-configs/_placeholder.conf
+fi
+
 # In Docker, localhost is the container. Use host.docker.internal to reach Postgres on the host.
 if [ -n "$DATABASE_URL" ]; then
   case "$DATABASE_URL" in
