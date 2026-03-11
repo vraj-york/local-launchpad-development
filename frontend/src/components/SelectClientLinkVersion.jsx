@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { Label } from "./ui/label";
 import { Lock, Unlock } from "lucide-react";
 
+
 /**
  * Version selector for Client Link page. Uses POST /:projectId/switch to get a
  * temporary preview buildUrl; parent should use buildUrl in iframe and refresh when it changes.
@@ -52,10 +53,15 @@ export function SelectClientLinkVersion({
     try {
       setSwitching(true);
       setSelectedValue(versionId);
-      const result = await switchProjectVersion(projectId, Number(versionId), false);
+      const result = await switchProjectVersion(
+        projectId,
+        Number(versionId),
+        false,
+      );
       toast.success(
-          (result?.version ? `v${result.version}` : versionLabel) + " preview ready"
-        );
+        (result?.version ? `v${result.version}` : versionLabel) +
+          " preview ready",
+      );
       onSwitched?.({
         buildUrl: result?.buildUrl,
         version: result?.version,
@@ -86,10 +92,7 @@ export function SelectClientLinkVersion({
 
   return (
     <div
-      className={cn(
-        "flex flex-wrap items-center gap-2",
-        compact && "gap-1.5",
-      )}
+      className={cn("flex flex-wrap items-center gap-2", compact && "gap-1.5")}
     >
       {!compact && !darkTrigger && <Label>{selectLabel}</Label>}
       {compact && darkTrigger && (
