@@ -18,6 +18,8 @@ model User {
   projectAccess        ProjectAccess[]
   versionsUploaded     ProjectVersion[] @relation("VersionUploader")
   releasesCreated       Release[]       @relation("ReleaseCreator")
+  figmaConversions     FigmaConversion[] @relation("FigmaConversionAttemptedBy")
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 }
@@ -53,6 +55,8 @@ model Project {
   versions          ProjectVersion[]
   releases          Release[]
   roadmaps          Roadmap[]
+    figmaConversions  FigmaConversion[]
+
 }
 
 model ProjectAccess {
@@ -80,6 +84,8 @@ model ProjectVersion {
   release     Release? @relation(fields: [releaseId], references: [id], onDelete: Cascade)
   uploader    User     @relation("VersionUploader", fields: [uploadedBy], references: [id])
   roadmapItems  RoadmapItem[] @relation("VersionRoadmapItems")
+    figmaConversions FigmaConversion[]
+
 
 }
 
@@ -101,8 +107,30 @@ model Release {
   project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   creator     User            @relation("ReleaseCreator", fields: [createdBy], references: [id])
   versions    ProjectVersion[]
+  figmaConversions FigmaConversion[]
 
 
+}
+
+model FigmaConversion {
+  id                Int      @id @default(autoincrement())
+  projectId         Int
+  releaseId         Int
+  agentId           String
+  attemptedById    Int
+  attemptedAt      DateTime @default(now())
+  attemptNumber    Int?
+  nodeCount        Int?
+  status           String?
+  targetBranchName String?
+  projectVersionId Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  release        Release         @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  attemptedBy    User            @relation("FigmaConversionAttemptedBy", fields: [attemptedById], references: [id])
+  projectVersion ProjectVersion? @relation(fields: [projectVersionId], references: [id], onDelete: SetNull)
 }
 
 

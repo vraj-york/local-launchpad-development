@@ -15,7 +15,12 @@ import os from 'os';
 import { execa } from "execa";
 import fs from "fs-extra";
 import { startProjectServer } from "../projectServers.js";
-import { runBuildSequence } from "./release.service.js";
+import {
+  runBuildSequence,
+  createGithubRepo,
+  addGithubCollaborator,
+  checkRepoExists,
+} from "./release.service.js";
 import { configDotenv } from "dotenv";
 
 const execAsync = promisify(exec);
@@ -195,12 +200,14 @@ export const allowPortThroughFirewall = async (port) => {
 };
 export const reloadNginx = async () => {
   try {
-    // 1. Find where Nginx is actually installed
     const { stdout } = await execAsync('which nginx');
     const nginxBin = stdout.trim();
-
-    // 2. Execute reload
-    await execAsync(`sudo ${nginxBin} -s reload`);
+    // Docker/backend-as-root: no sudo. Host Linux: sudo usually required.
+    try {
+      await execAsync(`${nginxBin} -s reload`);
+    } catch {
+      await execAsync(`sudo ${nginxBin} -s reload`);
+    }
     return true;
   } catch (error) {
     console.error(`[NGINX RELOAD ERROR]: ${error.message}`);
@@ -246,9 +253,43 @@ export const createProjectService = async ({ userId, body }) => {
 
     // --- FIX: Only run UFW on Linux ---
     if (isLinux) {
-      await execPromise(`sudo ufw allow ${port}/tcp`).catch(err =>
+      await execAsync(`sudo ufw allow ${port}/tcp`).catch(err =>
         console.warn(`[WARN] Firewall skip: ${err.message}`)
       );
+    }
+
+    // 4a. GitHub repo (create once at project create; upload release skips create if repo exists)
+    const githubCreds = {
+      githubUsername: githubUsername?.trim(),
+      githubToken: githubToken?.trim(),
+    };
+    let gitRepoUrl = null;
+    if (githubCreds.githubUsername && githubCreds.githubToken) {
+      try {
+        await createGithubRepo(projectName, githubCreds);
+        gitRepoUrl = `https://github.com/${githubCreds.githubUsername}/${projectName}`;
+        // Collaborator + invitation email (GitHub notifies invitee)
+        const defaultCollaborator =
+          process.env.GITHUB_DEFAULT_COLLABORATOR || "kalrav@york.ie";
+        const invited = await addGithubCollaborator(
+          githubCreds.githubUsername,
+          projectName,
+          defaultCollaborator,
+          githubCreds.githubToken,
+          "push",
+        );
+        if (!invited) {
+          console.warn(
+            "[createProject] Collaborator invite skipped or failed; repo created. Set GITHUB_DEFAULT_COLLABORATOR to a valid GitHub username.",
+          );
+        }
+      } catch (e) {
+        console.warn("[createProject] GitHub repo/collaborator:", e.message);
+        throw new ApiError(
+          502,
+          `GitHub setup failed: ${e.message}. Fix credentials or repo name and retry.`,
+        );
+      }
     }
 
     // 4. Directory Prep
@@ -261,14 +302,20 @@ export const createProjectService = async ({ userId, body }) => {
     const configContent = generateNginxConfigTemplate(projectName, port);
     await fsExtra.writeFile(absoluteNginxConfigPath, configContent);
 
-    // 7. Symlink & Restart
+    // 7. Symlink & Restart (skip symlink when nginx includes /app/nginx-configs directly — Docker backend-only nginx)
     try {
-      // Use sudo for symlink if it's a system directory
-      const linkCmd = isLinux
-        ? `sudo ln -sf ${absoluteNginxConfigPath} ${symlinkPath}`
-        : `ln -sf ${absoluteNginxConfigPath} ${symlinkPath}`;
-      await execPromise(linkCmd);
-
+      const nginxConfigsDir = getNginxConfigsDir();
+      let skipSymlink = false;
+      if (isLinux && absoluteNginxConfigPath.startsWith(nginxConfigsDir) && fsExtra.existsSync('/etc/nginx/nginx.conf')) {
+        const mainConf = await fsExtra.readFile('/etc/nginx/nginx.conf', 'utf8').catch(() => '');
+        skipSymlink = mainConf.includes('/app/nginx-configs');
+      }
+      if (!skipSymlink) {
+        const linkCmd = isLinux
+          ? `sudo ln -sf ${absoluteNginxConfigPath} ${symlinkPath}`
+          : `ln -sf ${absoluteNginxConfigPath} ${symlinkPath}`;
+        await execAsync(linkCmd);
+      }
       await reloadNginx();
     } catch (err) {
       console.warn(`[WARN] Nginx reload skipped/failed: ${err.message}`);
@@ -283,7 +330,9 @@ export const createProjectService = async ({ userId, body }) => {
           createdById: userId,
           port,
           projectPath: relativeProjectPath,
-          gitRepoPath: path.join(relativeProjectPath, ".git"),
+          // Remote clone URL when GitHub repo was created; else local .git path for legacy
+          gitRepoPath:
+            gitRepoUrl || path.join(relativeProjectPath, ".git"),
           nginxConfigPath: path.join('nginx-configs', configFileName)
         },
       });
@@ -838,12 +887,16 @@ export const getJiraTicketsService = async (projectId, user) => {
 
 
 
-/** Remove _preview dirs older than this (ms) to free disk when preview is unused. */
+/** Remove _preview dirs older than this (ms) so _preview does not stay filled forever. */
 const PREVIEW_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 
+// Stored next to serve/ so express.static(serve) does not expose it
+const PREVIEW_META_FILE = ".preview-meta.json";
+
 /**
- * Delete stale preview dirs under _preview/ to free disk. Keeps only build output (serve), not repo.
- * Call periodically or at start of switchProjectVersion.
+ * Delete stale preview dirs under _preview/ after PREVIEW_TTL_MS.
+ * Uses .preview-meta.json { createdAt } next to each project dir when present; else dir mtime.
+ * Call periodically and at start of switchProjectVersion.
  */
 export async function cleanupStalePreviews() {
   const backendRoot = getBackendRoot();
@@ -857,10 +910,33 @@ export async function cleanupStalePreviews() {
       const dirPath = path.join(previewRoot, name);
       const stat = await fs.stat(dirPath).catch(() => null);
       if (!stat || !stat.isDirectory()) continue;
-      const mtime = stat.mtime ? stat.mtime.getTime() : now;
-      if (now - mtime > PREVIEW_TTL_MS) {
-        await fs.remove(dirPath).catch((e) => console.warn("[cleanupStalePreviews]", dirPath, e.message));
+
+      let createdAt = null;
+      const serveDir = path.join(dirPath, "serve");
+      const metaPath = path.join(dirPath, PREVIEW_META_FILE);
+      if (await fs.pathExists(metaPath)) {
+        try {
+          const meta = JSON.parse(await fs.readFile(metaPath, "utf8"));
+          if (meta && typeof meta.createdAt === "number") createdAt = meta.createdAt;
+        } catch (_) { /* ignore */ }
       }
+      if (createdAt == null) {
+        const serveStat = await fs.stat(serveDir).catch(() => null);
+        if (serveStat && serveStat.isDirectory()) {
+          createdAt = serveStat.mtimeMs || serveStat.mtime.getTime();
+        } else {
+          createdAt = stat.mtimeMs || stat.mtime.getTime();
+        }
+      }
+      if (now - createdAt > PREVIEW_TTL_MS) {
+        await fs.remove(dirPath).catch((e) => console.warn("[cleanupStalePreviews]", dirPath, e.message));
+        console.log("[cleanupStalePreviews] removed expired preview:", dirPath);
+      }
+    }
+    // Remove _preview itself if now empty (optional tidy)
+    const left = await fs.readdir(previewRoot).catch(() => []);
+    if (left.length === 0) {
+      await fs.remove(previewRoot).catch(() => { });
     }
   } catch (e) {
     console.warn("[cleanupStalePreviews]", e.message);
@@ -928,7 +1004,7 @@ export const switchProjectVersion = async (
   try {
     await cleanupStalePreviews();
 
-    await fs.remove(previewDir).catch(() => {});
+    await fs.remove(previewDir).catch(() => { });
     await fs.ensureDir(previewDir);
 
     runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
@@ -939,6 +1015,12 @@ export const switchProjectVersion = async (
     await fs.ensureDir(previewServe);
     await fs.emptyDir(previewServe);
     await fs.copy(buildOutputPath, previewServe);
+    // Marker for TTL cleanup (1 hour); kept beside serve/ so it is not served as static
+    await fs.writeFile(
+      path.join(previewDir, PREVIEW_META_FILE),
+      JSON.stringify({ createdAt: Date.now() }),
+      "utf8"
+    );
 
     try {
       runCommand(

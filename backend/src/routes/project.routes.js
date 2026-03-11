@@ -740,7 +740,7 @@ async function createGithubRepo(repoName) {
       name: repoName,
       private: false,
       description: `Auto-generated repository for ${repoName}`,
-      auto_init: false,
+      auto_init: true,
     }),
   });
 

@@ -58,7 +58,7 @@ function sanitizeCommand(command) {
   return command;
 }
 
-function findProjectRoot(dir) {
+export function findProjectRoot(dir) {
   const ignoreList = [
     ".git",
     ".gitignore",
@@ -174,7 +174,7 @@ function getProjectGitHubCredentials(project) {
   return { githubUsername: username, githubToken: token };
 }
 
-async function createGithubRepo(repoName, credentials = {}) {
+export async function createGithubRepo(repoName, credentials = {}) {
   checkRateLimit();
 
   const username = credentials.githubUsername || GITHUB_USERNAME;
@@ -197,7 +197,8 @@ async function createGithubRepo(repoName, credentials = {}) {
       name: repoName,
       private: false,
       description: `Auto-generated repository for ${repoName}`,
-      auto_init: false,
+      // Creates default branch (main) with initial README commit so clone/push has a base
+      auto_init: true,
     }),
   });
 
@@ -269,7 +270,61 @@ async function createGithubRepo(repoName, credentials = {}) {
   }
 }
 
-async function checkRepoExists(repoName, credentials = {}) {
+/**
+ * Add a collaborator to a repo (GitHub emails them an invitation if pending).
+ * @param {string} owner - GitHub username/org
+ * @param {string} repo - repo name
+ * @param {string} collaborator - GitHub username (email not supported by REST; use username before @ if value looks like email)
+ * @param {string} token
+ * @param {string} permission - pull | push | admin
+ */
+export async function addGithubCollaborator(
+  owner,
+  repo,
+  collaborator,
+  token,
+  permission = "push",
+) {
+  if (!collaborator || !token || !owner || !repo) return;
+  let username = collaborator.trim();
+  if (username.includes("@") && !username.includes(" ")) {
+    username = username.split("@")[0];
+  }
+  checkRateLimit();
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/collaborators/${encodeURIComponent(username)}`;
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `token ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "User-Agent": "GitHub-Zip-Worker/1.0",
+    },
+    body: JSON.stringify({ permission }),
+  });
+  if (response.status === 204 || response.status === 201) {
+    return true;
+  }
+  const text = await response.text();
+  if (response.status === 404) {
+    console.warn(
+      `[addGithubCollaborator] User ${username} not found or no access: ${text}`,
+    );
+    return false;
+  }
+  if (response.status === 422) {
+    console.warn(`[addGithubCollaborator] ${text}`);
+    return false;
+  }
+  if (!response.ok) {
+    console.warn(
+      `[addGithubCollaborator] ${response.status}: ${text}`,
+    );
+  }
+  return response.ok;
+}
+
+export async function checkRepoExists(repoName, credentials = {}) {
   checkRateLimit();
 
   const username = credentials.githubUsername || GITHUB_USERNAME;
@@ -610,17 +665,18 @@ export const runBuildSequence = async (buildContextPath) => {
 
 export const reloadNginx = async () => {
   try {
-    // 1. Find where Nginx is actually installed
-    const { stdout } = await execAsync("which nginx");
+    const { stdout } = await execAsync('which nginx');
     const nginxBin = stdout.trim();
-
-    // 2. Execute reload
-    await execAsync(`sudo ${nginxBin} -s reload`);
+    try {
+      await execAsync(`${nginxBin} -s reload`);
+    } catch {
+      await execAsync(`sudo ${nginxBin} -s reload`);
+    }
     return true;
   } catch (error) {
     console.error(`[NGINX RELOAD ERROR]: ${error.message}`);
     // On Local Mac, we don't want to crash the whole app if Nginx isn't running
-    if (os.platform() !== "darwin") throw error;
+    if (os.platform() !== 'darwin') throw error;
   }
 };
 export const uploadReleaseVersionService = async (
@@ -710,6 +766,7 @@ export const uploadReleaseVersionService = async (
 
     const githubCreds = getProjectGitHubCredentials(project);
     const validatedProjectName = validateProjectName(project.name);
+
     const gitWorkingDir = sourceRoot;
     const permanentGitDir = path.join(projectFolder, ".git");
     const localGitDir = path.join(gitWorkingDir, ".git");
@@ -821,8 +878,8 @@ export const uploadReleaseVersionService = async (
       url: buildUrl,
     };
   } finally {
-    await fs.remove(tempRoot).catch(() => {});
-    await fs.remove(file.path).catch(() => {});
+    await fs.remove(tempRoot).catch(() => { });
+    await fs.remove(file.path).catch(() => { });
 
     await prisma.project.update({
       where: { id: project.id },

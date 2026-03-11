@@ -2,7 +2,7 @@
 
 This guide walks you through deploying **Launchpad** on a single **Amazon EC2** instance using **Docker** only. The database is **Supabase** (hosted PostgreSQL); you do **not** install or run PostgreSQL on EC2.
 
-- **EC2**: runs frontend + backend + nginx in Docker. No PM2, no PostgreSQL on the instance.
+- **EC2**: runs frontend + backend in Docker (nginx runs **inside** the backend container on port 80). No PM2, no PostgreSQL on the instance.
 - **Supabase**: hosted PostgreSQL. Backend connects via `DATABASE_URL`.
 
 ---
@@ -72,7 +72,7 @@ nano .env
 ```bash
 cd /home/ubuntu/launchpad
 
-# Start backend + frontend + nginx (no db container; DATABASE_URL points to Supabase)
+# Start backend + frontend (nginx is inside backend on port 80; DATABASE_URL points to Supabase)
 docker compose up -d --build
 ```
 
