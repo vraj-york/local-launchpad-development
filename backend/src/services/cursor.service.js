@@ -1,4 +1,7 @@
 import fetch from "node-fetch";
+import path from "path";
+import fs from "fs-extra";
+import { execFileSync } from "child_process";
 import { PrismaClient } from "@prisma/client";
 import {
   parseGitRepoPath,
@@ -8,10 +11,29 @@ import {
   createTag,
   createBranch,
 } from "./github.service.js";
+import { getBackendRoot } from "../utils/instanceRoot.js";
+import {
+  runBuildSequence,
+  reloadNginx,
+  findProjectRoot,
+} from "./release.service.js";
 
 const CURSOR_BASE_URL = "https://api.cursor.com";
 const prisma = new PrismaClient();
 const POLL_INTERVAL_MS = 5000;
+
+/**
+ * Run git with args in cwd; argv only (no shell) so token in URL is not interpreted.
+ */
+function gitExec(argv, cwd) {
+  execFileSync("git", argv, {
+    cwd,
+    encoding: "utf8",
+    stdio: "pipe",
+    maxBuffer: 10 * 1024 * 1024,
+    timeout: 300000,
+  });
+}
 
 /**
  * Call Cursor Cloud Agents API with Basic auth (API key as username, empty password).
@@ -58,11 +80,10 @@ export async function cursorRequest({ method, path, body }) {
 }
 
 /**
- * Perform merge-to-launchpad: force-update launchpad branch, create tag, ProjectVersion, update FigmaConversion.
+ * Perform merge-to-launchpad: force-update launchpad branch, create tag, checkout tag,
+ * build, copy dist/build into projects/{projectPath}, reload nginx, ProjectVersion with live buildUrl.
  * Idempotent: if FigmaConversion.projectVersionId is already set, returns success without re-running.
- * @param {string} agentId
- * @param {object} agentData - Cursor agent response (must have status === "FINISHED" and target.branchName)
- * @returns {Promise<{ merged: boolean, sha?: string, version?: string, tag?: string, prUrl?: string }>}
+ * If project has no projectPath/port, falls back to GitHub-only ProjectVersion (no deploy).
  */
 export async function performMergeToLaunchpad(agentId, agentData) {
   const conversion = await prisma.figmaConversion.findFirst({
@@ -78,7 +99,12 @@ export async function performMergeToLaunchpad(agentId, agentData) {
 
   const project = await prisma.project.findUnique({
     where: { id: conversion.projectId },
-    select: { githubToken: true, gitRepoPath: true },
+    select: {
+      githubToken: true,
+      gitRepoPath: true,
+      projectPath: true,
+      port: true,
+    },
   });
   if (!project?.githubToken?.trim() || !project?.gitRepoPath?.trim()) {
     throw new Error("Project has no GitHub token or Git repo path configured");
@@ -136,18 +162,87 @@ export async function performMergeToLaunchpad(agentId, agentData) {
     throw new Error(tagResult.message || "Failed to create tag");
   }
 
-  const buildUrl = `https://github.com/${owner}/${repo}/releases/tag/${tagName}`;
-  const newVersion = await prisma.projectVersion.create({
-    data: {
-      projectId: conversion.projectId,
-      releaseId: conversion.releaseId,
-      version: versionNumber,
-      zipFilePath: tagName,
-      buildUrl,
-      isActive: false,
-      uploadedBy: conversion.attemptedById,
-    },
-  });
+  const canDeploy =
+    project.projectPath?.trim() &&
+    project.port != null &&
+    Number(project.port) > 0;
+
+  let newVersion;
+  const backendRoot = getBackendRoot();
+  const tempRoot = path.join(
+    backendRoot,
+    "_tmp_builds",
+    `cursor_merge_${conversion.projectId}_${Date.now()}`,
+  );
+  console.log('tempRoot:', tempRoot);
+  console.log('canDeploy:', canDeploy);
+
+  if (canDeploy) {
+    await fs.ensureDir(tempRoot);
+    const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+    console.log('cloneUrl:', cloneUrl);
+    try {
+      // Clone into tempRoot (empty dir)
+      gitExec(["clone", cloneUrl, "."], tempRoot);
+      // Fetch tag ref then checkout (clone default branch may not include tag yet)
+      try {
+        gitExec(
+          ["fetch", "origin", `refs/tags/${tagName}:refs/tags/${tagName}`],
+          tempRoot,
+        );
+      } catch {
+        gitExec(["fetch", "origin", "tag", tagName], tempRoot);
+      }
+      gitExec(["checkout", tagName], tempRoot);
+
+      const sourceRoot = findProjectRoot(tempRoot);
+      const buildOutputPath = await runBuildSequence(sourceRoot);
+console.log('buildOutputPath:', buildOutputPath);
+      const projectRoot = path.join(backendRoot, project.projectPath);
+      await fs.ensureDir(path.dirname(projectRoot));
+      await fs.emptyDir(projectRoot);
+      await fs.copy(buildOutputPath, projectRoot);
+
+      await reloadNginx();
+
+      const domain = process.env.BASE_DOMAIN || "localhost";
+      const buildUrl = `http://${domain}:${project.port}`;
+
+      newVersion = await prisma.$transaction(async (tx) => {
+        await tx.projectVersion.updateMany({
+          where: { projectId: conversion.projectId },
+          data: { isActive: false },
+        });
+        return tx.projectVersion.create({
+          data: {
+            projectId: conversion.projectId,
+            releaseId: conversion.releaseId,
+            version: versionNumber,
+            zipFilePath: tagName,
+            buildUrl,
+            isActive: true,
+            uploadedBy: conversion.attemptedById,
+          },
+        });
+      });
+    } finally {
+      await fs.remove(tempRoot).catch(() => {});
+    }
+  } else {
+    // No projectPath/port: keep GitHub-only record (no deploy)
+    const buildUrl = `https://github.com/${owner}/${repo}/releases/tag/${tagName}`;
+    newVersion = await prisma.projectVersion.create({
+      data: {
+        projectId: conversion.projectId,
+        releaseId: conversion.releaseId,
+        version: versionNumber,
+        zipFilePath: tagName,
+        buildUrl,
+        isActive: false,
+        uploadedBy: conversion.attemptedById,
+      },
+    });
+  }
 
   await prisma.figmaConversion.update({
     where: { id: conversion.id },
@@ -164,6 +259,7 @@ export async function performMergeToLaunchpad(agentId, agentData) {
     version: versionNumber,
     tag: tagName,
     prUrl: agentData.target?.prUrl || agentData.source?.prUrl,
+    deployed: canDeploy,
   };
 }
 

@@ -15,7 +15,12 @@ import os from 'os';
 import { execa } from "execa";
 import fs from "fs-extra";
 import { startProjectServer } from "../projectServers.js";
-import { runBuildSequence } from "./release.service.js";
+import {
+  runBuildSequence,
+  createGithubRepo,
+  addGithubCollaborator,
+  checkRepoExists,
+} from "./release.service.js";
 import { configDotenv } from "dotenv";
 
 const execAsync = promisify(exec);
@@ -253,6 +258,40 @@ export const createProjectService = async ({ userId, body }) => {
       );
     }
 
+    // 4a. GitHub repo (create once at project create; upload release skips create if repo exists)
+    const githubCreds = {
+      githubUsername: githubUsername?.trim(),
+      githubToken: githubToken?.trim(),
+    };
+    let gitRepoUrl = null;
+    if (githubCreds.githubUsername && githubCreds.githubToken) {
+      try {
+        await createGithubRepo(projectName, githubCreds);
+        gitRepoUrl = `https://github.com/${githubCreds.githubUsername}/${projectName}`;
+        // Collaborator + invitation email (GitHub notifies invitee)
+        const defaultCollaborator =
+          process.env.GITHUB_DEFAULT_COLLABORATOR || "kalrav@york.ie";
+        const invited = await addGithubCollaborator(
+          githubCreds.githubUsername,
+          projectName,
+          defaultCollaborator,
+          githubCreds.githubToken,
+          "push",
+        );
+        if (!invited) {
+          console.warn(
+            "[createProject] Collaborator invite skipped or failed; repo created. Set GITHUB_DEFAULT_COLLABORATOR to a valid GitHub username.",
+          );
+        }
+      } catch (e) {
+        console.warn("[createProject] GitHub repo/collaborator:", e.message);
+        throw new ApiError(
+          502,
+          `GitHub setup failed: ${e.message}. Fix credentials or repo name and retry.`,
+        );
+      }
+    }
+
     // 4. Directory Prep
     await fsExtra.ensureDir(absoluteProjectPath);
     await fsExtra.ensureDir(nginxAvailableDir);
@@ -291,7 +330,9 @@ export const createProjectService = async ({ userId, body }) => {
           createdById: userId,
           port,
           projectPath: relativeProjectPath,
-          gitRepoPath: path.join(relativeProjectPath, ".git"),
+          // Remote clone URL when GitHub repo was created; else local .git path for legacy
+          gitRepoPath:
+            gitRepoUrl || path.join(relativeProjectPath, ".git"),
           nginxConfigPath: path.join('nginx-configs', configFileName)
         },
       });
@@ -895,7 +936,7 @@ export async function cleanupStalePreviews() {
     // Remove _preview itself if now empty (optional tidy)
     const left = await fs.readdir(previewRoot).catch(() => []);
     if (left.length === 0) {
-      await fs.remove(previewRoot).catch(() => {});
+      await fs.remove(previewRoot).catch(() => { });
     }
   } catch (e) {
     console.warn("[cleanupStalePreviews]", e.message);
@@ -963,7 +1004,7 @@ export const switchProjectVersion = async (
   try {
     await cleanupStalePreviews();
 
-    await fs.remove(previewDir).catch(() => {});
+    await fs.remove(previewDir).catch(() => { });
     await fs.ensureDir(previewDir);
 
     runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
