@@ -1,9 +1,9 @@
 export default {
   apps: [
     {
-      name: 'zip-sync-backend',
+      name: 'launchpad-backend',
       script: 'src/server.js',
-      cwd: '/home/ubuntu/zip-sync/backend',
+      cwd: '/home/ubuntu/launchpad/backend',
       instances: 1,
       exec_mode: 'fork',
       env: {
@@ -47,8 +47,8 @@ export default {
       user: 'ubuntu',
       host: '43.205.121.85',
       ref: 'origin/main',
-      repo: 'git@github.com:your-repo/zip-sync.git',
-      path: '/home/ubuntu/zip-sync',
+      repo: 'git@github.com:your-repo/launchpad.git',
+      path: '/home/ubuntu/launchpad',
       'pre-deploy-local': '',
       'post-deploy': 'npm install && pm2 reload ecosystem.config.js --env production',
       'pre-setup': ''

@@ -22,7 +22,10 @@ export const projectController = {
     deleteProject: asyncHandler(async (req, res) => {
         const { projectId } = req.params;
         const result = await deleteProjectService(projectId, req.user);
-        res.json(result);
+        if (typeof req.clearProjectLocksAfterDelete === "function" && result.projectName) {
+            req.clearProjectLocksAfterDelete(result.projectName);
+        }
+        res.json({ message: result.message });
     }),
     // GET /api/projects/:projectId
     getById: asyncHandler(async (req, res) => {
@@ -73,13 +76,13 @@ export const projectController = {
         const projectId = Number(req.params.id);
         const versionId = Number(req.params.versionId);
 
-        await activateProjectVersionService({
+        const result = await activateProjectVersionService({
             projectId,
             versionId,
             user: req.user,
         });
 
-        res.json({ message: "Version activated successfully" });
+        res.json(result);
     }),
 
     setReleaseStatus: asyncHandler(async (req, res) => {

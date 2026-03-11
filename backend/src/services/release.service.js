@@ -6,11 +6,9 @@ import { execSync, spawn, exec } from "child_process";
 import crypto from "crypto";
 import fetch from "node-fetch";
 import ApiError from "../utils/apiError.js";
+import { getBackendRoot } from "../utils/instanceRoot.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
-import {
-  uploadFileToS3Multipart,
-  uploadDirectoryToS3,
-} from "../utils/uploadFiletoS3.js";
+// import { uploadFileToS3Multipart, uploadDirectoryToS3 } from "../utils/uploadFiletoS3.js";
 import { promisify } from "util";
 import os from "os";
 import { execa } from "execa";
@@ -106,6 +104,7 @@ function findProjectRoot(dir) {
 
   return dir;
 }
+
 async function findHtmlEntry(projectRoot) {
   const candidates = [
     path.join(projectRoot, "index.html"), // Vite
@@ -135,6 +134,11 @@ async function withProjectLock(projectName, operation) {
   }
 }
 
+/** Call after deleting a project so the lock map does not retain the name. */
+export function clearProjectLock(projectName) {
+  projectLocks.delete(projectName);
+}
+
 function checkRateLimit() {
   const now = Date.now();
   const windowStart = now - RATE_LIMIT_WINDOW;
@@ -154,19 +158,38 @@ function checkRateLimit() {
   githubApiCalls.set(now, true);
 }
 
-async function createGithubRepo(repoName) {
+/**
+ * Resolve GitHub credentials for a project: use project's githubUsername/githubToken when both set, else env.
+ * @param {Object} project - Project with optional githubUsername, githubToken
+ * @returns {{ githubUsername: string, githubToken: string }}
+ */
+function getProjectGitHubCredentials(project) {
+  const username = project?.githubUsername?.trim() || GITHUB_USERNAME;
+  const token = project?.githubToken?.trim() || GITHUB_TOKEN;
+  if (!username || !token) {
+    throw new ApiError(
+      "GitHub credentials not configured. Set project GitHub (githubUsername, githubToken) or env GITHUB_USERNAME and GITHUB_TOKEN.",
+    );
+  }
+  return { githubUsername: username, githubToken: token };
+}
+
+async function createGithubRepo(repoName, credentials = {}) {
   checkRateLimit();
 
-  if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
+  const username = credentials.githubUsername || GITHUB_USERNAME;
+  const token = credentials.githubToken || GITHUB_TOKEN;
+
+  if (!token || !username) {
     throw new ApiError(
-      "GitHub credentials not configured. Please set GITHUB_TOKEN and GITHUB_USERNAME environment variables.",
+      "GitHub credentials not configured. Please set GITHUB_TOKEN and GITHUB_USERNAME environment variables or project GitHub details.",
     );
   }
 
   const response = await fetch(`https://api.github.com/user/repos`, {
     method: "POST",
     headers: {
-      Authorization: `token ${GITHUB_TOKEN}`,
+      Authorization: `token ${token}`,
       "Content-Type": "application/json",
       "User-Agent": "GitHub-Zip-Worker/1.0",
     },
@@ -178,13 +201,57 @@ async function createGithubRepo(repoName) {
     }),
   });
 
+  const responseBody = await response.text();
+
+  if (response.status === 201) {
+    // Repo created successfully
+    return;
+  }
   if (response.status === 422) {
-    return; // Repo already exists
-  } else if (response.status === 401) {
+    // 422 = validation failed: often "repo already exists" - if so, treat as success and continue to push
+    const creds = { githubUsername: username, githubToken: token };
+    const exists = await checkRepoExists(repoName, creds);
+    if (exists) return;
+
+    let errDetail = responseBody;
+    try {
+      const parsed = JSON.parse(responseBody);
+      const msg = parsed.message || "";
+      const errors = parsed.errors;
+      if (Array.isArray(errors) && errors.length > 0) {
+        const parts = errors.map(
+          (e) => e.message || e.code || JSON.stringify(e),
+        );
+        errDetail = [msg, ...parts].filter(Boolean).join("; ");
+      } else if (msg) {
+        errDetail = msg;
+      }
+      // If GitHub says name/repo "already exists", repo might exist but GET failed (e.g. token scope) - don't throw, allow push to be tried
+      const lower = (
+        msg + (errors || []).map((e) => (e && e.message) || "").join(" ")
+      ).toLowerCase();
+      if (
+        lower.includes("already exists") ||
+        lower.includes("name already exists")
+      ) {
+        return;
+      }
+    } catch (_) {
+      /* use responseBody */
+    }
+    const hint =
+      "If the repo already exists under this account, ensure the token has repo access and try again; otherwise use a different repo name.";
+    throw new ApiError(
+      400,
+      `GitHub repo creation failed (422): ${errDetail}. ${hint}`,
+    );
+  }
+  if (response.status === 401) {
     throw new ApiError(
       "GitHub authentication failed. Please check your GITHUB_TOKEN.",
     );
-  } else if (response.status === 403) {
+  }
+  if (response.status === 403) {
     const rateLimitRemaining = response.headers.get("x-ratelimit-remaining");
     if (rateLimitRemaining === "0") {
       throw new ApiError(
@@ -192,22 +259,27 @@ async function createGithubRepo(repoName) {
       );
     }
     throw new ApiError(
-      "GitHub API access forbidden. Please check your token permissions.",
+      'GitHub API access forbidden. Please check your token has "repo" scope.',
     );
-  } else if (!response.ok) {
-    const error = await response.text();
-    throw new ApiError(`GitHub repo creation failed: ${error}`);
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      `GitHub repo creation failed (${response.status}): ${responseBody}`,
+    );
   }
 }
 
-async function checkRepoExists(repoName) {
+async function checkRepoExists(repoName, credentials = {}) {
   checkRateLimit();
 
+  const username = credentials.githubUsername || GITHUB_USERNAME;
+  const token = credentials.githubToken || GITHUB_TOKEN;
+
   const response = await fetch(
-    `https://api.github.com/repos/${GITHUB_USERNAME}/${repoName}`,
+    `https://api.github.com/repos/${username}/${repoName}`,
     {
       headers: {
-        Authorization: `token ${GITHUB_TOKEN}`,
+        Authorization: `token ${token}`,
         "User-Agent": "GitHub-Zip-Worker/1.0",
       },
     },
@@ -503,59 +575,6 @@ export const autoGenerateVersion = async (releaseId) => {
 
   return `${lastVersion.version}.1`; // Fallback for non-standard versions
 };
-/**
- * Executes the build sequence for the extracted ZIP content.
- * @param {string} tempExtractPath - The directory where the ZIP was extracted.
- * @returns {Promise<string>} - The absolute path to the production build folder (dist/build).
- */
-// export const runBuildSequence = async (tempExtractPath) => {
-//     try {
-//         console.log(`[BUILD] Starting build sequence in: ${tempExtractPath}`);
-
-//         // 1. Install Dependencies (Using --prefer-offline for speed)
-//         // We use execSync for simplicity, but you can wrap it in a Promise for better async handling
-//         execSync('npm install --prefer-offline --no-audit', {
-//             cwd: tempExtractPath,
-//             stdio: 'inherit'
-//         });
-
-//         // 2. Run the Build Script
-//         execSync('npm run build', {
-//             cwd: tempExtractPath,
-//             stdio: 'inherit'
-//         });
-//         // For Vite projects
-//         execSync('npm run build -- --base ./', { cwd: tempExtractPath });
-//         // 3. Identify the Output Folder
-//         const possibleDirs = ['dist', 'build', 'out'];
-//         let buildDir = null;
-
-//         for (const dir of possibleDirs) {
-//             const fullPath = path.join(tempExtractPath, dir);
-//             if (await fs.pathExists(fullPath)) {
-//                 buildDir = fullPath;
-//                 break;
-//             }
-//         }
-
-//         if (!buildDir) {
-//             throw new Error("Build succeeded but no 'dist' or 'build' folder was found.");
-//         }
-
-//         return buildDir;
-//     } catch (error) {
-//         console.error("!!! CRITICAL: UPLOAD FAILED !!!", error.message);
-
-//         // Cleanup the temp folder so the NEXT attempt starts fresh
-//         await fsExtra.remove(tempExtractPath).catch(() => { });
-
-//         // Reset Git so the project folder isn't left in a "dirty" state
-//         await git.checkout(['-f', 'main']).catch(() => { });
-//         await git.reset(['--hard', 'HEAD']).catch(() => { });
-
-//         throw new ApiError(500, `Upload failed: ${error.message}`);
-//     }
-// };
 
 /**
  * Runs npm install and npm run build within the provided temp directory.
@@ -624,30 +643,14 @@ export const uploadReleaseVersionService = async (
 
   const project = release.project;
 
-  let projectPath = project.projectPath;
-  if (!projectPath || typeof projectPath !== "string" || !projectPath.trim()) {
-    const projectName = project.name.toLowerCase().replace(/\s+/g, "-");
-    projectPath = path.join("projects", projectName);
-    await prisma.project.update({
-      where: { id: project.id },
-      data: { projectPath },
-    });
-    const absolutePath = path.resolve(process.cwd(), projectPath);
-    await fs.ensureDir(absolutePath);
-  }
-
-  const projectRoot = path.resolve(process.cwd(), projectPath);
+  const projectRoot = path.join(getBackendRoot(), project.projectPath);
   const projectFolder = path.dirname(projectRoot);
 
-  console.log("Project root determined as:", projectRoot);
-  console.log("Project folder determined as:", projectFolder);
-
   const tempRoot = path.join(
-    process.cwd(),
+    getBackendRoot(),
     "_tmp_builds",
     `project_${project.id}_${Date.now()}`,
   );
-  console.log("tempRoot:", tempRoot);
   await fs.ensureDir(tempRoot);
 
   const lock = await prisma.project.updateMany({
@@ -665,7 +668,7 @@ export const uploadReleaseVersionService = async (
   }
 
   try {
-    /* -------------------- 1️⃣ Extract ZIP -------------------- */
+    /* -------------------- 1️⃣ Extract whole ZIP -------------------- */
 
     await extract(file.path, { dir: tempRoot });
 
@@ -673,105 +676,94 @@ export const uploadReleaseVersionService = async (
       (i) => !["__MACOSX", ".DS_Store"].includes(i),
     );
 
-    let buildRoot = tempRoot;
+    let extractRoot = tempRoot;
 
     if (items.length === 1) {
       const nested = path.join(tempRoot, items[0]);
       if ((await fs.stat(nested)).isDirectory()) {
-        buildRoot = nested;
+        extractRoot = nested;
       }
     }
 
-    /* -------------------- 2️⃣ Validate Project -------------------- */
+    /* -------------------- 2️⃣ Validate: package.json required -------------------- */
 
-    if (!(await fs.pathExists(path.join(buildRoot, "package.json")))) {
-      throw new ApiError(400, "Invalid ZIP: package.json not found");
+    const sourceRoot = findProjectRoot(extractRoot);
+    const hasPackageJson = await fs.pathExists(
+      path.join(sourceRoot, "package.json"),
+    );
+
+    if (!hasPackageJson) {
+      throw new ApiError(400, "Invalid ZIP: package.json required");
     }
 
-    /* -------------------- 3️⃣ Detect Build Output -------------------- */
+    /* -------------------- 3️⃣ Generate build: npm install + npm run build -------------------- */
 
-    const outputCandidates = ["dist", "build", "out"];
-    let buildOutputPath = null;
-
-    for (const dir of outputCandidates) {
-      const full = path.join(buildRoot, dir);
-      if (await fs.pathExists(full)) {
-        buildOutputPath = full;
-        break;
-      }
-    }
-
-    if (!buildOutputPath) {
-      throw new ApiError(
-        400,
-        "Build folder not found (dist/build/out required in ZIP)",
-      );
-    }
+    const buildOutputPath = await runBuildSequence(sourceRoot);
 
     /* -------------------- 4️⃣ Version -------------------- */
 
     const version = versionInput || (await autoGenerateVersion(releaseId));
 
-    console.log("Version determined as:", version);
+    /* -------------------- 5️⃣ Git: tag and push all data except .gitignore content -------------------- */
 
-    /* -------------------- 5️⃣ Git Setup -------------------- */
+    const tag = `proj-${project.id}-rel-${releaseId}-v${version}`;
 
+    const githubCreds = getProjectGitHubCredentials(project);
     const validatedProjectName = validateProjectName(project.name);
-
-    const gitWorkingDir = buildRoot;
-    console.log("Git working directory:", gitWorkingDir);
+    const gitWorkingDir = sourceRoot;
     const permanentGitDir = path.join(projectFolder, ".git");
     const localGitDir = path.join(gitWorkingDir, ".git");
 
-    console.log("Permanent .git directory:", permanentGitDir);
-    console.log("Local .git directory:", localGitDir);
-
     /* Move git history into temp working directory */
-
     if (fs.existsSync(permanentGitDir)) {
       fs.moveSync(permanentGitDir, localGitDir, { overwrite: true });
     }
 
+    const remoteUrl = `https://${githubCreds.githubUsername}:${githubCreds.githubToken}@github.com/${githubCreds.githubUsername}/${validatedProjectName}.git`;
     /* Initialize repo if first time */
-
     if (!fs.existsSync(localGitDir)) {
       runCommand("git init", gitWorkingDir);
       runCommand("git branch -m main", gitWorkingDir);
+      const gitUserName = project.githubUsername?.trim() || "Zip Worker";
+      const gitUserEmail = project.githubUsername?.trim()
+        ? `${project.githubUsername.trim()}@github-zip.com`
+        : "worker@zip.com";
+      runCommand(`git config user.name "${gitUserName}"`, gitWorkingDir);
+      runCommand(`git config user.email "${gitUserEmail}"`, gitWorkingDir);
 
-      runCommand(`git config user.name "Zip Worker"`, gitWorkingDir);
-      runCommand(`git config user.email "worker@zip.com"`, gitWorkingDir);
-
-      const repoExists = await checkRepoExists(validatedProjectName);
-
+      const repoExists = await checkRepoExists(
+        validatedProjectName,
+        githubCreds,
+      );
       if (!repoExists) {
-        await createGithubRepo(validatedProjectName);
+        await createGithubRepo(validatedProjectName, githubCreds);
       }
 
-      const remoteUrl = `https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GITHUB_USERNAME}/${validatedProjectName}.git`;
-
       runCommand(`git remote add origin ${remoteUrl}`, gitWorkingDir);
+    } else {
+      /* Ensure remote URL uses this project's GitHub credentials for push */
+      runCommand(`git remote set-url origin ${remoteUrl}`, gitWorkingDir);
     }
 
-    /* -------------------- 6️⃣ Git Ignore -------------------- */
-    const gitignoreContent = "node_modules\n.DS_Store\n.env\ndist\nbuild\nout";
+    /* .gitignore: push all data except ignored (node_modules, dist, build, .env, etc.) */
+    const defaultGitignore =
+      "node_modules\n.DS_Store\n.env\ndist\nbuild\nout\n.env.local\n.env.*.local\n*.log\n.cache";
+    const gitignorePath = path.join(gitWorkingDir, ".gitignore");
+    const existingIgnore = (await fs.pathExists(gitignorePath))
+      ? await fs.readFile(gitignorePath, "utf-8").catch(() => "")
+      : "";
+    const gitignoreContent = existingIgnore.trim()
+      ? existingIgnore
+      : defaultGitignore;
+    await fs.writeFile(gitignorePath, gitignoreContent);
 
-    fs.writeFileSync(path.join(gitWorkingDir, ".gitignore"), gitignoreContent);
-
-    /* -------------------- 7️⃣ Commit -------------------- */
-
+    /* Commit: git add . respects .gitignore */
     runCommand("git add .", gitWorkingDir);
-
     try {
       runCommand(`git commit -m "Release ${version}"`, gitWorkingDir);
     } catch {
       console.log("No changes detected.");
     }
-
-    /* -------------------- 8️⃣ Create Tag -------------------- */
-
-    const tag = `proj-${project.id}-rel-${releaseId}-v${version}`;
-
-    console.log("Tag to be created:", tag);
 
     try {
       runCommand(`git tag -a ${tag} -m "Release ${version}"`, gitWorkingDir);
@@ -779,31 +771,19 @@ export const uploadReleaseVersionService = async (
       console.log("Tag already exists");
     }
 
-    /* -------------------- 9️⃣ Push -------------------- */
-
-    console.log("🚀 Pushing update...");
-
     try {
-      runCommand("git pull origin main --rebase", gitWorkingDir);
-
       runCommand("git push origin main", gitWorkingDir);
-
       runCommand(`git push origin ${tag}`, gitWorkingDir);
     } catch {
-      console.log("⚠️ Push failed → force pushing");
-
       runCommand("git push origin main --force", gitWorkingDir);
       runCommand(`git push origin ${tag} --force`, gitWorkingDir);
     }
 
-    /* Move git history back to permanent location */
-
     fs.moveSync(localGitDir, permanentGitDir, { overwrite: true });
 
-    /* -------------------- 🔟 Deploy Build -------------------- */
+    /* -------------------- 🔟 Deploy: store only build/dist into projects/project name -------------------- */
 
     await fs.emptyDir(projectRoot);
-
     await fs.copy(buildOutputPath, projectRoot);
 
     /* -------------------- 11️⃣ Reload Nginx -------------------- */
@@ -812,7 +792,7 @@ export const uploadReleaseVersionService = async (
 
     const domain = process.env.BASE_DOMAIN || "localhost";
 
-    const buildUrl = `http://${domain}:${project.port}/index.html`;
+    const buildUrl = `http://${domain}:${project.port}`;
 
     /* -------------------- 12️⃣ DB Update -------------------- */
 
@@ -849,299 +829,6 @@ export const uploadReleaseVersionService = async (
       data: { isUploading: false },
     });
   }
-};
-
-export const uploadReleaseVersionService_working_s3 = async (
-  releaseId,
-  file,
-  versionInput,
-  roadmapItemIds,
-  user,
-) => {
-  const { role, id: userId } = user;
-  const zipPath = file.path;
-  const S3_BUCKET = process.env.AWS_S3_BUCKET;
-  const AWS_REGION = process.env.AWS_REGION;
-
-  /* -------------------- 1. Fetch & validate release -------------------- */
-  const release = await prisma.release.findUnique({
-    where: { id: releaseId },
-    include: {
-      project: { select: { id: true, name: true, assignedManagerId: true } },
-    },
-  });
-
-  if (!release) throw new ApiError(404, "Release not found");
-  if (release.isLocked) throw new ApiError(400, "Release is locked");
-
-  const hasAccess =
-    role === "admin" ||
-    (role === "manager" && release.project.assignedManagerId === userId);
-
-  if (!hasAccess) throw new ApiError(403, "Forbidden");
-
-  /* -------------------- 2. Resolve version number -------------------- */
-  let versionNumber = versionInput;
-
-  if (!versionNumber) {
-    const lastVersion = await prisma.projectVersion.findFirst({
-      where: { releaseId },
-      orderBy: { createdAt: "desc" },
-      select: { version: true },
-    });
-
-    if (!lastVersion) {
-      versionNumber = "1.0.0";
-    } else {
-      const [major, minor, patch] = lastVersion.version.split(".").map(Number);
-      versionNumber = `${major}.${minor}.${patch + 1}`;
-    }
-  }
-
-  if (!file) throw new ApiError(400, "File not provided");
-
-  const isZip =
-    file.originalname.toLowerCase().endsWith(".zip") &&
-    ["application/zip", "application/x-zip-compressed"].includes(file.mimetype);
-
-  if (!isZip) throw new ApiError(400, "Only ZIP files allowed");
-
-  /* -------------------- 4. Prepare project folder -------------------- */
-  const projectRoot = path.join(
-    process.cwd(),
-    "projects",
-    String(release.project.id),
-    versionNumber,
-  );
-  const projectFolder = path.join(
-    process.cwd(),
-    "projects",
-    String(release.project.id),
-  );
-
-  const gitDir = path.join(projectFolder, ".git");
-
-  if (fs.existsSync(projectFolder)) {
-    const possibleIndex = path.join(projectFolder, "index.html");
-    const rootHtmlPath = fs.existsSync(possibleIndex) ? possibleIndex : null;
-    if (rootHtmlPath) {
-      let html = fs.readFileSync(rootHtmlPath, "utf-8");
-      // Basic sanity check
-      if (!html.includes("<html")) {
-        console.warn("⚠️ Skipping HTML injection: invalid HTML file");
-      } else {
-        let updated = false;
-
-        // Inject Marker script ONLY if <head> exists
-        if (
-          !html.includes("window.markerConfig") &&
-          html.toLowerCase().includes("</head>")
-        ) {
-          html = html.replace(/<\/head>/i, `${markerScript}\n</head>`);
-          updated = true;
-        }
-
-        // Remove existing header if present to ensure we invoke with latest data
-        if (html.includes("zip-sync-header")) {
-          // Remove Style
-          html = html.replace(
-            /<style>[\s\S]*?\.zip-sync-header[\s\S]*?<\/style>/,
-            "",
-          );
-          // Remove Div
-          html = html.replace(
-            /<div class="zip-sync-header"[\s\S]*?<\/div>/,
-            "",
-          );
-          // Remove Script
-          html = html.replace(
-            /<script>[\s\S]*?ZipSync Header functionality[\s\S]*?<\/script>/,
-            "",
-          );
-        }
-
-        // Always inject the header if body exists
-        if (html.toLowerCase().includes("<body")) {
-          const headerData = {
-            projectId: release.project.id,
-            releaseId: release.id,
-            version: versionNumber,
-            projectName: release.project.name,
-            releaseName: release.name,
-            apiUrl: process.env.BASE_URL || "http://localhost:5000",
-          };
-          const generatedHeader = generateReleaseHeader(headerData);
-          html = html.replace(/<body([^>]*)>/i, `<body$1>\n${generatedHeader}`);
-          updated = true;
-        }
-
-        if (updated) {
-          fs.writeFileSync(rootHtmlPath, html, "utf-8");
-        }
-      }
-    }
-  } else {
-    fs.emptyDirSync(projectFolder);
-  }
-  // fs.removeSync(projectRoot);
-  // fs.ensureDirSync(projectRoot);
-
-  /* -------------------- 5. Extract zip -------------------- */
-  await extract(zipPath, { dir: projectRoot });
-
-  const actualProjectPath = findProjectRoot(projectRoot);
-  const packageJsonPath = path.join(actualProjectPath, "package.json");
-
-  const gitWorkingDir = actualProjectPath; // e.g. .../projects/20/1.0.2
-  const permanentGitDir = path.join(projectFolder, ".git");
-  const localGitDir = path.join(gitWorkingDir, ".git");
-
-  /* -------------------- 7. Build project -------------------- */
-  runCommand("npm install", actualProjectPath);
-  runCommand("npm run build", actualProjectPath);
-
-  // 1. If a .git folder exists in the parent, MOVE it into our new version folder
-  if (fs.existsSync(permanentGitDir)) {
-    console.log("Found existing history. Moving .git to new version folder...");
-    fs.moveSync(permanentGitDir, localGitDir);
-  }
-
-  // 2. Initialize if NO history was found (First time ever)
-  if (!fs.existsSync(localGitDir)) {
-    console.log("No history found. Initializing fresh...");
-    runCommand("git init", gitWorkingDir);
-    runCommand("git branch -m main", gitWorkingDir);
-    runCommand(`git config user.name "Zip Worker"`, gitWorkingDir);
-    runCommand(`git config user.email "worker@zip.com"`, gitWorkingDir);
-    const repoExists = await checkRepoExists(validatedProjectName);
-    if (!repoExists) await createGithubRepo(validatedProjectName);
-
-    const remoteUrl = `https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GITHUB_USERNAME}/${validatedProjectName}.git`;
-    runCommand(`git remote add origin ${remoteUrl}`, gitWorkingDir);
-  }
-
-  // 3. Sync and Commit
-  const gitignoreContent = "node_modules\n.DS_Store\n.env\ndist\nbuild";
-  fs.writeFileSync(path.join(gitWorkingDir, ".gitignore"), gitignoreContent);
-
-  let buildUrl;
-  try {
-    /* -------------------- 9. Resolve build output -------------------- */
-    const buildDir = fs.existsSync(path.join(actualProjectPath, "build"))
-      ? "build"
-      : fs.existsSync(path.join(actualProjectPath, "dist"))
-        ? "dist"
-        : null;
-    if (!buildDir) throw new ApiError(400, "Build output not found");
-
-    const buildDirPath = path.join(actualProjectPath, buildDir);
-
-    // FIX: Patch index.html to use relative paths (e.g., /assets/ -> assets/)
-    const indexPath = path.join(buildDirPath, "index.html");
-    if (fs.existsSync(indexPath)) {
-      let html = fs.readFileSync(indexPath, "utf-8");
-
-      // This version handles:
-      // 1. src="/assets/..." -> src="assets/..."
-      // 2. href="/assets/..." -> href="assets/..."
-      // 3. Any quotes or lack thereof
-      html = html.replace(/(src|href)=["']?\/assets\//g, (match, p1) => {
-        return `${p1}="assets/`;
-      });
-
-      // CATCH-ALL: Force any string starting with /assets, /images, or /vectors to be relative
-      html = html.replace(
-        /["']\/(assets|images|vectors|static)\//g,
-        (match, p1) => {
-          return `"${p1}/`;
-        },
-      );
-
-      fs.writeFileSync(indexPath, html, "utf-8");
-    }
-    /* -------------------- 10. Upload ZIP to S3 -------------------- */
-
-    const s3BaseKey = `projects/${release.project.id}/releases/${releaseId}/${versionNumber}`;
-    const patchAllAssets = (dir) => {
-      const files = fs.readdirSync(dir);
-      files.forEach((file) => {
-        const filePath = path.join(dir, file);
-        if (fs.statSync(filePath).isDirectory()) {
-          patchAllAssets(filePath);
-        } else if (/\.(js|css|html)$/.test(file)) {
-          let content = fs.readFileSync(filePath, "utf-8");
-
-          // Replaces "/assets/" with "assets/" globally in JS/CSS/HTML
-          const updatedContent = content.replace(
-            /(["'])\/(assets|images|vectors|static)\//g,
-            "$1$2/",
-          );
-
-          if (content !== updatedContent) {
-            fs.writeFileSync(filePath, updatedContent, "utf-8");
-            console.log(`✨ Patched: ${file}`);
-          }
-        }
-      });
-    };
-
-    patchAllAssets(buildDirPath);
-    // This uploads the contents of buildDirPath to S3 under the /build/ prefix
-    await uploadDirectoryToS3(buildDirPath, `${s3BaseKey}/${buildDir}`);
-    buildUrl = `https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${s3BaseKey}/${buildDir}/index.html`;
-  } catch (e) {
-    console.log("No changes detected.");
-    throw e;
-  }
-
-  /* -------------------- 11. DB transaction (OPTIMIZED) -------------------- */
-  const newVersion = await prisma.$transaction(async (tx) => {
-    await tx.projectVersion.updateMany({
-      where: { projectId: release.project.id },
-      data: { isActive: false },
-    });
-
-    const version = await tx.projectVersion.create({
-      data: {
-        projectId: release.project.id,
-        releaseId,
-        version: versionNumber,
-        zipFilePath: zipPath,
-        buildUrl,
-        isActive: true,
-        uploadedBy: userId,
-        roadmapItems: {
-          connect: Array.isArray(roadmapItemIds)
-            ? roadmapItemIds.map((id) => ({ id: Number(id) }))
-            : [],
-        },
-      },
-    });
-
-    if (Array.isArray(roadmapItemIds) && roadmapItemIds.length) {
-      await tx.roadmapItem.updateMany({
-        where: { id: { in: roadmapItemIds.map(Number) } },
-        data: {
-          releaseId,
-        },
-      });
-    }
-
-    return version;
-  });
-
-  /* -------------------- 12. Cleanup -------------------- */
-  fs.removeSync(projectRoot);
-  fs.removeSync(zipPath);
-
-  /* -------------------- 13. Final response -------------------- */
-  return {
-    message: "✅ Release uploaded successfully",
-    releaseId,
-    versionId: newVersion.id,
-    version: newVersion.version,
-    buildUrl,
-  };
 };
 
 /**

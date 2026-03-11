@@ -28,7 +28,7 @@ The system can automatically create Jira tickets based on git diff summaries. It
    - Look for "Security" or "API tokens" section
 4. **Create API Token**:
    - Click "Create API token"
-   - Give it a descriptive name like "Zip-Sync Integration"
+   - Give it a descriptive name like "Launchpad Integration"
    - Copy the generated token (you won't be able to see it again)
 
 ## Step 2: Get Your Jira Information

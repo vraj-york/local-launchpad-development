@@ -1,17 +1,17 @@
 module.exports = {
   apps: [
     {
-      name: 'zip-sync-frontend',
+      name: 'launchpad-frontend',
       script: 'npm',
       args: 'run dev -- --host 0.0.0.0 --port 5173',
-      cwd: '/home/ubuntu/zip-sync/frontend',
+      cwd: '/home/ubuntu/launchpad/frontend',
       instances: 1,
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
         PORT: 5173,
-        NODE_PATH: '/home/ubuntu/zip-sync/frontend/node_modules',
-        PATH: process.env.PATH + ':/home/ubuntu/zip-sync/frontend/node_modules/.bin',
+        NODE_PATH: '/home/ubuntu/launchpad/frontend/node_modules',
+        PATH: process.env.PATH + ':/home/ubuntu/launchpad/frontend/node_modules/.bin',
         HOME: process.env.HOME,
         USER: process.env.USER
       },
@@ -20,9 +20,9 @@ module.exports = {
         PORT: 5173
       },
       // Logging
-      log_file: '/home/ubuntu/zip-sync/frontend/logs/combined.log',
-      out_file: '/home/ubuntu/zip-sync/frontend/logs/out.log',
-      error_file: '/home/ubuntu/zip-sync/frontend/logs/error.log',
+      log_file: '/home/ubuntu/launchpad/frontend/logs/combined.log',
+      out_file: '/home/ubuntu/launchpad/frontend/logs/out.log',
+      error_file: '/home/ubuntu/launchpad/frontend/logs/error.log',
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       
       // Auto restart configuration
@@ -42,7 +42,7 @@ module.exports = {
       listen_timeout: 3000,
       
       // Environment variables
-      env_file: '/home/ubuntu/zip-sync/frontend/.env'
+      env_file: '/home/ubuntu/launchpad/frontend/.env'
     }
   ],
   
@@ -52,8 +52,8 @@ module.exports = {
       user: 'ubuntu',
       host: '43.205.121.85',
       ref: 'origin/main',
-      repo: 'git@github.com:your-repo/zip-sync.git',
-      path: '/home/ubuntu/zip-sync/frontend',
+      repo: 'git@github.com:your-repo/launchpad.git',
+      path: '/home/ubuntu/launchpad/frontend',
       'pre-deploy-local': '',
       'post-deploy': 'npm install && npm run build && pm2 reload ecosystem.config.cjs --env production',
       'pre-setup': ''

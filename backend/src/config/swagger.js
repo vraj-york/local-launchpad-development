@@ -4,9 +4,9 @@ const options = {
     definition: {
         openapi: '3.0.0',
         info: {
-            title: 'Zip Sync API',
+            title: 'Launchpad API',
             version: '1.0.0',
-            description: 'API documentation for Zip Sync Backend',
+            description: 'API documentation for Launchpad Backend',
         },
         servers: [
             {

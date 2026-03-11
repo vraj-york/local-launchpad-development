@@ -1,0 +1,24 @@
+# Dependencies and logs
+node_modules
+npm-debug.log
+logs
+*.log
+coverage
+.nyc_output
+
+# Secrets (keep .env.example for reference)
+.env
+.env.*
+!.env.example
+
+# Runtime data (not part of image; use volumes)
+uploads
+projects
+_preview
+
+# VCS and local
+.git
+.gitignore
+.DS_Store
+
+# nginx-configs/ and nginx*.conf are included for deployment

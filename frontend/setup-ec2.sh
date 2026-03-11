@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Zip-Sync Frontend EC2 Setup Script
+# Launchpad Frontend EC2 Setup Script
 # Run this script on your EC2 instance to set up the frontend with PM2
 
-echo "🚀 Setting up Zip-Sync Frontend on EC2..."
+echo "🚀 Setting up Launchpad Frontend on EC2..."
 
 # Update system packages
 echo "📦 Updating system packages..."
@@ -22,16 +22,16 @@ sudo npm install -g pm2
 
 # Create logs directory
 echo "📁 Creating logs directory..."
-mkdir -p /home/ubuntu/zip-sync/frontend/logs
+mkdir -p /home/ubuntu/launchpad/frontend/logs
 
 # Make scripts executable
 echo "🔧 Making scripts executable..."
-chmod +x /home/ubuntu/zip-sync/frontend/deploy.sh
-chmod +x /home/ubuntu/zip-sync/frontend/setup-ec2.sh
+chmod +x /home/ubuntu/launchpad/frontend/deploy.sh
+chmod +x /home/ubuntu/launchpad/frontend/setup-ec2.sh
 
 # Install project dependencies
 echo "📦 Installing project dependencies..."
-cd /home/ubuntu/zip-sync/frontend
+cd /home/ubuntu/launchpad/frontend
 npm install
 
 # Setup PM2 startup
@@ -40,8 +40,8 @@ pm2 startup
 pm2 save
 
 # Start the frontend service
-echo "▶️ Starting Zip-Sync Frontend..."
-cd /home/ubuntu/zip-sync/frontend
+echo "▶️ Starting Launchpad Frontend..."
+cd /home/ubuntu/launchpad/frontend
 pm2 start ecosystem.config.cjs --env production
 
 echo ""
@@ -49,9 +49,9 @@ echo "✅ Frontend setup completed successfully!"
 echo ""
 echo "📊 PM2 Commands:"
 echo "  pm2 status                    - Check PM2 processes"
-echo "  pm2 logs zip-sync-frontend   - View frontend logs"
-echo "  pm2 restart zip-sync-frontend - Restart frontend with PM2"
-echo "  pm2 stop zip-sync-frontend   - Stop frontend"
+echo "  pm2 logs launchpad-frontend   - View frontend logs"
+echo "  pm2 restart launchpad-frontend - Restart frontend with PM2"
+echo "  pm2 stop launchpad-frontend   - Stop frontend"
 echo "  pm2 monit                    - Monitor processes"
 echo ""
 echo "🌐 Your frontend should now be running on http://43.205.121.85:5173"

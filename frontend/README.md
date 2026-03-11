@@ -1,4 +1,4 @@
-# Zip Sync Frontend
+# Launchpad Frontend
 
 A modern, responsive dashboard for managing projects, uploading builds, and viewing live applications.
 
@@ -32,7 +32,7 @@ A modern, responsive dashboard for managing projects, uploading builds, and view
 
 1. Navigate to the frontend directory:
 ```bash
-cd zip-sync-frontend
+cd launchpad-frontend
 ```
 
 2. Install dependencies:
