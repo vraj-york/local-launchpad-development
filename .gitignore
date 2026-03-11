@@ -15,14 +15,11 @@
 /frontend/build/
 /launchpad-frontend/node_modules/
 /launchpad-frontend/build/
-/feedback-widget/node_modules/
-/feedback-widget/dist
 
 # Env files (secrets) – .env.example is tracked for reference
 /backend/.env
 /frontend/.env
 /launchpad-frontend/.env
-/feedback-widget/.env
 
 # Runtime preview (switch version) – recreated on demand
 /backend/_preview/
