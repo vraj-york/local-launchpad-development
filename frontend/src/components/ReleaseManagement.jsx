@@ -629,7 +629,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 onChange={(e) =>
                   setNewRelease({ ...newRelease, name: e.target.value })
                 }
-                placeholder="Enter release name"
+                placeholder="Ex: 1.1.0"
                 required
               />
             </div>

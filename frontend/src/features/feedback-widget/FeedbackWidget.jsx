@@ -1,10 +1,9 @@
 import React, { useState, useRef } from "react";
 import Modal from "./components/Modal";
-import ScreenshotCapture from "./components/ScreenshotCapture";
 import AnnotationEditor from "./components/AnnotationEditor";
 import { collectMetadata } from "./services/metadata.service";
 import { submitFeedback } from "./services/api.service";
-import { blobToFile } from "./services/screenshot.service";
+import { blobToFile, captureWithDisplayMedia, canvasToDataURL } from "./services/screenshot.service";
 import "./styles/widget.css";
 
 const STEPS = {
@@ -17,6 +16,8 @@ const STEPS = {
 const FeedbackWidget = ({ config }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [step, setStep] = useState(STEPS.CAPTURE);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [captureError, setCaptureError] = useState(null);
   const [screenshotCanvas, setScreenshotCanvas] = useState(null);
   const [screenshotDataUrl, setScreenshotDataUrl] = useState(null);
   const [annotatedBlob, setAnnotatedBlob] = useState(null);
@@ -25,19 +26,16 @@ const FeedbackWidget = ({ config }) => {
   const [result, setResult] = useState(null);
   const [submittedDescription, setSubmittedDescription] = useState(null);
   const [error, setError] = useState(null);
-  // Ref set synchronously on success so overlay/ESC don't close before state updates
   const successRef = useRef(false);
 
   const openWidget = () => {
-    setIsOpen(true);
-    setStep(STEPS.CAPTURE);
-    setError(null);
+    setCaptureError(null);
+    setIsCapturing(true);
   };
 
   const closeWidget = () => {
     setIsOpen(false);
     successRef.current = false;
-    // Reset state after animation
     setTimeout(() => {
       setStep(STEPS.CAPTURE);
       setScreenshotCanvas(null);
@@ -47,14 +45,49 @@ const FeedbackWidget = ({ config }) => {
       setResult(null);
       setSubmittedDescription(null);
       setError(null);
+      setCaptureError(null);
     }, 300);
   };
 
-  const handleScreenshotCapture = (canvas, dataUrl) => {
-    setScreenshotCanvas(canvas);
-    setScreenshotDataUrl(dataUrl);
-    setStep(STEPS.ANNOTATE);
+  const handleBack = () => {
+    if (step === STEPS.ANNOTATE) {
+      setStep(STEPS.CAPTURE);
+      setScreenshotCanvas(null);
+      setScreenshotDataUrl(null);
+      setIsOpen(false);
+    }
   };
+
+  // Run capture when user clicked Report Issue (modal not open yet — so it never appears in the shot)
+  React.useEffect(() => {
+    if (!isCapturing) return;
+    let cancelled = false;
+
+    const runCapture = async () => {
+      try {
+        const canvas = await captureWithDisplayMedia();
+        if (cancelled) return;
+        const dataUrl = canvasToDataURL(canvas);
+        if (cancelled) return;
+        setScreenshotCanvas(canvas);
+        setScreenshotDataUrl(dataUrl);
+        setStep(STEPS.ANNOTATE);
+        setIsOpen(true);
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Screenshot capture failed:", err);
+          setCaptureError(err?.message || "Capture failed");
+        }
+      } finally {
+        if (!cancelled) setIsCapturing(false);
+      }
+    };
+
+    runCapture();
+    return () => {
+      cancelled = true;
+    };
+  }, [isCapturing]);
 
   const handleAnnotationSave = (blob, dataUrl, description) => {
     setAnnotatedBlob(blob);
@@ -100,28 +133,53 @@ const FeedbackWidget = ({ config }) => {
     }
   };
 
-  const handleBack = () => {
-    if (step === STEPS.ANNOTATE) {
-      setStep(STEPS.CAPTURE);
-    }
-  };
-
   return (
-    <div className="feedback-widget-root">
-      {/* Floating Button */}
+    <div
+      className="feedback-widget-root"
+      data-capturing={isCapturing ? "" : undefined}
+    >
+      {/* Floating Button - shows spinner while capturing (modal not open yet) */}
       <button
         className="feedback-widget-button"
         onClick={openWidget}
+        disabled={isCapturing}
         title="Report an issue or provide feedback"
         aria-label="Report Issue"
       >
-        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
-        </svg>
-        <span className="feedback-widget-button-text">Report Issue</span>
+        {isCapturing ? (
+          <>
+            <div className="feedback-widget-spinner feedback-widget-button-spinner" />
+            <span className="feedback-widget-button-text">Select window...</span>
+          </>
+        ) : (
+          <>
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+            </svg>
+            <span className="feedback-widget-button-text">Report Issue</span>
+          </>
+        )}
       </button>
 
-      {/* Modal */}
+      {/* Capture error toast */}
+      {captureError && !isCapturing && (
+        <div
+          className="feedback-widget-capture-error"
+          role="alert"
+        >
+          <span>{captureError}</span>
+          <button
+            type="button"
+            className="feedback-widget-capture-error-dismiss"
+            onClick={() => setCaptureError(null)}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Modal — only open after screenshot is taken, so it never appears in the shot */}
       <Modal
         isOpen={isOpen}
         onClose={closeWidget}
@@ -159,15 +217,7 @@ const FeedbackWidget = ({ config }) => {
             </div>
           )}
 
-          {/* Step Content */}
-          {step === STEPS.CAPTURE && (
-            <ScreenshotCapture
-              onCapture={handleScreenshotCapture}
-              onBack={handleBack}
-              captureTarget={config.captureTarget}
-            />
-          )}
-
+          {/* Step Content — modal only shows after screenshot is taken */}
           {step === STEPS.ANNOTATE && (
             <AnnotationEditor
               screenshot={screenshotDataUrl}

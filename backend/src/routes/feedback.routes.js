@@ -2,7 +2,7 @@ import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import crypto from "crypto";
+import os from "os";
 import { PrismaClient } from "@prisma/client";
 import {
   createJiraTicketWithConfig,
@@ -13,33 +13,9 @@ const prisma = new PrismaClient();
 
 const router = express.Router();
 
-// All feedback screenshots stored in one folder (local)
-const SCREENSHOTS_DIR = path.join(process.cwd(), "screenshots");
-const SCREENSHOTS_DIR_BACKEND = path.join(process.cwd(), "backend", "screenshots");
-
-function getScreenshotsDir() {
-  if (fs.existsSync(SCREENSHOTS_DIR)) return SCREENSHOTS_DIR;
-  if (fs.existsSync(SCREENSHOTS_DIR_BACKEND)) return SCREENSHOTS_DIR_BACKEND;
-  return SCREENSHOTS_DIR;
-}
-
-const screenshotsDir = getScreenshotsDir();
-if (!fs.existsSync(screenshotsDir)) {
-  fs.mkdirSync(screenshotsDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, screenshotsDir);
-  },
-  filename: (req, file, cb) => {
-    const base = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
-    cb(null, `${base}.png`);
-  },
-});
-
+// In-memory upload only — no screenshot storage on disk
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
   fileFilter: (req, file, cb) => {
     const allowed = ["image/png", "image/jpeg", "image/webp"];
@@ -59,7 +35,7 @@ const upload = multer({
  *   - description: string (required)
  *   - metadata: JSON string (optional)
  *   - projectId: string (optional)
- * Saves screenshot to local folder and a .json file with description + metadata.
+ * Does not store screenshots on disk; optionally attaches to Jira when project has Jira config.
  */
 router.post("/", (req, res, next) => {
   console.log("[feedback] POST /api/feedback received | projectId:", req.body?.projectId ?? "(none)");
@@ -71,8 +47,8 @@ router.post("/", (req, res, next) => {
   }
   next();
 }, async (req, res) => {
+  let tempFilePath = null;
   try {
-    console.log("[feedback] Handler entered | hasFile:", !!req.file, "| projectId:", req.body?.projectId ?? "(none)", "| description length:", (req.body?.description || "").length);
     if (!req.file) {
       console.warn("[feedback] POST /api/feedback rejected: no screenshot file");
       return res.status(400).json({
@@ -83,7 +59,7 @@ router.post("/", (req, res, next) => {
 
     const description = req.body.description || "";
     const projectId = req.body.projectId || null;
-    console.log("[feedback] Saving feedback | projectId:", projectId, "| file:", req.file.filename);
+    console.log("[feedback] Processing feedback | projectId:", projectId);
     let metadata = null;
     if (req.body.metadata) {
       try {
@@ -93,25 +69,12 @@ router.post("/", (req, res, next) => {
       }
     }
 
-    const baseName = path.basename(req.file.filename, path.extname(req.file.filename));
-    const jsonPath = path.join(screenshotsDir, `${baseName}.json`);
-    const payload = {
-      description,
-      projectId,
-      metadata,
-      screenshotFile: req.file.filename,
-      submittedAt: new Date().toISOString(),
-    };
-    fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2), "utf-8");
-    console.log("[feedback] Saved | screenshot:", req.file.filename, "| json:", path.basename(jsonPath));
-
     let jiraTicket = null;
     let jiraUrl = null;
 
     if (!projectId) {
       console.log("[feedback] No projectId provided — skipping Jira ticket creation");
     } else {
-      console.log("[feedback] projectId:", projectId, "— fetching project for Jira config");
       try {
         const project = await prisma.project.findUnique({
           where: { id: Number(projectId) },
@@ -132,14 +95,12 @@ router.post("/", (req, res, next) => {
             project?.jiraApiToken &&
             project?.jiraUsername;
           if (!hasJiraConfig) {
-            console.log("[feedback] Project", projectId, "has no Jira config (baseUrl/projectKey/apiToken/username) — skipping Jira ticket");
+            console.log("[feedback] Project", projectId, "has no Jira config — skipping Jira ticket");
           } else {
-            console.log("[feedback] Jira config present for project", projectId, "| baseUrl:", project.jiraBaseUrl, "| projectKey:", project.jiraProjectKey);
             const summaryTitle =
               description.length > 250
                 ? description.slice(0, 247) + "..."
                 : description || "Feedback from widget";
-            console.log("[feedback] Creating Jira ticket | summary length:", summaryTitle.length, "| hasMetadata:", !!metadata);
             const ticketResult = await createJiraTicketWithConfig(
               {
                 title: summaryTitle,
@@ -157,12 +118,14 @@ router.post("/", (req, res, next) => {
             if (ticketResult.success && ticketResult.ticketKey) {
               jiraTicket = ticketResult.ticketKey;
               jiraUrl = ticketResult.ticketUrl;
-              console.log("[feedback] Jira ticket created:", jiraTicket, "| url:", jiraUrl);
-              const screenshotPath = path.join(screenshotsDir, req.file.filename);
-              console.log("[feedback] Attaching screenshot to Jira issue | file:", req.file.filename, "| path:", screenshotPath);
+              console.log("[feedback] Jira ticket created:", jiraTicket);
+              // Write buffer to temp file only for Jira attachment, then remove
+              const ext = path.extname(req.file.originalname) || ".png";
+              tempFilePath = path.join(os.tmpdir(), `feedback-${Date.now()}${ext}`);
+              fs.writeFileSync(tempFilePath, req.file.buffer);
               const attachResult = await addAttachmentToJiraIssue(
                 ticketResult.ticketKey,
-                screenshotPath,
+                tempFilePath,
                 {
                   baseUrl: project.jiraBaseUrl,
                   apiToken: project.jiraApiToken,
@@ -172,7 +135,7 @@ router.post("/", (req, res, next) => {
               if (attachResult.success) {
                 console.log("[feedback] Screenshot attached to Jira issue", jiraTicket);
               } else {
-                console.warn("[feedback] Jira ticket created but attachment failed:", attachResult.error);
+                console.warn("[feedback] Jira attachment failed:", attachResult.error);
               }
             } else {
               console.warn("[feedback] Jira ticket creation failed:", ticketResult.error);
@@ -184,11 +147,9 @@ router.post("/", (req, res, next) => {
       }
     }
 
-    console.log("[feedback] Response | success: true | screenshotFile:", req.file.filename, "| jiraTicket:", jiraTicket ?? "none");
     return res.status(200).json({
       success: true,
       message: "Feedback saved.",
-      screenshotFile: req.file.filename,
       ...(jiraTicket && { jiraTicket }),
       ...(jiraUrl && { jiraUrl }),
     });
@@ -198,30 +159,14 @@ router.post("/", (req, res, next) => {
       success: false,
       message: err.message || "Failed to save feedback.",
     });
-  }
-});
-
-/**
- * GET /api/feedback/screenshot/:filename
- * Serve a screenshot image (for use in admin or list view).
- */
-router.get("/screenshot/:filename", (req, res) => {
-  try {
-    const filename = path.basename(req.params.filename);
-    if (!filename || filename.includes("..")) {
-      console.warn("[feedback] GET screenshot rejected: invalid filename", req.params.filename);
-      return res.status(400).json({ message: "Invalid filename" });
+  } finally {
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (e) {
+        console.warn("[feedback] Could not remove temp file:", tempFilePath, e.message);
+      }
     }
-    const dir = getScreenshotsDir();
-    const filePath = path.join(dir, filename);
-    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-      console.warn("[feedback] GET screenshot not found:", filename);
-      return res.status(404).json({ message: "Screenshot not found" });
-    }
-    res.sendFile(path.resolve(filePath));
-  } catch (err) {
-    console.error("[feedback] Screenshot serve error:", err.message);
-    res.status(500).json({ message: err.message });
   }
 });
 

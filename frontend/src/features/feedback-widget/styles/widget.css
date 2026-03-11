@@ -4,7 +4,11 @@
   box-sizing: border-box;
 }
 
-/* Floating Button */
+/* Floating Button — hidden during capture so it never appears in the screenshot */
+.feedback-widget-root[data-capturing] .feedback-widget-button {
+  display: none !important;
+}
+
 .feedback-widget-button {
   position: fixed;
   bottom: 20px;
@@ -36,6 +40,18 @@
   transform: translateY(0);
 }
 
+.feedback-widget-button:disabled {
+  cursor: wait;
+  opacity: 0.9;
+}
+
+.feedback-widget-button-spinner {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+  margin: 0;
+}
+
 .feedback-widget-button svg {
   width: 20px;
   height: 20px;
@@ -44,6 +60,40 @@
 
 .feedback-widget-button-text {
   white-space: nowrap;
+}
+
+/* Capture error toast (when getDisplayMedia fails or user cancels) */
+.feedback-widget-capture-error {
+  position: fixed;
+  bottom: 72px;
+  right: 20px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 999998;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 320px;
+}
+
+.feedback-widget-capture-error-dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 18px;
+  line-height: 1;
+  color: #991b1b;
+  opacity: 0.8;
+}
+
+.feedback-widget-capture-error-dismiss:hover {
+  opacity: 1;
 }
 
 /* Modal Overlay */

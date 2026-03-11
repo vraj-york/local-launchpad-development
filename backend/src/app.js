@@ -20,9 +20,6 @@ app.use("/apps", express.static(getProjectsDir()));
 app.use("/static", express.static(path.join(process.cwd(), "public")));
 app.use("/api/feedback", feedbackRoutes);
 
-app.use("/static", express.static(path.join(process.cwd(), "public")));
-app.use("/api/feedback", feedbackRoutes);
-
 app.use("/api/auth", authRoutes);
 // app.use("/api/projects", projectRoutes);
 app.use("/api/releases", releaseRoutes);
