@@ -1,4 +1,7 @@
 import fetch from 'node-fetch';
+import fs from 'fs';
+import path from 'path';
+import FormData from 'form-data';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -362,6 +365,156 @@ export async function testJiraConnection() {
     }
 }
 
+
+/**
+ * Build Jira ADF description content: description paragraph + optional metadata section.
+ * @param {string} description - Main description text
+ * @param {Object|null} metadata - Optional metadata object (e.g. browser, pageUrl, screenResolution)
+ * @returns {Array} ADF content array
+ */
+function buildDescriptionContent(description, metadata) {
+    const content = [
+        {
+            type: 'paragraph',
+            content: [{ type: 'text', text: description || '' }]
+        }
+    ];
+    if (metadata && typeof metadata === 'object' && Object.keys(metadata).length > 0) {
+        const skipKeys = ['raw'];
+        const labels = {
+            browser: 'Browser',
+            userAgent: 'User agent',
+            screenResolution: 'Screen resolution',
+            viewportSize: 'Viewport size',
+            devicePixelRatio: 'Device pixel ratio',
+            pageUrl: 'Page URL',
+            pageTitle: 'Page title',
+            timestamp: 'Timestamp',
+            language: 'Language',
+            platform: 'Platform',
+            cookiesEnabled: 'Cookies enabled',
+            onlineStatus: 'Online status'
+        };
+        const items = [];
+        for (const [key, value] of Object.entries(metadata)) {
+            if (skipKeys.includes(key) || value === undefined || value === null) continue;
+            const label = labels[key] || key;
+            const text = typeof value === 'boolean' ? `${label}: ${value}` : `${label}: ${String(value)}`;
+            if (text.length > 500) items.push({ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: `${label}: ${String(value).slice(0, 497)}…` }] }] });
+            else items.push({ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
+        }
+        if (items.length > 0) {
+            content.push({ type: 'paragraph', content: [{ type: 'text', text: 'Metadata', marks: [{ type: 'strong' }] }] });
+            content.push({ type: 'bulletList', content: items });
+        }
+    }
+    return content;
+}
+
+/**
+ * Create a single Jira ticket using project-specific config (e.g. from DB).
+ * Used by feedback flow: one ticket per submission with description and optional metadata.
+ * @param {Object} ticketData - { title, description, metadata? }
+ * @param {Object} config - { baseUrl, projectKey, apiToken, email, issueType? }
+ * @returns {Promise<{ success: boolean, ticketKey?: string, ticketUrl?: string, error?: string }>}
+ */
+export async function createJiraTicketWithConfig(ticketData, config) {
+    const { baseUrl, projectKey, apiToken, email, issueType = 'Task' } = config;
+    console.log('[jira] createJiraTicketWithConfig called | baseUrl:', baseUrl, '| projectKey:', projectKey, '| issueType:', issueType);
+    if (!baseUrl || !projectKey || !apiToken || !email) {
+        const missing = []; if (!baseUrl) missing.push('baseUrl'); if (!projectKey) missing.push('projectKey'); if (!apiToken) missing.push('apiToken'); if (!email) missing.push('email');
+        console.warn('[jira] createJiraTicketWithConfig validation failed — missing:', missing.join(', '));
+        return { success: false, error: 'Missing Jira configuration (baseUrl, projectKey, apiToken, email)' };
+    }
+    const auth = Buffer.from(`${email}:${apiToken}`).toString('base64');
+    const url = `${baseUrl.replace(/\/$/, '')}/rest/api/3/issue`;
+    const descriptionContent = buildDescriptionContent(ticketData.description, ticketData.metadata || null);
+    const payload = {
+        fields: {
+            project: { key: projectKey },
+            summary: ticketData.title || 'Feedback from widget',
+            issuetype: { name: issueType || 'Task' },
+            description: {
+                type: 'doc',
+                version: 1,
+                content: descriptionContent
+            }
+        }
+    };
+    try {
+        console.log('[jira] POST', url, '| summary:', (ticketData.title || '').slice(0, 60) + (ticketData.title?.length > 60 ? '...' : ''));
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Authorization: `Basic ${auth}`,
+                Accept: 'application/json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            const text = await response.text();
+            console.error('[jira] createJiraTicketWithConfig API error:', response.status, text.slice(0, 200));
+            return { success: false, error: `Jira API ${response.status}: ${text}` };
+        }
+        const result = await response.json();
+        const ticketKey = result.key;
+        const ticketUrl = `${baseUrl.replace(/\/$/, '')}/browse/${ticketKey}`;
+        console.log('[jira] Ticket created successfully:', ticketKey, '| url:', ticketUrl);
+        return { success: true, ticketKey, ticketUrl };
+    } catch (err) {
+        console.error('[jira] createJiraTicketWithConfig exception:', err.message, err.stack);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Attach a file to an existing Jira issue using the Jira Cloud REST API.
+ * @param {string} issueKey - e.g. PROJ-123
+ * @param {string} filePath - absolute path to the file
+ * @param {Object} config - { baseUrl, apiToken, email }
+ * @returns {Promise<{ success: boolean, error?: string }>}
+ */
+export async function addAttachmentToJiraIssue(issueKey, filePath, config) {
+    const { baseUrl, apiToken, email } = config;
+    console.log('[jira] addAttachmentToJiraIssue called | issueKey:', issueKey, '| filePath:', filePath, '| baseUrl:', baseUrl);
+    if (!baseUrl || !apiToken || !email) {
+        console.warn('[jira] addAttachmentToJiraIssue — missing config (baseUrl/apiToken/email)');
+        return { success: false, error: 'Missing Jira config for attachment' };
+    }
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+        console.error('[jira] addAttachmentToJiraIssue — file not found:', filePath);
+        return { success: false, error: 'File not found: ' + filePath };
+    }
+    const auth = Buffer.from(`${email}:${apiToken}`).toString('base64');
+    const url = `${baseUrl.replace(/\/$/, '')}/rest/api/3/issue/${encodeURIComponent(issueKey)}/attachments`;
+    const filename = path.basename(filePath);
+    const mimeType = filename.toLowerCase().endsWith('.png') ? 'image/png' : (filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : 'image/png');
+    const form = new FormData();
+    form.append('file', fs.createReadStream(filePath), { filename, contentType: mimeType });
+    try {
+        console.log('[jira] POST attachment to', url, '| filename:', filename, '| mimeType:', mimeType);
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Authorization: `Basic ${auth}`,
+                'X-Atlassian-Token': 'no-check',
+                ...form.getHeaders()
+            },
+            body: form
+        });
+        if (!response.ok) {
+            const text = await response.text();
+            console.error('[jira] addAttachmentToJiraIssue API error:', response.status, text.slice(0, 200));
+            return { success: false, error: `Jira attachment API ${response.status}: ${text}` };
+        }
+        console.log('[jira] Attachment added successfully to', issueKey);
+        return { success: true };
+    } catch (err) {
+        console.error('[jira] addAttachmentToJiraIssue exception:', err.message, err.stack);
+        return { success: false, error: err.message };
+    }
+}
 
 /**
  * Fetch Jira tickets for a project using dynamic configuration

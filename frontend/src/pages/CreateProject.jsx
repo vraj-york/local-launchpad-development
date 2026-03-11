@@ -28,7 +28,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { PageHeader } from "@/components/PageHeader";
-import RoadMapManagement from "@/components/RoadMapManagement";
+// import RoadMapManagement from "@/components/RoadMapManagement";
 import { toast } from "sonner";
 
 const CreateProject = () => {
@@ -51,33 +51,6 @@ const CreateProject = () => {
   const [jiraApiToken, setJiraApiToken] = useState("");
   const [jiraProjectKey, setJiraProjectKey] = useState("");
   const [jiraIssueType, setJiraIssueType] = useState("");
-
-  // Roadmap State
-  const [defaultRoadmapId] = useState(Date.now().toString());
-
-  const [roadmaps, setRoadmaps] = useState([
-    {
-      id: defaultRoadmapId,
-      title: "",
-      description: "",
-      status: "DRAFT",
-      tshirtSize: "M",
-      timelineStart: "",
-      timelineEnd: "",
-      items: [
-        {
-          id: `${Date.now()}-1`,
-          title: "",
-          description: "",
-          status: "PLANNED",
-          type: "FEATURE",
-          priority: "MEDIUM",
-          startDate: "",
-          endDate: "",
-        },
-      ],
-    },
-  ]);
 
   // UI State
   const [error, setError] = useState("");
@@ -135,34 +108,32 @@ const CreateProject = () => {
     if (!jiraIssueType.trim())
       errors.jiraIssueType = "Jira Default Issue Type is required";
 
-    // Roadmap Validation
-    if (roadmaps.length === 0) {
-      errors.roadmaps = "At least one roadmap is required";
-    } else {
-      roadmaps.forEach((roadmap) => {
-        if (!roadmap.title.trim())
-          errors[`roadmap-${roadmap.id}-title`] = "Roadmap title is required";
-        if (!roadmap.timelineStart)
-          errors[`roadmap-${roadmap.id}-timelineStart`] =
-            "Start date is required";
-        if (!roadmap.timelineEnd)
-          errors[`roadmap-${roadmap.id}-timelineEnd`] = "End date is required";
+    // Roadmap is optional; validate only when user has added roadmaps
+    // if (roadmaps.length > 0) {
+    //   roadmaps.forEach((roadmap) => {
+    //     if (!roadmap.title.trim())
+    //       errors[`roadmap-${roadmap.id}-title`] = "Roadmap title is required";
+    //     if (!roadmap.timelineStart)
+    //       errors[`roadmap-${roadmap.id}-timelineStart`] =
+    //         "Start date is required";
+    //     if (!roadmap.timelineEnd)
+    //       errors[`roadmap-${roadmap.id}-timelineEnd`] = "End date is required";
 
-        if (roadmap.items.length === 0) {
-          errors[`roadmap-${roadmap.id}-items`] =
-            "At least one item is required";
-        } else {
-          roadmap.items.forEach((item) => {
-            if (!item.title.trim())
-              errors[`item-${item.id}-title`] = "Item title is required";
-            if (!item.startDate)
-              errors[`item-${item.id}-startDate`] = "Start date is required";
-            if (!item.endDate)
-              errors[`item-${item.id}-endDate`] = "End date is required";
-          });
-        }
-      });
-    }
+    //     if (roadmap.items.length === 0) {
+    //       errors[`roadmap-${roadmap.id}-items`] =
+    //         "At least one item is required";
+    //     } else {
+    //       roadmap.items.forEach((item) => {
+    //         if (!item.title.trim())
+    //           errors[`item-${item.id}-title`] = "Item title is required";
+    //         if (!item.startDate)
+    //           errors[`item-${item.id}-startDate`] = "Start date is required";
+    //         if (!item.endDate)
+    //           errors[`item-${item.id}-endDate`] = "End date is required";
+    //       });
+    //     }
+    //   });
+    // }
 
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
@@ -181,31 +152,34 @@ const CreateProject = () => {
     setLoading(true);
 
     try {
-      // Process roadmaps: remove UI IDs and format dates
-      const processedRoadmaps = roadmaps.map((roadmap) => {
-        const { id, ...roadmapRest } = roadmap;
-        return {
-          ...roadmapRest,
-          timelineStart: new Date(roadmap.timelineStart).toISOString(),
-          timelineEnd: new Date(roadmap.timelineEnd).toISOString(),
-          items: (roadmap.items || []).map((item) => {
-            const { id: itemId, ...itemRest } = item;
-            return {
-              ...itemRest,
-              startDate: new Date(item.startDate).toISOString(),
-              endDate: new Date(item.endDate).toISOString(),
-              priority: item.priority || "MEDIUM", // Ensure priority exists
-            };
-          }),
-        };
-      });
+      // Process roadmaps when provided (optional at project creation)
+      // const processedRoadmaps =
+      //   roadmaps.length > 0
+      //     ? roadmaps.map((roadmap) => {
+      //         const { id, ...roadmapRest } = roadmap;
+      //         return {
+      //           ...roadmapRest,
+      //           timelineStart: new Date(roadmap.timelineStart).toISOString(),
+      //           timelineEnd: new Date(roadmap.timelineEnd).toISOString(),
+      //           items: (roadmap.items || []).map((item) => {
+      //             const { id: itemId, ...itemRest } = item;
+      //             return {
+      //               ...itemRest,
+      //               startDate: new Date(item.startDate).toISOString(),
+      //               endDate: new Date(item.endDate).toISOString(),
+      //               priority: item.priority || "MEDIUM",
+      //             };
+      //           }),
+      //         };
+      //       })
+      //     : [];
 
       const projectData = {
         name: projectName,
         description: projectDescription,
-        roadmaps: processedRoadmaps,
         githubUsername: githubUsername,
         githubToken: githubToken,
+        // roadmaps: processedRoadmaps,
         jiraBaseUrl: jiraBaseUrl,
         jiraProjectKey: jiraProjectKey,
         jiraIssueType: jiraIssueType,
@@ -266,7 +240,8 @@ const CreateProject = () => {
                         </button>
                       </TooltipTrigger>
                       <TooltipContent side="top" className="max-w-[240px]">
-                        You cannot change this name later. Only letters, numbers, hyphens, and underscores are allowed.
+                        You cannot change this name later. Only letters,
+                        numbers, hyphens, and underscores are allowed.
                       </TooltipContent>
                     </Tooltip>
                   </div>
@@ -471,7 +446,6 @@ const CreateProject = () => {
             </div>
           </CardContent>
         </Card>
-
         {/* Jira Configuration Card */}
         <Card className="border-slate-200 overflow-hidden">
           <CardHeader className="pb-2">
@@ -650,7 +624,7 @@ const CreateProject = () => {
         </Card>
 
         {/* Roadmap Configuration */}
-        <Card className="border-slate-200">
+        {/* <Card className="border-slate-200">
           <CardHeader>
             <CardTitle className="text-lg font-semibold text-slate-800">
               Project Roadmap
@@ -665,8 +639,7 @@ const CreateProject = () => {
               initialEditingId={defaultRoadmapId}
             />
           </CardContent>
-        </Card>
-
+        </Card> */}
         <Button
           type="submit"
           disabled={loading || (user?.role === "admin" && managersLoading)}

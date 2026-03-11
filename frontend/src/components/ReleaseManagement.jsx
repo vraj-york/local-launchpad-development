@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   fetchReleases,
   createRelease,
@@ -15,6 +15,7 @@ import { Spinner } from "./ui/spinner";
 import {
   CheckCircle,
   ChevronDown,
+  FileArchive,
   Lock,
   Plus,
   Unlock,
@@ -47,6 +48,12 @@ import {
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { SelectActiveVersion } from "./SelectActiveVersion";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./ui/collapsible";
 const ReleaseManagement = ({ projectId, projectName }) => {
   const { user } = useAuth();
 
@@ -63,6 +70,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState("");
   const [uploadSuccessBuildUrl, setUploadSuccessBuildUrl] = useState(null);
+  const [isDragActive, setIsDragActive] = useState(false);
+  const uploadFileInputRef = useRef(null);
 
   const [roadmaps, setRoadmaps] = useState([]);
   const [roadmapsLoading, setRoadmapsLoading] = useState(false);
@@ -142,31 +151,46 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     }
   };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.type === "application/zip" || file.name.endsWith(".zip")) {
-        setUploadFile(file);
-        setUploadStatus("");
-      } else {
-        setUploadStatus("Please select a ZIP file");
-        setUploadFile(null);
-      }
+  const validateAndSetFile = (file) => {
+    if (!file) return;
+    if (file.type === "application/zip" || file.name.endsWith(".zip")) {
+      setUploadFile(file);
+      setUploadStatus("");
+    } else {
+      setUploadStatus("Please select a ZIP file");
+      setUploadFile(null);
     }
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    validateAndSetFile(file);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragActive(false);
+    const file = e.dataTransfer.files?.[0];
+    validateAndSetFile(file);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragActive(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragActive(false);
   };
 
   const handleUpload = async (e) => {
     e.preventDefault();
 
-    if (!selectedRelease || !uploadFile) return;
-    if (roadmaps.length > 0) {
-      if (selectedRoadmapItemIds.length === 0) {
-        const message = "Please select at least one roadmap item.";
-        setUploadStatus(message);
-        toast.error(message);
-        return;
-      }
-    }
+    const fileToUpload = uploadFileInputRef.current?.files?.[0] || uploadFile;
+    if (!selectedRelease || !fileToUpload) return;
 
     try {
       const selectedRoadmapIds = Array.from(
@@ -195,7 +219,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
       const result = await uploadToRelease(
         selectedRelease,
-        uploadFile,
+        fileToUpload,
         version || null,
         selectedRoadmapItemIds,
       );
@@ -215,8 +239,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       setSelectedRelease("");
       setVersion("");
       setSelectedRoadmapItemIds([]);
-      const fileInput = document.getElementById("file-input");
-      if (fileInput) fileInput.value = "";
+      if (uploadFileInputRef.current) uploadFileInputRef.current.value = "";
       await loadReleases();
       toast.success(`Project uploaded successfully! Version: ${versionLabel}`);
     } catch (err) {
@@ -246,8 +269,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     setUploadStatus("");
     setUploadSuccessBuildUrl(null);
     setUploadProgress(0);
-    const fileInput = document.getElementById("file-input");
-    if (fileInput) fileInput.value = "";
+    if (uploadFileInputRef.current) uploadFileInputRef.current.value = "";
   };
 
   const selectedItems = selectedRoadmapItemIds
@@ -286,25 +308,13 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     <div>
       <PageHeader title="Release Management">
         {canManageReleases && (
-          <div className="flex gap-2">
-            {releases.length > 0 && (
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={() => setShowUploadForm(true)}
-              >
-                <Upload />
-                Upload New Release
-              </Button>
-            )}
-            <Button
-              className="text-white gap-2"
-              onClick={() => setShowCreateForm(true)}
-            >
-              <Plus />
-              Create Release
-            </Button>
-          </div>
+          <Button
+            className="text-white gap-2"
+            onClick={() => setShowCreateForm(true)}
+          >
+            <Plus />
+            Create Release
+          </Button>
         )}
       </PageHeader>
 
@@ -351,143 +361,250 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                 {releases.map((release, index) => (
                   <div
                     key={release.id}
-                    className="relative border border-slate-200 rounded-xl p-6 hover:shadow-md transition-shadow group bg-slate-50/30"
+                    className="group relative flex flex-col overflow-hidden rounded-xl border border-primary bg-primary/5 shadow-xs transition-shadow hover:shadow-md"
                   >
-                    <div className="flex justify-between items-start mb-4">
-                      <h4 className="text-lg font-semibold text-slate-800">
-                        {release.name}
-                      </h4>
-                      <div className="flex gap-2 items-center">
-                        {release.isLocked ? (
-                          <Badge className="bg-emerald-100 text-emerald-700">
-                            <Lock size={14} /> Locked
-                          </Badge>
-                        ) : (
-                          <Badge className="bg-red-100 text-red-700">
-                            <Unlock size={14} /> Unlocked
-                          </Badge>
-                        )}
-                        {canManageReleases && index === 0 && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className={
-                              release.isLocked
-                                ? "text-amber-600 hover:text-amber-700"
-                                : "text-slate-600"
-                            }
-                            onClick={() =>
-                              handleLockToggle(release.id, release.isLocked)
-                            }
-                          >
-                            {release.isLocked ? "Unlock" : "Lock"}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-
-                    <p className="text-slate-600 mb-4 whitespace-pre-wrap text-sm">
-                      {release.description || "No description provided"}
-                    </p>
-
-                    <div className="flex items-center gap-4 text-xs text-slate-500 mb-4 pb-4 border-b border-slate-200">
-                      <span>
-                        Created:{" "}
-                        {new Date(release.createdAt).toLocaleDateString()}
-                      </span>
-                      <span>By: {release.creator.name}</span>
-                    </div>
-
-                    <div className="bg-white border border-slate-200 rounded-lg p-3 text-sm text-slate-600 mb-4">
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <span className="text-slate-400 font-normal">
-                            Release ID:
-                          </span>{" "}
-                          <span className="font-mono text-xs">
-                            {release.id}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-slate-400 font-normal">
-                            Versions:
-                          </span>{" "}
-                          {release.versions.length}
-                        </div>
-                        {release.versions.length > 0 && (
-                          <div>
-                            <span className="text-slate-400 font-normal">
-                              Latest:
-                            </span>{" "}
-                            v{release.versions[0].version}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {release.versions.length > 0 && (
-                      <div className="space-y-2">
-                        <h5 className="text-sm font-semibold text-slate-800 mb-2">
-                          Versions History
-                        </h5>
-                        {release.versions.map((version) => (
-                          <div
-                            key={version.id}
-                            className={`flex justify-between items-center p-3 ${version.isActive ? "bg-primary/10 border border-primary" : "bg-white border border-slate-100"}  rounded-lg hover:border-primary transition-colors`}
-                          >
-                            <div className="flex flex-col gap-2">
-                              <div className="flex items-center gap-3">
-                                <span className="font-mono text-sm font-medium text-slate-700">
-                                  v{version.version}
-                                </span>
-                                <span className="text-xs text-slate-400">
-                                  {new Date(
-                                    version.createdAt,
-                                  ).toLocaleDateString()}
-                                </span>
-                              </div>
-
-                              <div className="flex items-start gap-2 w-full">
-                                <span className="text-xs text-slate-400 whitespace-nowrap mt-1">
-                                  RoadMap Items:
-                                </span>
-                                <div className="flex flex-wrap gap-2">
-                                  {version.roadmapItems.map((item) => (
-                                    <Badge
-                                      key={item.id}
-                                      className={"rounded-md"}
-                                    >
-                                      {item.title}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex flex-col gap-3">
-                              {version.isActive && (
-                                <Badge className="bg-primary text-primary-foreground">
-                                  <CheckCircle size={14} /> Active
-                                </Badge>
+                    <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/50 px-5 pt-5 pb-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <h4 className="truncate text-lg font-semibold tracking-tight text-slate-900">
+                            {release.name}
+                          </h4>
+                          <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                            <span>
+                              {new Date(release.createdAt).toLocaleDateString(
+                                undefined,
+                                {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                },
                               )}
-                              {version.buildUrl && (
-                                <a
-                                  href={version.buildUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-emerald-600 hover:text-emerald-700 text-xs font-medium flex items-center gap-1"
+                            </span>
+                            <span className="text-slate-300" aria-hidden>
+                              ·
+                            </span>
+                            <span>{release.creator.name}</span>
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+                          {release.isLocked ? (
+                            <Badge
+                              variant="secondary"
+                              className="bg-emerald-50 text-emerald-700 border-emerald-200/60 font-medium"
+                            >
+                              <Lock className="size-3.5 mr-1" />
+                              Locked
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant="secondary"
+                              className="bg-slate-100 text-slate-600 border-slate-200/60 font-medium"
+                            >
+                              <Unlock className="size-3.5 mr-1" />
+                              Unlocked
+                            </Badge>
+                          )}
+                          {canManageReleases && (
+                            <>
+                              <span
+                                className="hidden h-5 w-px bg-slate-200 sm:block"
+                                aria-hidden
+                              />
+                              {release.isLocked ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="inline-flex">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 gap-1.5 text-slate-400 opacity-70 pointer-events-none"
+                                        disabled
+                                      >
+                                        <Upload className="size-3.5" />
+                                        Upload
+                                      </Button>
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent
+                                    side="bottom"
+                                    className="max-w-[260px] text-center"
+                                  >
+                                    You cannot upload a new version because this
+                                    release is locked.
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 gap-1.5"
+                                  onClick={() => {
+                                    setSelectedRelease(release.id.toString());
+                                    setShowUploadForm(true);
+                                  }}
                                 >
-                                  Live Build ↗
-                                </a>
+                                  <Upload className="size-3.5" />
+                                  Upload
+                                </Button>
                               )}
-                            </div>
-                          </div>
-                        ))}
+                              {index === 0 ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className={
+                                    release.isLocked
+                                      ? "h-8 gap-1.5 border-amber-200/60 text-amber-600 hover:bg-amber-50 hover:text-amber-700"
+                                      : "h-8 gap-1.5"
+                                  }
+                                  onClick={() =>
+                                    handleLockToggle(
+                                      release.id,
+                                      release.isLocked,
+                                    )
+                                  }
+                                >
+                                  {release.isLocked ? (
+                                    <>
+                                      <Unlock className="size-3.5" />
+                                      Unlock
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Lock className="size-3.5" />
+                                      Lock
+                                    </>
+                                  )}
+                                </Button>
+                              ) : (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="inline-flex">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 gap-1.5 text-slate-400 opacity-70 pointer-events-none"
+                                        disabled
+                                      >
+                                        {release.isLocked ? (
+                                          <>
+                                            <Unlock className="size-3.5" />
+                                            Unlock
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Lock className="size-3.5" />
+                                            Lock
+                                          </>
+                                        )}
+                                      </Button>
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent
+                                    side="bottom"
+                                    className="max-w-[260px] text-center"
+                                  >
+                                    Only the latest release can be unlocked.
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </div>
-                    )}
+                      <p className="line-clamp-2 text-sm leading-relaxed text-slate-600">
+                        {release.description || (
+                          <span className="italic text-slate-400">
+                            No description
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex flex-1 flex-col px-5 pt-4 pb-5">
+                      {release.versions.length > 0 ? (
+                        <Collapsible className="rounded-lg border border-slate-200 bg-white">
+                          <CollapsibleTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              className="group flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-slate-50 data-[state=open]:rounded-b-none"
+                            >
+                              <span className="text-sm text-slate-800">
+                                Version history
+                              </span>
+                              <span className="text-sm text-slate-500">
+                                {release.versions.length} version
+                                {release.versions.length !== 1 ? "s" : ""}
+                              </span>
+                              <div className="text-sm">
+                                <span className="text-slate-400">Latest</span>
+                                <span className="ml-1.5 text-sm text-slate-700">
+                                  v{release.versions[0].version}
+                                </span>
+                              </div>
+                              <ChevronDown className="size-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                            </Button>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent>
+                            <div className="space-y-2 border-t border-slate-200 p-4 pt-3">
+                              {release.versions.map((version) => (
+                                <div
+                                  key={version.id}
+                                  className={`flex justify-between items-center p-3 ${version.isActive ? "bg-primary/10 border border-primary" : "bg-white border border-slate-100"} rounded-lg hover:border-primary transition-colors`}
+                                >
+                                  <div className="flex flex-col gap-2">
+                                    <div className="flex items-center gap-3">
+                                      <span className="font-mono text-sm font-medium text-slate-700">
+                                        v{version.version}
+                                      </span>
+                                      <span className="text-xs text-slate-400">
+                                        {new Date(
+                                          version.createdAt,
+                                        ).toLocaleDateString()}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-start gap-2 w-full">
+                                      <span className="text-xs text-slate-400 whitespace-nowrap mt-1">
+                                        RoadMap Items:
+                                      </span>
+                                      <div className="flex flex-wrap gap-2">
+                                        {version.roadmapItems.map((item) => (
+                                          <Badge
+                                            key={item.id}
+                                            className="rounded-md"
+                                          >
+                                            {item.title}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-col gap-3">
+                                    {version.isActive && (
+                                      <Badge className="bg-primary text-primary-foreground">
+                                        <CheckCircle size={14} /> Active
+                                      </Badge>
+                                    )}
+                                    {version.buildUrl && (
+                                      <a
+                                        href={version.buildUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-emerald-600 hover:text-emerald-700 text-xs font-medium flex items-center gap-1"
+                                      >
+                                        Live Build ↗
+                                      </a>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </CollapsibleContent>
+                        </Collapsible>
+                      ) : null}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -512,7 +629,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 onChange={(e) =>
                   setNewRelease({ ...newRelease, name: e.target.value })
                 }
-                placeholder="Enter release name"
+                placeholder="Ex: 1.1.0"
                 required
               />
             </div>
@@ -534,7 +651,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               />
             </div>
 
-            <div className="space-y-2">
+            {/* <div className="space-y-2">
               <Label>Roadmaps (for reference)</Label>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -582,7 +699,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-            </div>
+            </div> */}
 
             <DialogFooter className="gap-2 sm:gap-0">
               <Button
@@ -616,87 +733,31 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             <DialogHeader>
               <DialogTitle>Upload to Release</DialogTitle>
               <DialogDescription>
-                Choose a release, optional version and roadmap items, then
-                upload a ZIP file to build.
+                Upload a ZIP file to{" "}
+                <span className="font-medium text-slate-700">
+                  {releases.find((r) => r.id.toString() === selectedRelease)
+                    ?.name ?? "this release"}
+                </span>
+                . Version is optional (leave empty for auto-increment).
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleUpload} className="space-y-4">
-              <div className="grid grid-cols-1 gap-4">
-                <div className="space-y-2">
-                  <Label>Select Release</Label>
-                  <Select
-                    value={selectedRelease}
-                    onValueChange={(value) => {
-                      if (value === "CREATE_NEW") {
-                        setShowUploadForm(false);
-                        setShowCreateForm(true);
-                        setSelectedRelease("");
-                      } else {
-                        setSelectedRelease(value);
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Choose a release..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(() => {
-                        const lastFiveLockedReleases = releases
-                          .filter((r) => r.isLocked)
-                          .slice(0, 5);
-                        const unlockedReleases = releases.filter(
-                          (r) => !r.isLocked,
-                        );
-                        return (
-                          <>
-                            {unlockedReleases.length === 0 && (
-                              <SelectItem
-                                value="CREATE_NEW"
-                                className="text-emerald-600 font-medium"
-                              >
-                                + Create New Release
-                              </SelectItem>
-                            )}
-                            {unlockedReleases.map((release) => (
-                              <SelectItem
-                                key={release.id}
-                                value={release.id.toString()}
-                              >
-                                {release.name}
-                              </SelectItem>
-                            ))}
-                            {lastFiveLockedReleases.map((release) => (
-                              <SelectItem
-                                key={release.id}
-                                value={release.id.toString()}
-                                disabled
-                              >
-                                {release.name} (Locked)
-                              </SelectItem>
-                            ))}
-                          </>
-                        );
-                      })()}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="upload-version">Version (Optional)</Label>
-                  <Input
-                    id="upload-version"
-                    type="text"
-                    value={version}
-                    onChange={(e) => setVersion(e.target.value)}
-                    placeholder="e.g., 1.0.0, 1.1.0, 2.0.0"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Leave empty for auto-increment
-                  </p>
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="upload-version">Version (Optional)</Label>
+                <Input
+                  id="upload-version"
+                  type="text"
+                  value={version}
+                  onChange={(e) => setVersion(e.target.value)}
+                  placeholder="e.g., 1.0.0, 1.1.0, 2.0.0"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Leave empty for auto-increment
+                </p>
               </div>
 
-              <div className="space-y-2">
-                <Label>Completed Roadmap Items</Label>
+              {/* <div className="space-y-2"> */}
+              {/* <Label>Roadmap Items (Optional)</Label>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -721,7 +782,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                           ))}
                         </span>
                       ) : (
-                        "Select roadmap items"
+                        "None selected (optional)"
                       )}
                       <ChevronDown className="h-4 w-4 text-slate-500" />
                     </Button>
@@ -772,38 +833,79 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 </DropdownMenu>
                 {roadmapError && (
                   <p className="text-xs text-red-600">{roadmapError}</p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Select one or more items from the different roadmap.
-                </p>
-              </div>
+                )} */}
+              {/* <p className="text-xs text-muted-foreground">
+                  Optionally link this version to one or more roadmap items.
+                </p> */}
+              {/* </div> */}
 
               <div className="space-y-2">
-                <Label htmlFor="file-input">Upload ZIP File</Label>
+                <Label htmlFor="file-input">ZIP File</Label>
                 <input
+                  ref={uploadFileInputRef}
                   id="file-input"
+                  name="project"
                   type="file"
-                  accept=".zip"
+                  accept=".zip,application/zip"
                   onChange={handleFileSelect}
-                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  required
+                  className="sr-only"
+                  aria-label="Choose ZIP file"
                 />
-                <p className="text-xs text-muted-foreground">
-                  Only ZIP files are allowed. Maximum size: 50MB
-                </p>
+                <label
+                  htmlFor="file-input"
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-all duration-200 ${
+                    isDragActive
+                      ? "border-primary bg-primary/5"
+                      : uploadFile
+                        ? "border-emerald-300 bg-emerald-50/50"
+                        : "border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-slate-100/50"
+                  }`}
+                >
+                  {uploadFile ? (
+                    <>
+                      <div className="flex size-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                        <FileArchive className="size-6" />
+                      </div>
+                      <div className="text-center">
+                        <p className="font-medium text-slate-800">
+                          {uploadFile.name}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {(uploadFile.size / 1024 / 1024).toFixed(2)} MB
+                        </p>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Click or drop a new file to replace
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div
+                        className={`flex size-12 items-center justify-center rounded-full ${
+                          isDragActive
+                            ? "bg-primary/10 text-primary"
+                            : "bg-slate-200 text-slate-500"
+                        }`}
+                      >
+                        <Upload className="size-6" />
+                      </div>
+                      <div className="text-center">
+                        <p className="font-medium text-slate-700">
+                          {isDragActive
+                            ? "Drop your ZIP file here"
+                            : "Drop your ZIP file here or click to browse"}
+                        </p>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          Only .zip files, max 50MB
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </label>
               </div>
-
-              {uploadFile && (
-                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
-                  <div className="font-medium text-blue-900 mb-1">
-                    Selected File:
-                  </div>
-                  <div className="text-sm text-blue-700">
-                    📁 {uploadFile.name} (
-                    {(uploadFile.size / 1024 / 1024).toFixed(2)} MB)
-                  </div>
-                </div>
-              )}
 
               {uploading && (
                 <div>

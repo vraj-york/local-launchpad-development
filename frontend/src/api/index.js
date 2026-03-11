@@ -214,6 +214,18 @@ export const toggleReleaseLock = async (releaseId, locked) => {
   }
 };
 
+export const publicLockRelease = async (releaseId, locked, token) => {
+  try {
+    const response = await api.post(`/api/releases/${releaseId}/public-lock`, {
+      locked,
+      token,
+    });
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to lock release" };
+  }
+};
+
 // Function to upload ZIP to a release
 export const uploadToRelease = async (
   releaseId,
