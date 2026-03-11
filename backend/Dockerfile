@@ -1,7 +1,14 @@
-# Backend - Node.js API (Prisma + Express)
+# Backend - Node.js API (Prisma + Express) + Nginx (same container; no separate nginx service)
 FROM node:20-alpine AS base
 
 WORKDIR /app
+
+# Nginx for project subdomains on port 80 (proxies to static servers on 127.0.0.1:PORT)
+RUN apk add --no-cache nginx \
+    && mkdir -p /var/log/nginx \
+    && rm -f /etc/nginx/http.d/default.conf 2>/dev/null || true
+
+COPY nginx-docker.conf /etc/nginx/nginx.conf
 
 # Install dependencies
 COPY package.json package-lock.json* ./

@@ -123,7 +123,7 @@ Create a `.env` file in the backend directory with:
 
 ```env
 # Database
-DATABASE_URL="postgresql://username:password@localhost:5432/project_management"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/zipsync"
 
 # JWT
 JWT_SECRET="your-jwt-secret"

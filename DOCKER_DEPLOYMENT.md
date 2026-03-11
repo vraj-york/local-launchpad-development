@@ -94,36 +94,134 @@ To use your **existing** Postgres (same DB as when you run the app normally) so 
 
 | Variable | Used by | Description |
 |----------|---------|-------------|
-| `POSTGRES_USER` | db, backend | PostgreSQL user (default: pmuser) |
-| `POSTGRES_PASSWORD` | db, backend | PostgreSQL password (default: pmsecret) |
-| `POSTGRES_DB` | db, backend | Database name (default: project_management) |
+| `POSTGRES_USER` | db, backend | PostgreSQL user (default: postgres) |
+| `POSTGRES_PASSWORD` | db, backend | PostgreSQL password (default: postgres) |
+| `POSTGRES_DB` | db, backend | Database name (default: zipsync) |
 | `VITE_API_URL` | frontend (build) | URL the **browser** uses to call the API (e.g. http://localhost:5000 or https://api.yourdomain.com) |
 | `VITE_FRONTEND_URL` | frontend (build) | Frontend base URL (e.g. http://localhost:3000) |
 | `JWT_SECRET` | backend | Secret for JWT (set in production) |
 | `BASE_URL` | backend | Backend base URL for generated links |
 | `NGINX_BASE_DOMAIN` | backend | Base domain for project subdomains (see INSTANCE_SETUP.md) |
-| `NGINX_UPSTREAM_HOST` | backend | Host nginx uses for `proxy_pass` to project ports. Set to `backend` in Docker (compose sets this automatically). |
+| `NGINX_UPSTREAM_HOST` | (optional) | Only if you use a **separate** nginx container; otherwise nginx runs **inside** backend and proxies to `localhost:<port>`. |
 | `PROJECT_PORT_END` | docker-compose | Last port in the published project port range (default 8100 → 8001–8100). Only needed for direct host access; nginx uses the Docker network. Increase if you have many projects (e.g. 8999). |
 
 For production, set `VITE_API_URL` and `VITE_FRONTEND_URL` to your public URLs **before** building the frontend image (e.g. in `.env` when running `docker compose build`).
 
-## Nginx main config (`nginx/nginx.conf`)
+## Nginx only inside backend (no separate nginx service)
 
-The **nginx** service bind-mounts **`./nginx/nginx.conf`** onto `/etc/nginx/nginx.conf` inside the container. That path must be a **file** in the repo, not a directory.
+There is **no** standalone `nginx` service and **no** nginx in the **frontend** image. The **backend** image installs nginx and starts it in the entrypoint; it listens on **port 80** and includes **`/app/nginx-configs/*.conf`** (same volume the app writes when you create projects). Project static servers run in the same container on `127.0.0.1:<port>`, so `proxy_pass` stays `http://localhost:<port>`.
 
-- **Error:** `mount ... not a directory: unknown: Are you trying to mount a directory onto a file`  
-  **Cause:** `nginx/nginx.conf` was missing on the host; Docker created a **directory** with that name.  
-  **Fix:** Ensure the repo has `nginx/nginx.conf` (committed), then on the server remove the wrongly created directory and pull again:
-  ```bash
-  docker compose down
-  rm -rf nginx/nginx.conf   # only if it is a directory; then git checkout nginx/nginx.conf
-  git pull
-  docker compose up -d --build
-  ```
+- **Port 80** → backend container (nginx for project subdomains).
+- **Port 5000** → API.
+- **Port 3000** → frontend static app (served with `serve`, not nginx).
+
+Main nginx config is **`backend/nginx-docker.conf`** (copied into the image at `/etc/nginx/nginx.conf`). The repo `nginx/nginx.conf` is unused by the current compose file.
+
+## Supabase + `FATAL: role "postgres" does not exist` (db-1 logs)
+
+That message comes from the **local** Postgres container (`db-1`), **not** from Supabase. Supabase already has a `postgres` role; you don’t need to change anything in the Supabase dashboard for this.
+
+**Why it happens:** The `postgres_data` volume was first created with a different `POSTGRES_USER` (e.g. `pmuser`). The official image only creates that user, so role `postgres` never exists in that volume. Anything connecting to the local container as `postgres` then logs `FATAL`.
+
+**What to do:**
+
+1. **Using Supabase only** – Don’t start the local `db` service. With the current compose file, run:
+   ```bash
+   docker compose up -d --build
+   ```
+   (`db` is behind profile `with-db`; backend uses your `DATABASE_URL` to Supabase.)
+
+2. **If you still need the local DB container** – Either:
+   - Recreate the volume so it initializes with `POSTGRES_USER=postgres`:
+     ```bash
+     docker compose --profile with-db down -v
+     docker compose --profile with-db up -d --build
+     ```
+     (**`-v` deletes that Postgres data.**)
+   - Or set `POSTGRES_USER` / healthcheck to match whatever user actually exists in the existing volume.
+
+## Supabase: `Can't reach database server at db....supabase.co:5432`
+
+Prisma/Node is failing to open a **TCP connection** to Supabase (timeout or connection refused). Nothing is wrong with Supabase itself until connectivity works.
+
+### 1. **Require SSL in the URL** (most common fix)
+
+Supabase expects TLS. Add **`?sslmode=require`** (or `?sslmode=no-verify` only for debugging):
+
+```env
+DATABASE_URL="postgresql://postgres.[ref]:YOUR_PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres?sslmode=require"
+```
+
+Or for the **direct** host (`db.xxx.supabase.co:5432`):
+
+```env
+DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@db.xxx.supabase.co:5432/postgres?sslmode=require"
+```
+
+Restart backend after changing `.env`:
+
+```bash
+docker compose up -d --force-recreate backend
+```
+
+### 2. **Use the pooler (port 6543)** for app servers
+
+In the Supabase Dashboard → **Project Settings → Database**, copy the **URI** under **Connection pooling** (Transaction mode). It uses port **6543** and host like `aws-0-REGION.pooler.supabase.com`. Many Docker/host networks block or throttle long-lived connections on 5432; the pooler is intended for apps like this.
+
+### 3. **`nc: bad address 'db....supabase.co'`** (DNS inside the container)
+
+That means **name resolution failed**—the container never got an IP for the hostname. The host is fine; **Docker’s DNS** for that container is broken or empty.
+
+**Fix (already in `docker-compose.yml`):** the **backend** service has:
+
+```yaml
+dns:
+  - 8.8.8.8
+  - 8.8.4.4
+```
+
+Recreate the backend so it picks this up:
+
+```bash
+docker compose up -d --force-recreate backend
+```
+
+**Verify DNS inside the container:**
+
+```bash
+docker compose exec backend getent hosts db.rszxokarhatrtnqpwxdn.supabase.co
+# or
+docker compose exec backend nslookup db.rszxokarhatrtnqpwxdn.supabase.co
+```
+
+If that returns an IP, `nc` and Prisma can proceed (then ensure `?sslmode=require` and pooler if needed).
+
+**Host-level fix:** On Linux, check `/etc/resolv.conf` and Docker daemon DNS (`/etc/docker/daemon.json` → `"dns": ["8.8.8.8"]`), then `sudo systemctl restart docker`.
+
+### 4. **Check TCP from inside the container** (after DNS works)
+
+```bash
+docker compose exec backend sh -c 'nc -zv db.rszxokarhatrtnqpwxdn.supabase.co 5432 || true'
+docker compose exec backend sh -c 'wget -qO- --timeout=5 https://db.rszxokarhatrtnqpwxdn.supabase.co 2>&1 | head -1 || true'
+```
+
+If `nc` times out, outbound **5432** is blocked (firewall, security group, or provider). Allow outbound TCP 5432 or switch to pooler **6543**.
+
+### 5. **Supabase project paused**
+
+On the free tier, projects pause after inactivity. Open the Supabase dashboard and **resume** the project.
+
+### 6. **Password / user**
+
+Use the **database password** from Supabase (Settings → Database), not the anon key. For pooler URIs, the username is often `postgres.[project-ref]`.
+
+---
+
+**Quick checklist:** **DNS** (`dns: 8.8.8.8` + recreate backend) → `?sslmode=require` → **pooler 6543** → open outbound ports → resume project → correct password.
 
 ## Nginx and project ports (automatic with Docker)
 
-When you run `docker compose up`, the **nginx** service starts and reads per-project configs from the same volume as the backend (`backend_nginx_configs`). The backend writes configs with `proxy_pass http://backend:<port>` so nginx (in its own container) can reach each project’s port on the backend container.
+When you run `docker compose up`, **nginx starts inside the backend container** and reads per-project configs from `/app/nginx-configs` (volume `backend_nginx_configs`). Configs use `proxy_pass http://localhost:<port>` because static servers run in the same container.
 
 - **Port 80** is published; nginx listens there.
 - **Project ports** are assigned **dynamically from the DB** (`Project.port`): each new project gets the next free port (8001, 8002, 8003, …). The backend publishes a configurable range (default 8001–8100); set `PROJECT_PORT_END` in `.env` to extend it. Nginx reaches backend via the Docker network, so any number of DB-assigned ports work.
@@ -135,7 +233,7 @@ Project apps must still be **run** (e.g. dev server or process) inside the backe
 
 - `postgres_data` – database files (only when using `--profile with-db` for local dev; production uses Supabase)
 - `./backend/projects` → `/app/projects` – **bind mount**: project folders (same as repo’s `backend/projects`, so dynamic port and API serve the same files)
-- `backend_nginx_configs` – per-project nginx configs (shared by backend and nginx)
+- `backend_nginx_configs` → `/app/nginx-configs` in backend (nginx includes these files from the same container)
 - `backend_uploads` – upload temp files
 
 ## Runtime directories (do not commit)
@@ -146,7 +244,7 @@ These paths are in **.gitignore** and must **not** be pushed. They are created a
 |-----------|--------------|------------------|
 | **`backend/projects/`** | Container start (`entrypoint.sh`: `mkdir -p /app/projects`) and when you create a project in the platform. | One folder per project (e.g. `my-project/`). When you **upload a release**, the built app (dist/build) is copied here. The live app and nginx serve from these folders. **Empty** after a fresh clone or image build. |
 | **`backend/uploads/`** | Container start. | Temporary files from release uploads; cleared after processing. |
-| **`backend/_preview/`** | When someone uses **Switch version** (preview). | One folder per project (`project_<id>/serve/`) with the built preview. Cleaned automatically (TTL and on next switch). |
+| **`backend/_preview/`** | When someone uses **Switch version** (preview). | One folder per project (`project_<id>/serve/`) with the built preview. **Removed after 1 hour** (periodic cleanup + on next switch). Preview cookie also expires in 1 hour. |
 | **`backend/nginx-configs/`** | Container start; backend also writes per-project configs here. | Sample configs are in the image; the backend adds/updates configs when projects are created. |
 
 **Summary:** You do **not** need to push `backend/projects`. After deploy, the directory exists (empty or via volume); creating projects and uploading releases from the platform fills it. Same idea as `node_modules` or the database—runtime data, not source code.
@@ -161,13 +259,13 @@ These paths are in **.gitignore** and must **not** be pushed. They are created a
 No port needed; run from repo root:
 
 ```bash
-docker compose exec db psql -U pmuser -d project_management -c "SELECT id, name, email, role FROM \"User\";"
+docker compose exec db psql -U postgres -d zipsync -c "SELECT id, name, email, role FROM \"User\";"
 ```
 
 Interactive shell:
 
 ```bash
-docker compose exec db psql -U pmuser -d project_management
+docker compose exec db psql -U postgres -d zipsync
 ```
 
 Then run SQL, e.g. `SELECT * FROM "User";` and `\q` to quit.
@@ -177,7 +275,7 @@ From your machine (with Docker stack running), use the same DB URL as the backen
 
 ```bash
 cd backend
-DATABASE_URL="postgresql://pmuser:pmsecret@localhost:5432/project_management" npx prisma studio
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/zipsync" npx prisma studio
 ```
 
 Opens http://localhost:5555 — browse and edit tables.
@@ -214,7 +312,7 @@ Projects in `projects/` use **dynamic ports** (stored in DB, written into `nginx
 From repo root (stack running):
 
 ```bash
-docker compose exec db psql -U pmuser -d project_management -c 'SELECT id, name, port FROM "Project" ORDER BY port;'
+docker compose exec db psql -U postgres -d zipsync -c 'SELECT id, name, port FROM "Project" ORDER BY port;'
 ```
 
 ### 2. List ports from nginx configs (inside backend container)
@@ -255,7 +353,7 @@ Run from repo root (requires `backend` and `db` running):
 
 ```bash
 # Get ports from DB and test each from inside the backend container
-docker compose exec db psql -U pmuser -d project_management -t -c 'SELECT port FROM "Project" WHERE port IS NOT NULL ORDER BY port;' | while read port; do
+docker compose exec db psql -U postgres -d zipsync -t -c 'SELECT port FROM "Project" WHERE port IS NOT NULL ORDER BY port;' | while read port; do
   port=$(echo "$port" | tr -d ' ')
   [ -z "$port" ] && continue
   code=$(docker compose exec -T backend wget -q -O- --timeout=2 http://localhost:$port/ 2>/dev/null && echo "OK" || echo "FAIL")

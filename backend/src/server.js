@@ -1,6 +1,7 @@
 import app from "./app.js";
 import config from "./config/index.js";
 import { startAllProjectServers } from "./projectServers.js";
+import { cleanupStalePreviews } from "./services/project.service.js";
 
 const PORT = config.PORT;
 // In Docker the server must listen on 0.0.0.0 to accept connections from outside the container
@@ -19,4 +20,11 @@ app.listen(PORT, HOST, () => {
   setTimeout(() => {
     startAllProjectServers().catch((err) => console.error("[startup] project servers:", err.message));
   }, 2000);
+
+  // _preview TTL: remove preview build dirs after 1 hour (also runs at switch version start)
+  cleanupStalePreviews().catch(() => {});
+  const PREVIEW_CLEANUP_INTERVAL_MS = 15 * 60 * 1000; // every 15 minutes
+  setInterval(() => {
+    cleanupStalePreviews().catch((e) => console.warn("[preview cleanup]", e.message));
+  }, PREVIEW_CLEANUP_INTERVAL_MS);
 });

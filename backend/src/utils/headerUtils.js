@@ -10,7 +10,6 @@ export function generateProjectHeader() {
 }
 
 // Generate release header component HTML with improved design matching main.css
-// Generate release header component HTML with improved design matching main.css
 export function generateReleaseHeader(data = {}) {
   return generateHeader('release', data);
 }

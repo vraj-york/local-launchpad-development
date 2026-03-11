@@ -4,11 +4,15 @@ set -e
 # Ensure instance root dirs exist (volumes may mount over them)
 mkdir -p /app/projects /app/nginx-configs /app/uploads
 
-# Nginx container includes /etc/nginx/sites-enabled/*.conf; empty dir breaks nginx.
-# If no configs yet, write a placeholder so the shared volume has at least one .conf
+# Nginx runs inside this container; include /app/nginx-configs/*.conf requires at least one file
 if [ -z "$(ls -A /app/nginx-configs/*.conf 2>/dev/null)" ]; then
-  echo '# Placeholder until first project is created; nginx include requires at least one .conf' > /app/nginx-configs/_placeholder.conf
+  echo '# Placeholder until first project is created' > /app/nginx-configs/_placeholder.conf
   echo 'server { listen 127.0.0.1:65535; return 503; }' >> /app/nginx-configs/_placeholder.conf
+fi
+
+# Start nginx (daemon mode) then Node; project configs proxy to 127.0.0.1:<port>
+if command -v nginx >/dev/null 2>&1; then
+  nginx
 fi
 
 # In Docker, localhost is the container. Use host.docker.internal to reach Postgres on the host.
@@ -29,8 +33,9 @@ if [ -n "$DATABASE_URL" ]; then
   npx prisma db seed 2>/dev/null || true
 fi
 
-# When nginx runs in Docker (NGINX_UPSTREAM_HOST=backend), rewrite existing configs so proxy_pass uses backend instead of localhost
-if [ -n "$NGINX_UPSTREAM_HOST" ]; then
+# When nginx runs in same container as Node, keep proxy_pass http://localhost: (default).
+# If NGINX_UPSTREAM_HOST is set (legacy separate nginx container), rewrite to that host.
+if [ -n "$NGINX_UPSTREAM_HOST" ] && [ "$NGINX_UPSTREAM_HOST" != "localhost" ] && [ "$NGINX_UPSTREAM_HOST" != "127.0.0.1" ]; then
   for f in /app/nginx-configs/*.conf; do
     [ -f "$f" ] || continue
     if grep -q 'proxy_pass http://localhost:' "$f" 2>/dev/null; then

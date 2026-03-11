@@ -610,17 +610,18 @@ export const runBuildSequence = async (buildContextPath) => {
 
 export const reloadNginx = async () => {
   try {
-    // 1. Find where Nginx is actually installed
-    const { stdout } = await execAsync("which nginx");
+    const { stdout } = await execAsync('which nginx');
     const nginxBin = stdout.trim();
-
-    // 2. Execute reload
-    await execAsync(`sudo ${nginxBin} -s reload`);
+    try {
+      await execAsync(`${nginxBin} -s reload`);
+    } catch {
+      await execAsync(`sudo ${nginxBin} -s reload`);
+    }
     return true;
   } catch (error) {
     console.error(`[NGINX RELOAD ERROR]: ${error.message}`);
     // On Local Mac, we don't want to crash the whole app if Nginx isn't running
-    if (os.platform() !== "darwin") throw error;
+    if (os.platform() !== 'darwin') throw error;
   }
 };
 export const uploadReleaseVersionService = async (
@@ -821,8 +822,8 @@ export const uploadReleaseVersionService = async (
       url: buildUrl,
     };
   } finally {
-    await fs.remove(tempRoot).catch(() => {});
-    await fs.remove(file.path).catch(() => {});
+    await fs.remove(tempRoot).catch(() => { });
+    await fs.remove(file.path).catch(() => { });
 
     await prisma.project.update({
       where: { id: project.id },

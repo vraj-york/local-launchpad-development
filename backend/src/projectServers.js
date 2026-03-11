@@ -23,7 +23,7 @@ const EMPTY_PLACEHOLDER_HTML = `
 `;
 
 const PREVIEW_COOKIE = "preview";
-const PREVIEW_COOKIE_MAX_AGE = 60 * 60 * 24; // 1 day
+const PREVIEW_COOKIE_MAX_AGE = 60 * 60; // 1 hour — matches PREVIEW_TTL_MS cleanup in project.service
 
 /** Strip ?preview=1 from URL bar; keep cookie so assets still load from preview */
 const PREVIEW_CLEANUP_SCRIPT = `
