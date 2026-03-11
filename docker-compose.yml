@@ -8,8 +8,6 @@
 
 services:
   db:
-    profiles:
-      - with-db
     image: postgres:16-alpine
     restart: unless-stopped
     ports:

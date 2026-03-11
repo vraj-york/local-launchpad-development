@@ -8,9 +8,10 @@
  * HOW TO SWITCH ENVIRONMENTS:
  * ---------------------------
  * Option 1: Edit the default values below
- * Option 2: Set environment variables (recommended for production)
- *           Create a .env file in frontend root:
- *           VITE_API_URL=http://43.205.121.85:5000
+ * Option 2: Set environment variables (recommended)
+ *           Copy frontend/.env.example to frontend/.env and set:
+ *           VITE_API_URL=http://localhost:5000
+ *           (Vite loads frontend/.env when you run npm run dev from frontend/)
  * 
  * ENVIRONMENT VALUES:
  * -------------------
@@ -22,8 +23,8 @@
 
 const config = {
     // Backend API URL - where the frontend sends all API requests
-    API_URL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
-    FRONTEND_URL: import.meta.env.VITE_FRONTEND_URL || 'http://localhost:5173',
+    API_URL: import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000',
+    FRONTEND_URL: import.meta.env.VITE_FRONTEND_URL || 'http://127.0.0.1:5173',
 
     // Current environment (development/production)
     NODE_ENV: import.meta.env.MODE || 'development',
