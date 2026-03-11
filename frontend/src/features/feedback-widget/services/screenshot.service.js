@@ -1,4 +1,4 @@
-// Screenshot Service - Native getDisplayMedia + optional html2canvas fallback
+// Screenshot Service - html2canvas-pro for target/iframe capture; getDisplayMedia for viewport when no target
 import html2canvas from 'html2canvas-pro';
 
 /**
@@ -7,17 +7,21 @@ import html2canvas from 'html2canvas-pro';
  * @returns {Promise<HTMLCanvasElement>}
  */
 export const captureWithDisplayMedia = async () => {
+  console.log("[feedback-capture] Step 1: getDisplayMedia — checking support");
   if (!navigator.mediaDevices?.getDisplayMedia) {
+    console.error("[feedback-capture] getDisplayMedia not supported");
     throw new Error(
       'Screen capture is not supported in this browser. Use HTTPS and a modern browser (Chrome, Firefox, Edge, Safari).'
     );
   }
 
+  console.log("[feedback-capture] Step 2: getDisplayMedia — requesting stream");
   const stream = await navigator.mediaDevices.getDisplayMedia({
     video: true,
   });
 
   try {
+    console.log("[feedback-capture] Step 3: getDisplayMedia — creating video from stream");
     const video = document.createElement('video');
     video.srcObject = stream;
     video.autoplay = true;
@@ -33,6 +37,7 @@ export const captureWithDisplayMedia = async () => {
 
     const width = video.videoWidth || 1920;
     const height = video.videoHeight || 1080;
+    console.log("[feedback-capture] Step 4: getDisplayMedia — drawing to canvas", { width, height });
 
     const canvas = document.createElement('canvas');
     canvas.width = width;
@@ -40,6 +45,7 @@ export const captureWithDisplayMedia = async () => {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, width, height);
 
+    console.log("[feedback-capture] Step 5: getDisplayMedia — done");
     return canvas;
   } finally {
     stream.getTracks().forEach((t) => t.stop());
@@ -57,38 +63,49 @@ const getBaseOptions = (useForeignObject = true) => ({
 });
 
 async function captureWithHtml2Canvas(element, options) {
+  console.log("[feedback-capture] html2canvas — starting", { tagName: element?.tagName, id: element?.id });
   try {
-    return await html2canvas(element, { ...getBaseOptions(true), ...options });
+    const canvas = await html2canvas(element, { ...getBaseOptions(true), ...options });
+    console.log("[feedback-capture] html2canvas — done", { width: canvas.width, height: canvas.height });
+    return canvas;
   } catch (err) {
     const msg = err?.message || String(err);
     if (msg.includes('ForeignObject') || msg.includes('foreign') || msg.includes('security')) {
+      console.warn("[feedback-capture] html2canvas — ForeignObject failed, retrying without", msg);
       try {
-        return await html2canvas(element, { ...getBaseOptions(false), ...options });
+        const canvas = await html2canvas(element, { ...getBaseOptions(false), ...options });
+        console.log("[feedback-capture] html2canvas — fallback done", { width: canvas.width, height: canvas.height });
+        return canvas;
       } catch (fallbackErr) {
-        console.warn('[feedback-widget] ForeignObject fallback capture failed:', fallbackErr?.message);
+        console.error("[feedback-capture] html2canvas — fallback failed", fallbackErr?.message);
         throw fallbackErr;
       }
     }
+    console.error("[feedback-capture] html2canvas — error", err?.message);
     throw err;
   }
 }
 
 async function captureIframeViewport(iframe) {
+  console.log("[feedback-capture] iframe — resolving contentWindow/contentDocument");
   const iframeWindow = iframe.contentWindow;
   const iframeDoc = iframe.contentDocument;
   const iframeRoot = iframeDoc?.documentElement;
 
   if (!iframeWindow || !iframeDoc || !iframeRoot) {
+    console.error("[feedback-capture] iframe — document not available (cross-origin?)", {
+      hasWindow: !!iframeWindow,
+      hasDoc: !!iframeDoc,
+      hasRoot: !!iframeRoot,
+    });
     throw new Error("Iframe document not available");
   }
 
-  // Capture the current visible viewport of the iframe (respecting scroll).
-  // scrollX/scrollY tell html2canvas which scroll position to use when rendering,
-  // so the visible part is at the top-left; we then crop at (0,0) with viewport size.
   const viewportW = Math.max(1, Math.floor(iframe.clientWidth || iframeWindow.innerWidth));
   const viewportH = Math.max(1, Math.floor(iframe.clientHeight || iframeWindow.innerHeight));
+  console.log("[feedback-capture] iframe — capturing viewport", { viewportW, viewportH });
 
-  return captureWithHtml2Canvas(iframeRoot, {
+  const canvas = await captureWithHtml2Canvas(iframeRoot, {
     width: viewportW,
     height: viewportH,
     windowWidth: iframeWindow.innerWidth,
@@ -98,10 +115,13 @@ async function captureIframeViewport(iframe) {
     scrollX: iframeWindow.scrollX ?? iframeWindow.pageXOffset ?? 0,
     scrollY: iframeWindow.scrollY ?? iframeWindow.pageYOffset ?? 0,
   });
+  console.log("[feedback-capture] iframe — capture done", { width: canvas.width, height: canvas.height });
+  return canvas;
 }
 
 export const captureFullPage = async () => {
   try {
+    console.log("[feedback-capture] captureFullPage — start");
     const widgetButton = document.querySelector('.feedback-widget-button');
     const widgetOverlay = document.querySelector('.feedback-widget-overlay');
     if (widgetButton) widgetButton.style.display = 'none';
@@ -120,13 +140,14 @@ export const captureFullPage = async () => {
     if (widgetOverlay) widgetOverlay.style.display = 'flex';
     return canvas;
   } catch (error) {
-    console.error('Screenshot capture failed:', error);
+    console.error("[feedback-capture] captureFullPage — failed", error);
     throw new Error('Failed to capture screenshot');
   }
 };
 
 export const captureViewport = async () => {
   try {
+    console.log("[feedback-capture] captureViewport — start");
     const widgetButton = document.querySelector('.feedback-widget-button');
     const widgetOverlay = document.querySelector('.feedback-widget-overlay');
     if (widgetButton) widgetButton.style.display = 'none';
@@ -145,22 +166,26 @@ export const captureViewport = async () => {
 
     if (widgetButton) widgetButton.style.display = 'flex';
     if (widgetOverlay) widgetOverlay.style.display = 'flex';
+    console.log("[feedback-capture] captureViewport — done", { width: canvas.width, height: canvas.height });
     return canvas;
   } catch (error) {
-    console.error('Screenshot capture failed:', error);
+    console.error("[feedback-capture] captureViewport — failed", error);
     throw new Error('Failed to capture screenshot');
   }
 };
 
 export const captureTargetArea = async (target) => {
-  // No target or explicit 'viewport' → capture the whole visible screen
+  console.log("[feedback-capture] captureTargetArea — start", { target });
+
   if (target == null || target === "viewport") {
+    console.log("[feedback-capture] captureTargetArea — no target, using captureViewport");
     return captureViewport();
   }
 
   const widgetButton = document.querySelector(".feedback-widget-button");
   const widgetOverlay = document.querySelector(".feedback-widget-overlay");
   try {
+    console.log("[feedback-capture] captureTargetArea — Step 1: hiding widget UI");
     if (widgetButton) widgetButton.style.display = "none";
     if (widgetOverlay) widgetOverlay.style.display = "none";
 
@@ -171,15 +196,32 @@ export const captureTargetArea = async (target) => {
           ? target
           : null;
 
+    console.log("[feedback-capture] captureTargetArea — Step 2: resolve target element", {
+      target,
+      found: !!targetElement,
+      tagName: targetElement?.tagName,
+      id: targetElement?.id,
+    });
+
+    if (!targetElement && target != null) {
+      console.error("[feedback-capture] captureTargetArea — target not found", target);
+      throw new Error(`Capture target not found: ${target}`);
+    }
+
     // If target is iframe, capture iframe viewport directly.
     let iframe =
       targetElement instanceof HTMLIFrameElement ? targetElement : null;
     if (iframe) {
+      console.log("[feedback-capture] captureTargetArea — target is iframe, capturing iframe only");
       return await captureIframeViewport(iframe);
     }
 
     const elementToCapture = targetElement || document.body;
     const rect = elementToCapture.getBoundingClientRect();
+    console.log("[feedback-capture] captureTargetArea — Step 3: base capture (header + layout)", {
+      width: rect.width,
+      height: rect.height,
+    });
 
     // Capture the parent area first (header, controls, layout).
     const baseCanvas = await captureWithHtml2Canvas(elementToCapture, {
@@ -194,6 +236,7 @@ export const captureTargetArea = async (target) => {
     // If area contains an iframe, composite visible iframe viewport over base canvas.
     iframe = elementToCapture.querySelector("iframe");
     if (iframe) {
+      console.log("[feedback-capture] captureTargetArea — Step 4: compositing iframe viewport");
       try {
         const iframeCanvas = await captureIframeViewport(iframe);
         const ctx = baseCanvas.getContext("2d");
@@ -213,20 +256,28 @@ export const captureTargetArea = async (target) => {
             iframeRect.width,
             iframeRect.height,
           );
+          console.log("[feedback-capture] captureTargetArea — Step 4 done: iframe drawn onto base");
         }
       } catch (iframeError) {
         console.warn(
-          "[feedback-widget] Iframe capture failed, using base capture only:",
+          "[feedback-capture] captureTargetArea — Step 4 failed (using base only):",
           iframeError?.message,
         );
       }
+    } else {
+      console.log("[feedback-capture] captureTargetArea — Step 4: no iframe in target, skip");
     }
 
+    console.log("[feedback-capture] captureTargetArea — Step 5: done", {
+      width: baseCanvas.width,
+      height: baseCanvas.height,
+    });
     return baseCanvas;
   } catch (error) {
-    console.error("Screenshot capture failed:", error);
+    console.error("[feedback-capture] captureTargetArea — error", error?.message, error);
     throw new Error("Failed to capture screenshot");
   } finally {
+    console.log("[feedback-capture] captureTargetArea — restoring widget UI");
     if (widgetButton) widgetButton.style.display = "flex";
     if (widgetOverlay) widgetOverlay.style.display = "flex";
   }

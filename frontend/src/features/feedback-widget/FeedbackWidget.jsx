@@ -3,7 +3,7 @@ import Modal from "./components/Modal";
 import AnnotationEditor from "./components/AnnotationEditor";
 import { collectMetadata } from "./services/metadata.service";
 import { submitFeedback } from "./services/api.service";
-import { blobToFile, captureWithDisplayMedia, canvasToDataURL } from "./services/screenshot.service";
+import { blobToFile, captureWithDisplayMedia, captureTargetArea, canvasToDataURL } from "./services/screenshot.service";
 import "./styles/widget.css";
 
 const STEPS = {
@@ -65,17 +65,27 @@ const FeedbackWidget = ({ config }) => {
 
     const runCapture = async () => {
       try {
-        const canvas = await captureWithDisplayMedia();
+        console.log("[feedback-capture] FeedbackWidget — Step 1: starting capture", {
+          captureTarget: config.captureTarget ?? "(none, using getDisplayMedia)",
+        });
+        const canvas = config.captureTarget
+          ? await captureTargetArea(config.captureTarget)
+          : await captureWithDisplayMedia();
         if (cancelled) return;
+        console.log("[feedback-capture] FeedbackWidget — Step 2: canvas received", {
+          width: canvas?.width,
+          height: canvas?.height,
+        });
         const dataUrl = canvasToDataURL(canvas);
         if (cancelled) return;
+        console.log("[feedback-capture] FeedbackWidget — Step 3: dataUrl created, opening annotate");
         setScreenshotCanvas(canvas);
         setScreenshotDataUrl(dataUrl);
         setStep(STEPS.ANNOTATE);
         setIsOpen(true);
       } catch (err) {
         if (!cancelled) {
-          console.error("Screenshot capture failed:", err);
+          console.error("[feedback-capture] FeedbackWidget — capture failed", err?.message, err);
           setCaptureError(err?.message || "Capture failed");
         }
       } finally {
@@ -149,7 +159,9 @@ const FeedbackWidget = ({ config }) => {
         {isCapturing ? (
           <>
             <div className="feedback-widget-spinner feedback-widget-button-spinner" />
-            <span className="feedback-widget-button-text">Select window...</span>
+            <span className="feedback-widget-button-text">
+              {config.captureTarget ? "Capturing screenshot..." : "Select window..."}
+            </span>
           </>
         ) : (
           <>
