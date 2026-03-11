@@ -85,9 +85,28 @@ export const ClientLink = () => {
     }
   }, [selectedReleaseId, loadProject]);
 
-  const activeBuildUrl =
+  const rawBuildUrl =
     publicProject?.versions?.find((v) => v.isActive)?.buildUrl ??
     publicProject?.versions?.[0]?.buildUrl;
+
+
+  /**
+   * Rewrite a cross-origin build URL to a same-origin proxy path so the
+   * iframe is same-origin and html2canvas can capture its content.
+   * e.g. http://localhost:8001/path → /iframe-preview/8001/path
+   */
+  const activeBuildUrl = React.useMemo(() => {
+    if (!rawBuildUrl) return rawBuildUrl;
+    try {
+      const buildOrigin = new URL(rawBuildUrl, window.location.href);
+      if (buildOrigin.origin === window.location.origin) return rawBuildUrl;
+      const port = buildOrigin.port;
+      if (!port) return rawBuildUrl;
+      return `/iframe-preview/${port}${buildOrigin.pathname}${buildOrigin.search}${buildOrigin.hash}`;
+    } catch {
+      return rawBuildUrl;
+    }
+  }, [rawBuildUrl]);
 
   const iframeSrc = previewBuildUrl ?? activeBuildUrl;
 

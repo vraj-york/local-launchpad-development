@@ -65,36 +65,68 @@ const FeedbackWidget = ({ config }) => {
 
     const runCapture = async () => {
       try {
-        console.log("[feedback-capture] FeedbackWidget — Step 1: starting capture", {
-          captureTarget: config.captureTarget ?? "(none, using getDisplayMedia)",
+        const captureMethod = config.captureTarget ? 'captureTargetArea' : 'captureWithDisplayMedia';
+        console.log("[feedback-capture] FeedbackWidget — Step 1/5: starting capture", {
+          captureMethod,
+          captureTarget: config.captureTarget ?? "(none)",
+          projectId: config.projectId,
+          apiUrl: config.apiUrl,
+          currentUrl: window.location.href,
         });
+
+        console.log("[feedback-capture] FeedbackWidget — Step 2/5: calling", captureMethod);
+        const t0 = performance.now();
         const canvas = config.captureTarget
           ? await captureTargetArea(config.captureTarget)
           : await captureWithDisplayMedia();
-        if (cancelled) return;
-        console.log("[feedback-capture] FeedbackWidget — Step 2: canvas received", {
+        const elapsed = Math.round(performance.now() - t0);
+
+        if (cancelled) {
+          console.warn("[feedback-capture] FeedbackWidget — Step 2/5: cancelled after capture returned");
+          return;
+        }
+
+        console.log("[feedback-capture] FeedbackWidget — Step 3/5: canvas received", {
           width: canvas?.width,
           height: canvas?.height,
+          captureTimeMs: elapsed,
+          canvasExists: !!canvas,
         });
+
+        console.log("[feedback-capture] FeedbackWidget — Step 4/5: converting canvas to dataUrl");
         const dataUrl = canvasToDataURL(canvas);
-        if (cancelled) return;
-        console.log("[feedback-capture] FeedbackWidget — Step 3: dataUrl created, opening annotate");
+        if (cancelled) {
+          console.warn("[feedback-capture] FeedbackWidget — Step 4/5: cancelled after dataUrl conversion");
+          return;
+        }
+
+        console.log("[feedback-capture] FeedbackWidget — Step 5/5: opening annotate step", {
+          dataUrlLength: dataUrl?.length,
+        });
         setScreenshotCanvas(canvas);
         setScreenshotDataUrl(dataUrl);
         setStep(STEPS.ANNOTATE);
         setIsOpen(true);
       } catch (err) {
         if (!cancelled) {
-          console.error("[feedback-capture] FeedbackWidget — capture failed", err?.message, err);
+          console.error("[feedback-capture] FeedbackWidget — capture FAILED", {
+            error: err?.message,
+            name: err?.name,
+            stack: err?.stack?.split('\n').slice(0, 5).join(' | '),
+          });
           setCaptureError(err?.message || "Capture failed");
         }
       } finally {
-        if (!cancelled) setIsCapturing(false);
+        if (!cancelled) {
+          console.log("[feedback-capture] FeedbackWidget — cleanup: isCapturing → false");
+          setIsCapturing(false);
+        }
       }
     };
 
     runCapture();
     return () => {
+      console.log("[feedback-capture] FeedbackWidget — effect cleanup: setting cancelled=true");
       cancelled = true;
     };
   }, [isCapturing]);
