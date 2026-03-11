@@ -54,6 +54,20 @@ export const loginUser = async (credentials) => {
   }
 };
 
+/** Call after login when opened by Figma plugin (URL has ?state=writeKey). Tells backend to associate token with writeKey so plugin poll gets it. */
+export const figmaComplete = async (state, access_token) => {
+  try {
+    const response = await axios.post(`${API_URL}/api/figma/complete`, {
+      state,
+      access_token,
+    });
+    return response.data;
+  } catch (error) {
+    const data = error.response?.data || {};
+    return { error: data.error || "Failed to complete Figma login" };
+  }
+};
+
 // Function to register a new user
 export const registerUser = async (userData) => {
   try {
@@ -362,12 +376,29 @@ export const activateReleaseVersions = async (projectId, versionId) => {
   }
 };
 
+// Switch project version (preview) – returns buildUrl for iframe
+export const switchProjectVersion = async (projectId, versionId, isPermanent = false) => {
+  try {
+    const response = await api.post(
+      `/api/projects/${projectId}/switch`,
+      { versionId: Number(versionId), isPermanent },
+    );
+    return response.data;
+  } catch (error) {
+    throw (
+      error.response?.data || { error: "Failed to switch version" }
+    );
+  }
+};
+
 // get project data publically
 export const getProjectDataPublically = async (projectId) => {
   try {
     const response = await api.get(`/api/projects/public/${projectId}`);
     return response.data;
   } catch (error) {
-    throw error.response?.data || { error: "Failed to get project data publically" };
+    throw (
+      error.response?.data || { error: "Failed to get project data publically" }
+    );
   }
 };
