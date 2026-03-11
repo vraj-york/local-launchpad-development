@@ -19,7 +19,7 @@ export const Routes = () => {
   const { user, loading } = useAuth();
 
   const publicRoutes = [
-    { path: "/login", element: <LoginPage /> },
+    { path: "/login", element: <LoginPage />, publicOnly: false },
     // {
     //   path: "/projects/public/:projectId",
     //   element: <PublicProjectView />,

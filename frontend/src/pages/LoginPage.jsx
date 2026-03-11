@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { googleLogin, registerUser } from "../api";
+import { googleLogin, registerUser, loginUser, figmaComplete } from "../api";
+import { isTokenExpired } from "../utils/auth";
 import {
   Card,
   CardContent,
@@ -29,6 +30,12 @@ const clientId =
   import.meta.env.VITE_GOOGLE_CLIENT_ID ||
   "516448789962-jhsndv38lfpdt30h334j8khu825fried.apps.googleusercontent.com";
 
+function getFigmaState() {
+  const params = new URLSearchParams(window.location.search);
+  const state = params.get("state");
+  return state && state.trim() ? state.trim() : null;
+}
+
 const LoginPage = () => {
   const { user, login, checkAuth } = useAuth();
   const navigate = useNavigate();
@@ -42,12 +49,39 @@ const LoginPage = () => {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [figmaState, setFigmaState] = useState(null);
+  const [figmaDone, setFigmaDone] = useState(false);
+  const [autoCompletingFigma, setAutoCompletingFigma] = useState(false);
 
   useEffect(() => {
-    if (user) {
+    setFigmaState(getFigmaState());
+  }, []);
+
+  // When redirected from Figma with ?state= and user is already logged in, send stored token to complete the flow
+  useEffect(() => {
+    const state = getFigmaState();
+    if (!state) return;
+    const token = localStorage.getItem("token");
+    if (!token || isTokenExpired(token)) return;
+    setAutoCompletingFigma(true);
+    setError("");
+    figmaComplete(state, token)
+      .then((complete) => {
+        if (complete.error) {
+          setError(complete.error);
+        } else {
+          setFigmaDone(true);
+        }
+      })
+      .catch(() => setError("Failed to connect to Figma."))
+      .finally(() => setAutoCompletingFigma(false));
+  }, []);
+
+  useEffect(() => {
+    if (user && !figmaState) {
       navigate("/dashboard");
     }
-  }, [user, navigate]);
+  }, [user, figmaState, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -58,15 +92,28 @@ const LoginPage = () => {
 
     try {
       if (isLogin) {
-        const result = await login({
-          email: credentials.email,
-          password: credentials.password,
-        });
-
-        if (result.success) {
-          navigate("/dashboard");
+        if (figmaState) {
+          const { token, user: userData } = await loginUser({
+            email: credentials.email,
+            password: credentials.password,
+          });
+          const complete = await figmaComplete(figmaState, token);
+          if (complete.error) {
+            setError(complete.error);
+          } else {
+            checkAuth();
+            setFigmaDone(true);
+          }
         } else {
-          setError(result.error);
+          const result = await login({
+            email: credentials.email,
+            password: credentials.password,
+          });
+          if (result.success) {
+            navigate("/dashboard");
+          } else {
+            setError(result.error);
+          }
         }
       } else {
         // Registration
@@ -90,7 +137,23 @@ const LoginPage = () => {
         });
 
         if (result.success) {
-          navigate("/dashboard");
+          if (figmaState) {
+            const token = localStorage.getItem("token");
+            if (token) {
+              const complete = await figmaComplete(figmaState, token);
+              if (complete.error) {
+                setError(complete.error);
+              } else {
+                setFigmaDone(true);
+              }
+            } else {
+              setError(
+                "Login succeeded but could not complete Figma connection.",
+              );
+            }
+          } else {
+            navigate("/dashboard");
+          }
         } else {
           setError(
             "Registration successful, but login failed. Please try logging in.",
@@ -124,11 +187,17 @@ const LoginPage = () => {
     try {
       const result = await googleLogin(credentialResponse.credential);
       if (result.token && result.user) {
-        // googleLogin already stores token and user in localStorage
-        // Sync the AuthContext state with the stored data
         checkAuth();
-        // Navigate to dashboard
-        navigate("/dashboard");
+        if (figmaState) {
+          const complete = await figmaComplete(figmaState, result.token);
+          if (complete.error) {
+            setError(complete.error);
+          } else {
+            setFigmaDone(true);
+          }
+        } else {
+          navigate("/dashboard");
+        }
       }
     } catch (err) {
       setError("Google Login Failed");
@@ -139,6 +208,41 @@ const LoginPage = () => {
     setError("Google Login Failed");
   };
 
+  if (figmaDone) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+        <Card className="w-full max-w-md shadow-lg">
+          <CardHeader className="space-y-1 text-center">
+            <CardTitle className="text-xl font-bold text-green-600">
+              Authentication complete
+            </CardTitle>
+            <CardDescription>
+              You can close this window and return to Figma.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+  }
+
+  if (autoCompletingFigma) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+        <Card className="w-full max-w-md shadow-lg">
+          <CardHeader className="space-y-1 text-center">
+            <div className="flex justify-center mb-4">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+            <CardTitle className="text-xl font-bold">
+              Connecting to Figma
+            </CardTitle>
+            <CardDescription>Using your existing login…</CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <GoogleOAuthProvider clientId={clientId}>
       <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
@@ -147,15 +251,17 @@ const LoginPage = () => {
             <div className="flex justify-center mb-4">
               <img
                 src="/logo.png"
-                alt="LaunchPad Logo"
+                alt="Zip Sync Logo"
                 className="w-[200px] h-auto block"
               />
             </div>
             <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
             <CardDescription>
-              {activeTab === "login"
-                ? "Enter your credentials to access your account"
-                : "Create a new account to get started"}
+              {figmaState
+                ? "Sign in to connect your Figma plugin."
+                : activeTab === "login"
+                  ? "Enter your credentials to access your account"
+                  : "Create a new account to get started"}
             </CardDescription>
           </CardHeader>
           <CardContent>
