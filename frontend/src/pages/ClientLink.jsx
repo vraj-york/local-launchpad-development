@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { fetchProjectById, toggleReleaseLock } from "@/api";
 import { useParams } from "react-router-dom";
-import { SelectActiveVersion } from "@/components/SelectActiveVersion";
+import { SelectClientLinkVersion } from "@/components/SelectClientLinkVersion";
 import { Button } from "@/components/ui/button";
 import { Lock } from "lucide-react";
 import { toast } from "sonner";
@@ -26,11 +26,13 @@ export const ClientLink = () => {
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
   const [lockConfirmOpen, setLockConfirmOpen] = useState(false);
+  const [previewBuildUrl, setPreviewBuildUrl] = useState(null);
   const { projectId } = useParams();
 
   const loadProject = useCallback(async () => {
     try {
       setLoading(true);
+      setPreviewBuildUrl(null);
       const data = await fetchProjectById(projectId);
       setPublicProject(data);
     } catch (error) {
@@ -87,6 +89,8 @@ export const ClientLink = () => {
     publicProject?.versions?.find((v) => v.isActive)?.buildUrl ??
     publicProject?.versions?.[0]?.buildUrl;
 
+  const iframeSrc = previewBuildUrl ?? activeBuildUrl;
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] text-slate-500">
@@ -112,11 +116,10 @@ export const ClientLink = () => {
                 {publicProject.name}
               </h1>
             )}
-            <SelectActiveVersion
+            <SelectClientLinkVersion
               release={releases}
               projectId={projectId}
-              onActivated={loadProject}
-              isPublic={true}
+              onSwitched={({ buildUrl }) => setPreviewBuildUrl(buildUrl)}
               compact
               darkTrigger
               selectLabel="Choose Version :"
@@ -172,14 +175,11 @@ export const ClientLink = () => {
           </div>
         </header>
         <div id="feedback-capture-area" className="flex-1 min-h-0 mt-0">
-          {activeBuildUrl ? (
+          {iframeSrc ? (
             <iframe
-              key={activeBuildUrl}
+              key={iframeSrc}
               id="previewFrame"
-              // src="/preview/"
-              // src="projects/21"
-              src={activeBuildUrl}
-              // src="http://localhost:8001/"
+              src={iframeSrc}
               width="100%"
               height="100%"
               className="block w-full h-full border-0"
