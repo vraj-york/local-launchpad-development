@@ -11,10 +11,12 @@
 /backend/projects/
 /backend/uploads/
 /backend/screenshots
+/backend/_tmp_builds/
 /frontend/node_modules/
 /frontend/build/
 /launchpad-frontend/node_modules/
 /launchpad-frontend/build/
+
 
 # Env files (secrets) – .env.example is tracked for reference
 /backend/.env

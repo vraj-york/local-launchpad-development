@@ -729,27 +729,26 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             if (!open) resetUploadForm();
           }}
         >
-          <DialogContent className="overflow-y-auto space-y-6">
+          <DialogContent className="overflow-y-auto space-y-4">
             <DialogHeader>
               <DialogTitle>Upload to Release</DialogTitle>
               <DialogDescription>
-                Upload a ZIP file to{" "}
+                Upload a ZIP file to Version {""}
                 <span className="font-medium text-slate-700">
                   {releases.find((r) => r.id.toString() === selectedRelease)
                     ?.name ?? "this release"}
                 </span>
-                . Version is optional (leave empty for auto-increment).
               </DialogDescription>
             </DialogHeader>
-            <form onSubmit={handleUpload} className="space-y-4">
-              <div className="space-y-2">
+            <form onSubmit={handleUpload} className="space-y-6">
+              <div className="space-y-1">
                 <Label htmlFor="upload-version">Version (Optional)</Label>
                 <Input
                   id="upload-version"
                   type="text"
                   value={version}
                   onChange={(e) => setVersion(e.target.value)}
-                  placeholder="e.g., 1.0.0, 1.1.0, 2.0.0"
+                  placeholder="e.g., 1.0.1, 1.0.2, 1.0.3..."
                 />
                 <p className="text-xs text-muted-foreground">
                   Leave empty for auto-increment
