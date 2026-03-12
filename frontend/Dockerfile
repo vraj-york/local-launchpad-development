@@ -6,8 +6,13 @@ WORKDIR /app
 
 ARG VITE_API_URL=http://127.0.0.1:5000
 ARG VITE_FRONTEND_URL=http://127.0.0.1:3000
+ARG VITE_MODE=production
+# Optional; empty = app uses config fallback for Google client ID
+ARG VITE_GOOGLE_CLIENT_ID=
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_FRONTEND_URL=$VITE_FRONTEND_URL
+ENV VITE_MODE=$VITE_MODE
+ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
 
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci

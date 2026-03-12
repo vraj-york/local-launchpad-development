@@ -645,9 +645,19 @@ export const runBuildSequence = async (buildContextPath, opts = {}) => {
     throw new Error(`package.json missing at ${buildContextPath}`);
   }
 
+  // Always include devDependencies so build tools (vite, webpack, etc.) are installed.
+  // Backend container sets NODE_ENV=production, which would otherwise omit devDeps.
   const installArgs = opts.fastInstall
-    ? ["install", "--prefer-offline", "--no-audit", "--no-fund", "--loglevel", "error"]
-    : ["install"];
+    ? [
+        "install",
+        "--include=dev",
+        "--prefer-offline",
+        "--no-audit",
+        "--no-fund",
+        "--loglevel",
+        "error",
+      ]
+    : ["install", "--include=dev"];
   await execa("npm", installArgs, {
     cwd: buildContextPath,
     stdio: "inherit",
