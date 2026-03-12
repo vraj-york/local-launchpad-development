@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { fetchProjectById, toggleReleaseLock } from "@/api";
 import { useParams } from "react-router-dom";
-import { SelectClientLinkVersion } from "@/components/SelectClientLinkVersion";
+// import { SelectActiveVersion } from "@/components/SelectActiveVersion";
 import { Button } from "@/components/ui/button";
 import { Lock } from "lucide-react";
 import { toast } from "sonner";
@@ -20,6 +20,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { SelectClientLinkVersion } from "@/components/SelectClientLinkVersion";
 
 export const ClientLink = () => {
   const [publicProject, setPublicProject] = useState(null);
@@ -85,11 +86,29 @@ export const ClientLink = () => {
     }
   }, [selectedReleaseId, loadProject]);
 
-  const activeBuildUrl =
+  const rawBuildUrl =
     publicProject?.versions?.find((v) => v.isActive)?.buildUrl ??
     publicProject?.versions?.[0]?.buildUrl;
 
-  const iframeSrc = previewBuildUrl ?? activeBuildUrl;
+  /**
+   * Rewrite a cross-origin build URL to a same-origin proxy path so the
+   * iframe is same-origin and html2canvas can capture its content.
+   * e.g. http://localhost:8001/path → /iframe-preview/8001/path
+   */
+  const toProxyUrl = React.useCallback((url) => {
+    if (!url) return url;
+    try {
+      const parsed = new URL(url, window.location.href);
+      if (parsed.origin === window.location.origin) return url;
+      const port = parsed.port;
+      if (!port) return url;
+      return `/iframe-preview/${port}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    } catch {
+      return url;
+    }
+  }, []);
+
+  const activeBuildUrl = React.useMemo(() => toProxyUrl(rawBuildUrl), [rawBuildUrl, toProxyUrl]);
 
   if (loading) {
     return (
@@ -99,6 +118,8 @@ export const ClientLink = () => {
       </div>
     );
   }
+
+  const iframeSrc = toProxyUrl(previewBuildUrl ?? rawBuildUrl) ?? activeBuildUrl;
 
   const isLocked = activeRelease?.isLocked ?? false;
 
@@ -119,6 +140,8 @@ export const ClientLink = () => {
             <SelectClientLinkVersion
               release={releases}
               projectId={projectId}
+              onActivated={loadProject}
+              isPublic={true}
               onSwitched={({ buildUrl }) => setPreviewBuildUrl(buildUrl)}
               compact
               darkTrigger
