@@ -27,6 +27,17 @@ import { configDotenv } from "dotenv";
 
 const execAsync = promisify(exec);
 
+/** UFW needs sudo; Docker images often have no sudo — skip to avoid noisy warnings. */
+function shouldSkipUfw() {
+  try {
+    if (fs.existsSync("/.dockerenv")) return true;
+    execSync("command -v sudo", { stdio: "ignore" });
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 function runCommand(command, cwd, options = {}) {
   return execSync(command, {
     cwd,
@@ -185,6 +196,9 @@ async function restartNginx() {
  * @param {number} port - The project's assigned port (e.g., 8001)
  */
 export const allowPortThroughFirewall = async (port) => {
+  if (shouldSkipUfw()) {
+    return false;
+  }
   try {
     // 1. Allow the specific TCP port
     const { stdout } = await execAsync(`sudo ufw allow ${port}/tcp`);
@@ -253,8 +267,8 @@ export const createProjectService = async ({ userId, body }) => {
     const maxPortProject = await prisma.project.aggregate({ _max: { port: true } });
     const port = (maxPortProject._max.port || 8000) + 1;
 
-    // --- FIX: Only run UFW on Linux ---
-    if (isLinux) {
+    // UFW only on Linux hosts with sudo (skip in Docker — no sudo; ports published by compose)
+    if (isLinux && !shouldSkipUfw()) {
       await execAsync(`sudo ufw allow ${port}/tcp`).catch(err =>
         console.warn(`[WARN] Firewall skip: ${err.message}`)
       );
