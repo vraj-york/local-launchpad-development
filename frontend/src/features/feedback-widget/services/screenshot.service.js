@@ -105,17 +105,21 @@ export const captureWithDisplayMedia = async () => {
 };
 
 /**
- * Convert all <img> (and CSS background-image) in a cloned document to inline
- * data URIs so html2canvas never needs to re-fetch them (avoids CORS / 404
- * issues when images are served from a proxied or cross-origin server).
+ * Inline all <img> in the cloned document to data URIs so html2canvas doesn't re-fetch (avoids CORS/404). When imageBaseUrl is set (iframe capture), resolve relative src against it so fetches hit iframe origin. After inlining, show the img and hide Radix-style avatar fallbacks so the screenshot shows the photo, not the fallback text.
  */
-async function inlineImages(clonedDoc) {
+async function inlineImages(clonedDoc, imageBaseUrl) {
   const imgs = clonedDoc.querySelectorAll("img");
   await Promise.all(
     Array.from(imgs).map(async (img) => {
-      if (!img.src || img.src.startsWith("data:")) return;
+      const rawSrc = img.getAttribute("src") || img.src;
+      if (!rawSrc || rawSrc.startsWith("data:")) return;
+      // When capturing an iframe, clone is in parent context so img.src resolves to parent; resolve relative src with iframe base so fetches hit /iframe-preview/<port>/...
+      const urlToFetch =
+        imageBaseUrl && !rawSrc.startsWith("http")
+          ? new URL(rawSrc, imageBaseUrl).href
+          : (img.src || rawSrc);
       try {
-        const res = await fetch(img.src, { mode: "cors", credentials: "same-origin" });
+        const res = await fetch(urlToFetch, { mode: "cors", credentials: "same-origin" });
         if (!res.ok) return;
         const blob = await res.blob();
         const dataUrl = await new Promise((resolve) => {
@@ -124,6 +128,32 @@ async function inlineImages(clonedDoc) {
           r.readAsDataURL(blob);
         });
         img.src = dataUrl;
+        // Ensure inlined image is visible and paints on top of any fallback (e.g. Radix Avatar shows initial when img fails)
+        img.style.setProperty("opacity", "1");
+        img.style.setProperty("visibility", "visible");
+        img.style.setProperty("display", "block");
+        img.style.setProperty("position", "relative");
+        img.style.setProperty("z-index", "1");
+        const avatarRoot = img.closest("[data-slot='avatar']");
+        if (avatarRoot) {
+          const fallback = avatarRoot.querySelector("[data-slot='avatar-fallback']");
+          if (fallback) fallback.style.setProperty("display", "none");
+        }
+        // Iframe apps may use different markup; hide sibling that looks like avatar fallback (short text or single name in span/div, inside avatar-like container)
+        const parent = img.parentElement;
+        if (parent) {
+          const parentClass = (parent.className || "") + (parent.getAttribute("class") || "");
+          const looksLikeAvatar = /rounded-full|avatar|size-8|size-10|w-8|w-10|h-8|h-10/.test(parentClass);
+          for (const s of parent.children) {
+            if (s === img) continue;
+            const text = (s.textContent || "").trim();
+            const oneWord = /^[a-zA-Z]+$/.test(text) && text.length >= 1 && text.length <= 20;
+            if ((s.tagName === "SPAN" || s.tagName === "DIV") && (text.length <= 2 || (looksLikeAvatar && oneWord))) {
+              s.style.setProperty("display", "none");
+              break;
+            }
+          }
+        }
       } catch {
         // leave original src; html2canvas will render a blank box
       }
@@ -131,13 +161,14 @@ async function inlineImages(clonedDoc) {
   );
 }
 
-const getBaseOptions = (useForeignObject = true) => ({
+const getBaseOptions = (useForeignObject = true, imageBaseUrl = undefined) => ({
   allowTaint: true,
   useCORS: true,
   scale: window.devicePixelRatio || 1,
   foreignObjectRendering: useForeignObject,
   logging: false,
-  onclone: (_doc, el) => inlineImages(el.ownerDocument ?? _doc),
+  // Return Promise so html2canvas waits for images to be inlined before rendering (fixes profile/avatar images missing in screenshot)
+  onclone: (_doc, el) => inlineImages(el.ownerDocument ?? _doc, imageBaseUrl),
 });
 
 async function captureWithHtml2Canvas(element, options) {
@@ -151,7 +182,8 @@ async function captureWithHtml2Canvas(element, options) {
   };
   console.log(`${LOG} html2canvas — Step 1/3: starting capture`, elInfo);
 
-  const mergedOpts = { ...getBaseOptions(true), ...options };
+  const imageBaseUrl = options?.imageBaseUrl;
+  const mergedOpts = { ...getBaseOptions(true, imageBaseUrl), ...options };
   console.log(`${LOG} html2canvas — Step 1/3: merged options`, {
     width: mergedOpts.width,
     height: mergedOpts.height,
@@ -161,6 +193,7 @@ async function captureWithHtml2Canvas(element, options) {
     foreignObjectRendering: mergedOpts.foreignObjectRendering,
     allowTaint: mergedOpts.allowTaint,
     useCORS: mergedOpts.useCORS,
+    imageBaseUrl: mergedOpts.imageBaseUrl != null ? '(set)' : '(none)',
   });
 
   try {
@@ -175,7 +208,7 @@ async function captureWithHtml2Canvas(element, options) {
     if (msg.includes('ForeignObject') || msg.includes('foreign') || msg.includes('security')) {
       console.warn(`${LOG} html2canvas — Step 2/3: retrying WITHOUT foreignObjectRendering`);
       try {
-        const fallbackOpts = { ...getBaseOptions(false), ...options };
+        const fallbackOpts = { ...getBaseOptions(false, imageBaseUrl), ...options };
         const canvas = await html2canvas(element, fallbackOpts);
         console.log(`${LOG} html2canvas — Step 3/3: fallback success`, { canvasWidth: canvas.width, canvasHeight: canvas.height });
         return canvas;
@@ -257,7 +290,10 @@ async function captureIframeViewport(iframe) {
   console.log(`${LOG} captureIframeViewport — Step 5/6: viewport`, { viewportW, viewportH, scrollX, scrollY });
 
   console.log(`${LOG} captureIframeViewport — Step 6/6: running html2canvas on iframe documentElement`);
+  // Resolve iframe images relative to iframe's origin so inlined fetches hit /iframe-preview/<port>/... not parent origin
+  const imageBaseUrl = iframeDoc.baseURI || (iframeWindow.location.origin + (iframeWindow.location.pathname || "/"));
   const canvas = await captureWithHtml2Canvas(iframeRoot, {
+    imageBaseUrl,
     width: viewportW,
     height: viewportH,
     windowWidth: iframeWindow.innerWidth,

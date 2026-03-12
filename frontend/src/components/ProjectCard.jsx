@@ -20,8 +20,9 @@ const ProjectCard = ({ project }) => {
 
   const activeVersionUrl = project ? project.versions[0]?.buildUrl : null;
   const activeVersionNumber = project ? project.versions[0]?.version : null;
+  // Use current origin so the link matches how the user opened the app (localhost vs 127.0.0.1)
   const clientUrl = project
-    ? `${config.FRONTEND_URL}/projects/public/${project.id}`
+    ? `${typeof window !== "undefined" ? window.location.origin : config.FRONTEND_URL}/projects/public/${project.id}`
     : null;
 
   const status = project.status || "Active";
