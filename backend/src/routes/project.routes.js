@@ -1082,7 +1082,7 @@ window.markerConfig = {
           data: {
             projectId,
             version: versionNumber,
-            zipFilePath: req.file.path,
+            gitTag: req.file.path,
             buildUrl,
             isActive: true,
             uploadedBy: userId

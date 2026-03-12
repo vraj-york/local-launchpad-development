@@ -635,13 +635,20 @@ export const autoGenerateVersion = async (releaseId) => {
  * Runs npm install and npm run build within the provided temp directory.
  * Streams output to the main console for real-time debugging.
  */
-export const runBuildSequence = async (buildContextPath) => {
+/**
+ * @param {string} buildContextPath
+ * @param {{ fastInstall?: boolean }} opts - fastInstall uses offline-preferring install (preview/switch only)
+ */
+export const runBuildSequence = async (buildContextPath, opts = {}) => {
   const pkgPath = path.join(buildContextPath, "package.json");
   if (!(await fs.pathExists(pkgPath))) {
     throw new Error(`package.json missing at ${buildContextPath}`);
   }
 
-  await execa("npm", ["install"], {
+  const installArgs = opts.fastInstall
+    ? ["install", "--prefer-offline", "--no-audit", "--no-fund", "--loglevel", "error"]
+    : ["install"];
+  await execa("npm", installArgs, {
     cwd: buildContextPath,
     stdio: "inherit",
   });
@@ -768,6 +775,7 @@ export const uploadReleaseVersionService = async (
     const validatedProjectName = validateProjectName(project.name);
 
     const gitWorkingDir = sourceRoot;
+    console.log('gitWorkingDir:', gitWorkingDir);
     const permanentGitDir = path.join(projectFolder, ".git");
     const localGitDir = path.join(gitWorkingDir, ".git");
 
@@ -777,6 +785,7 @@ export const uploadReleaseVersionService = async (
     }
 
     const remoteUrl = `https://${githubCreds.githubUsername}:${githubCreds.githubToken}@github.com/${githubCreds.githubUsername}/${validatedProjectName}.git`;
+  console.log('remoteUrl:', remoteUrl);
     /* Initialize repo if first time */
     if (!fs.existsSync(localGitDir)) {
       runCommand("git init", gitWorkingDir);
@@ -792,6 +801,7 @@ export const uploadReleaseVersionService = async (
         validatedProjectName,
         githubCreds,
       );
+      console.log('repoExists:', repoExists);
       if (!repoExists) {
         await createGithubRepo(validatedProjectName, githubCreds);
       }
@@ -866,7 +876,8 @@ export const uploadReleaseVersionService = async (
           version,
           buildUrl,
           isActive: true,
-          zipFilePath: tag,
+          gitTag: tag,
+          zipFilePath: tag, // legacy column; same value so DB row stays consistent
           uploadedBy: userId,
         },
       });

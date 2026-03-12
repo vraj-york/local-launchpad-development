@@ -9,7 +9,7 @@ import axios from "axios";
 import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import fsExtra from "fs-extra";
 import os from 'os';
 import { execa } from "execa";
@@ -17,10 +17,12 @@ import fs from "fs-extra";
 import { startProjectServer } from "../projectServers.js";
 import {
   runBuildSequence,
+  reloadNginx as reloadNginxRelease,
   createGithubRepo,
   addGithubCollaborator,
   checkRepoExists,
 } from "./release.service.js";
+import { parseGitRepoPath } from "./github.service.js";
 import { configDotenv } from "dotenv";
 
 const execAsync = promisify(exec);
@@ -655,8 +657,8 @@ export const getProjectByIdService = async (projectId, user = null) => {
 };
 
 /**
- * Activate a project version: updates DB (isActive) only.
- * projects/ folder is only updated at upload time.
+ * Activate a project version: checkout version tag, build, copy dist/build into
+ * projects/{projectPath} (same as upload release), reload nginx, then set isActive in DB.
  */
 export async function activateProjectVersionService({
   projectId,
@@ -665,39 +667,186 @@ export async function activateProjectVersionService({
 }) {
   await assertProjectAccess(projectId, user);
 
-  let versionRow;
-  await prisma.$transaction(async (tx) => {
-    const version = await tx.projectVersion.findFirst({
-      where: { id: versionId, projectId },
-      select: { id: true, isActive: true, buildUrl: true, version: true },
-    });
-
-    if (!version) {
-      throw new ApiError(404, "Version not found");
-    }
-
-    if (version.isActive) {
-      throw new ApiError(400, "Version is already active");
-    }
-
-    await tx.projectVersion.updateMany({
-      where: { projectId },
-      data: { isActive: false },
-    });
-
-    await tx.projectVersion.update({
-      where: { id: versionId },
-      data: { isActive: true },
-    });
-
-    versionRow = { buildUrl: version.buildUrl, version: version.version };
+  const version = await prisma.projectVersion.findFirst({
+    where: { id: versionId, projectId },
+    select: {
+      id: true,
+      isActive: true,
+      buildUrl: true,
+      version: true,
+      gitTag: true,
+      zipFilePath: true, // legacy; fallback if gitTag empty
+    },
   });
 
-  return {
-    message: "Version activated successfully",
-    version: versionRow.version,
-    buildUrl: versionRow.buildUrl,
-  };
+  if (!version) {
+    throw new ApiError(404, "Version not found");
+  }
+  if (version.isActive) {
+    throw new ApiError(400, "Version is already active");
+  }
+  const tag =
+    (version.gitTag && version.gitTag.trim()) ||
+    (version.zipFilePath && version.zipFilePath.trim());
+  if (!tag) {
+    throw new ApiError(
+      400,
+      "Version has no gitTag (or legacy zipFilePath); cannot checkout. Re-upload or merge from Cursor first.",
+    );
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: {
+      id: true,
+      projectPath: true,
+      port: true,
+      githubToken: true,
+      gitRepoPath: true,
+    },
+  });
+  if (!project?.projectPath?.trim()) {
+    throw new ApiError(400, "Project has no projectPath");
+  }
+
+  const backendRoot = getBackendRoot();
+  const projectsDir = getProjectsDir();
+  const gitDir = path.join(projectsDir, ".git");
+  const projectRoot = path.join(backendRoot, project.projectPath);
+  const worktreeDir = path.join(
+    backendRoot,
+    "_tmp_builds",
+    `activate_${projectId}_${Date.now()}`,
+  );
+
+  const lock = await prisma.project.updateMany({
+    where: { id: projectId, isUploading: false },
+    data: { isUploading: true },
+  });
+  if (lock.count === 0) {
+    throw new ApiError(409, "Upload or activate already in progress for this project");
+  }
+
+  try {
+    let buildOutputPath;
+
+    if (fs.existsSync(gitDir)) {
+      await fs.ensureDir(path.dirname(worktreeDir));
+      await fs.remove(worktreeDir).catch(() => {});
+      await fs.ensureDir(worktreeDir);
+      runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
+      runCommand(
+        `git --git-dir="${gitDir}" worktree add "${worktreeDir}" "${tag}"`,
+        backendRoot,
+      );
+      const sourceRoot = findProjectRoot(worktreeDir);
+      buildOutputPath = await runBuildSequence(sourceRoot);
+      // Do NOT remove worktree yet — buildOutputPath is inside worktreeDir;
+      // copy to projectRoot first, then detach worktree below.
+    } else if (project.githubToken?.trim() && project.gitRepoPath?.trim()) {
+      const parsed = parseGitRepoPath(project.gitRepoPath);
+      if (!parsed) {
+        throw new ApiError(400, "Invalid gitRepoPath; cannot clone for activate");
+      }
+      const { owner, repo } = parsed;
+      const token = project.githubToken.trim();
+      const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+      await fs.ensureDir(worktreeDir);
+      try {
+        execFileSync("git", ["clone", cloneUrl, "."], {
+          cwd: worktreeDir,
+          encoding: "utf8",
+          stdio: "pipe",
+          timeout: 300000,
+        });
+        try {
+          execFileSync(
+            "git",
+            ["fetch", "origin", `refs/tags/${tag}:refs/tags/${tag}`],
+            { cwd: worktreeDir, encoding: "utf8", stdio: "pipe", timeout: 120000 },
+          );
+        } catch {
+          execFileSync("git", ["fetch", "origin", "tag", tag], {
+            cwd: worktreeDir,
+            encoding: "utf8",
+            stdio: "pipe",
+            timeout: 120000,
+          });
+        }
+        execFileSync("git", ["checkout", tag], {
+          cwd: worktreeDir,
+          encoding: "utf8",
+          stdio: "pipe",
+          timeout: 60000,
+        });
+        const sourceRoot = findProjectRoot(worktreeDir);
+        buildOutputPath = await runBuildSequence(sourceRoot);
+        // Do not remove worktreeDir here — same as worktree path; copy uses buildOutputPath inside it.
+      } catch (e) {
+        await fs.remove(worktreeDir).catch(() => {});
+        throw e;
+      }
+    } else {
+      throw new ApiError(
+        503,
+        "No local git repo and no GitHub credentials; deploy a release first or set gitRepoPath + githubToken.",
+      );
+    }
+
+    // Copy deploy files while build output still exists (it lives under worktreeDir).
+    await fs.ensureDir(path.dirname(projectRoot));
+    await fs.emptyDir(projectRoot);
+    await fs.copy(buildOutputPath, projectRoot);
+
+    // Now safe to remove worktree / clone dir — buildOutputPath was inside it.
+    if (fs.existsSync(gitDir) && fs.existsSync(worktreeDir)) {
+      try {
+        runCommand(
+          `git --git-dir="${gitDir}" worktree remove "${worktreeDir}" --force`,
+          backendRoot,
+        );
+      } catch {
+        await fs.remove(worktreeDir).catch(() => {});
+      }
+    } else {
+      await fs.remove(worktreeDir).catch(() => {});
+    }
+
+    await reloadNginxRelease();
+
+    const domain = process.env.BASE_DOMAIN || "localhost";
+    const liveBuildUrl =
+      project.port != null
+        ? `http://${domain}:${project.port}`
+        : version.buildUrl;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.projectVersion.updateMany({
+        where: { projectId },
+        data: { isActive: false },
+      });
+      await tx.projectVersion.update({
+        where: { id: versionId },
+        data: {
+          isActive: true,
+          buildUrl: liveBuildUrl,
+        },
+      });
+    });
+
+    return {
+      message: "Version activated; projects folder updated from tag",
+      version: version.version,
+      buildUrl: liveBuildUrl,
+      tag,
+    };
+  } finally {
+    await fs.remove(worktreeDir).catch(() => {});
+    await prisma.project.update({
+      where: { id: projectId },
+      data: { isUploading: false },
+    });
+  }
 }
 
 /**
@@ -732,7 +881,7 @@ export async function setReleaseStatusService({ projectId, releaseId, user }) {
     });
   });
 }
-/*GET LIVE URL - always reflects projects/ folder (set at last upload only; switch version is UI preview only) */
+/*GET LIVE URL - reflects projects/ folder (updated on upload release and on activate version from tag) */
 export async function getProjectLiveUrlService({ projectId, user }) {
   await assertProjectAccess(projectId, user);
 
@@ -892,17 +1041,31 @@ const PREVIEW_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 
 // Stored next to serve/ so express.static(serve) does not expose it
 const PREVIEW_META_FILE = ".preview-meta.json";
+/** Skip full cleanupStalePreviews scan if last run was within this window (ms) */
+const PREVIEW_CLEANUP_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const PREVIEW_LAST_CLEANUP_FILE = ".last-cleanup-at";
 
 /**
  * Delete stale preview dirs under _preview/ after PREVIEW_TTL_MS.
  * Uses .preview-meta.json { createdAt } next to each project dir when present; else dir mtime.
  * Call periodically and at start of switchProjectVersion.
  */
-export async function cleanupStalePreviews() {
+export async function cleanupStalePreviews(force = false) {
   const backendRoot = getBackendRoot();
   const previewRoot = path.join(backendRoot, "_preview");
   if (!fs.existsSync(previewRoot)) return;
   const now = Date.now();
+  if (!force) {
+    const stampPath = path.join(previewRoot, PREVIEW_LAST_CLEANUP_FILE);
+    try {
+      if (await fs.pathExists(stampPath)) {
+        const last = Number(await fs.readFile(stampPath, "utf8"));
+        if (Number.isFinite(last) && now - last < PREVIEW_CLEANUP_MIN_INTERVAL_MS) {
+          return;
+        }
+      }
+    } catch (_) { /* run cleanup */ }
+  }
   try {
     const entries = await fs.readdir(previewRoot);
     for (const name of entries) {
@@ -941,6 +1104,13 @@ export async function cleanupStalePreviews() {
   } catch (e) {
     console.warn("[cleanupStalePreviews]", e.message);
   }
+  try {
+    await fs.writeFile(
+      path.join(previewRoot, PREVIEW_LAST_CLEANUP_FILE),
+      String(now),
+      "utf8",
+    );
+  } catch (_) { /* ignore */ }
 }
 
 /**
@@ -971,17 +1141,22 @@ export const switchProjectVersion = async (
   if (byId) {
     const versionRow = await prisma.projectVersion.findFirst({
       where: { id: idNum, projectId: Number(projectId) },
-      select: { zipFilePath: true, version: true },
+      select: { gitTag: true, zipFilePath: true, version: true },
     });
     if (!versionRow) {
       throw new ApiError(404, "Version not found");
     }
-    tag = versionRow.zipFilePath;
+    tag =
+      (versionRow.gitTag && versionRow.gitTag.trim()) ||
+      (versionRow.zipFilePath && versionRow.zipFilePath.trim());
+    if (!tag) {
+      throw new ApiError(400, "Version has no git tag");
+    }
     versionLabel = versionRow.version;
   } else {
     tag = String(versionIdOrTag);
     const versionRow = await prisma.projectVersion.findFirst({
-      where: { projectId, zipFilePath: tag },
+      where: { projectId, gitTag: tag },
       select: { version: true },
     });
     versionLabel = versionRow?.version ?? tag;
@@ -1000,6 +1175,32 @@ export const switchProjectVersion = async (
   const previewDir = path.join(backendRoot, "_preview", `project_${projectId}`);
   const previewRepo = path.join(previewDir, "repo");
   const previewServe = path.join(previewDir, "serve");
+  const metaPath = path.join(previewDir, PREVIEW_META_FILE);
+
+  // Cache hit: same tag already built under serve/ — skip worktree + npm + build
+  try {
+    if (await fs.pathExists(previewServe)) {
+      const serveEntries = await fs.readdir(previewServe).catch(() => []);
+      if (serveEntries.length > 0 && (await fs.pathExists(metaPath))) {
+        const meta = JSON.parse(await fs.readFile(metaPath, "utf8"));
+        if (meta && meta.tag === tag) {
+          await fs.writeFile(
+            metaPath,
+            JSON.stringify({ createdAt: Date.now(), tag }),
+            "utf8",
+          );
+          const domain = process.env.BASE_DOMAIN || "localhost";
+          const projectUrl = `http://${domain}:${project.port}`;
+          return {
+            message: "Preview ready (cached). Same URL; refresh to see it.",
+            version: versionLabel,
+            buildUrl: `${projectUrl}?preview=1`,
+            cached: true,
+          };
+        }
+      }
+    }
+  } catch (_) { /* cache miss; continue with full build */ }
 
   try {
     await cleanupStalePreviews();
@@ -1011,14 +1212,16 @@ export const switchProjectVersion = async (
     runCommand(`git --git-dir="${gitDir}" worktree add "${previewRepo}" "${tag}"`, backendRoot);
 
     const sourceRoot = findProjectRoot(previewRepo);
-    const buildOutputPath = await runBuildSequence(sourceRoot);
+    const buildOutputPath = await runBuildSequence(sourceRoot, {
+      fastInstall: true,
+    });
     await fs.ensureDir(previewServe);
     await fs.emptyDir(previewServe);
     await fs.copy(buildOutputPath, previewServe);
     // Marker for TTL cleanup (1 hour); kept beside serve/ so it is not served as static
     await fs.writeFile(
       path.join(previewDir, PREVIEW_META_FILE),
-      JSON.stringify({ createdAt: Date.now() }),
+      JSON.stringify({ createdAt: Date.now(), tag }),
       "utf8"
     );
 
