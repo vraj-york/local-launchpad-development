@@ -377,17 +377,19 @@ export const activateReleaseVersions = async (projectId, versionId) => {
 };
 
 // Switch project version (preview) – returns buildUrl for iframe
-export const switchProjectVersion = async (projectId, versionId, isPermanent = false) => {
+export const switchProjectVersion = async (
+  projectId,
+  versionId,
+  isPermanent = false,
+) => {
   try {
-    const response = await api.post(
-      `/api/projects/${projectId}/switch`,
-      { versionId: Number(versionId), isPermanent },
-    );
+    const response = await api.post(`/api/projects/${projectId}/switch`, {
+      versionId: Number(versionId),
+      isPermanent,
+    });
     return response.data;
   } catch (error) {
-    throw (
-      error.response?.data || { error: "Failed to switch version" }
-    );
+    throw error.response?.data || { error: "Failed to switch version" };
   }
 };
 

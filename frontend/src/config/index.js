@@ -23,8 +23,8 @@
 
 const config = {
     // Backend API URL - where the frontend sends all API requests
-    API_URL: import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000',
-    FRONTEND_URL: import.meta.env.VITE_FRONTEND_URL || 'http://127.0.0.1:5173',
+    API_URL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
+    FRONTEND_URL: import.meta.env.VITE_FRONTEND_URL || 'http://localhost:5173',
 
     // Current environment (development/production)
     NODE_ENV: import.meta.env.MODE || 'development',
