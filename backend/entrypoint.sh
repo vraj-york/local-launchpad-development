@@ -13,7 +13,7 @@ fi
 # HTTPS: generate ssl.conf when SSL_DOMAIN is set and certs exist (e.g. /etc/letsencrypt from host)
 if [ -n "$SSL_DOMAIN" ] && [ -f "/etc/letsencrypt/live/${SSL_DOMAIN}/fullchain.pem" ]; then
   cat > /app/nginx-configs/ssl.conf << EOF
-# Generated for SSL_DOMAIN=${SSL_DOMAIN} — / -> frontend, /api -> backend
+# Generated for SSL_DOMAIN=${SSL_DOMAIN} — / -> frontend, /api -> backend, /iframe-preview -> backend (same-origin for html2canvas)
 server {
     listen 443 ssl;
     server_name ${SSL_DOMAIN};
@@ -21,6 +21,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/${SSL_DOMAIN}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
+    client_max_body_size 1024m;
 
     location /api/ {
         proxy_pass http://127.0.0.1:5000/api/;
@@ -35,6 +36,14 @@ server {
     }
     location /api {
         proxy_pass http://127.0.0.1:5000/api;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    location /iframe-preview/ {
+        proxy_pass http://127.0.0.1:5000/iframe-preview/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
