@@ -7,6 +7,7 @@ import authRoutes from "./routes/auth.routes.js";
 import projectRoutes from "./routes/project.routes.js";
 import releaseRoutes from "./routes/release.routes.js";
 import errorMiddleware from "./middleware/error.middleware.js";
+import { iframeProxyMiddleware } from "./middleware/iframeProxy.js";
 import roadmapRoutes from "./routes/roadmap.route.js";
 import feedbackRoutes from "./routes/feedback.routes.js";
 import figmaRoutes, { figmaPendingByWriteKey } from "./routes/figma.routes.js";
@@ -35,6 +36,9 @@ app.use((req, res, next) => {
 });
 app.use(cors());
 app.use(express.json({limit: '1024mb'}));
+
+// Iframe preview proxy: /iframe-preview/<port>/* → localhost:<port> (same-origin for html2canvas)
+app.use(iframeProxyMiddleware);
 
 app.use("/apps", express.static(getProjectsDir()));
 // Figma plugin: GET /login redirects to frontend /login?state=writeKey
