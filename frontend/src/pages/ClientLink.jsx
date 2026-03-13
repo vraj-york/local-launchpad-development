@@ -108,7 +108,10 @@ export const ClientLink = () => {
     }
   }, []);
 
-  const activeBuildUrl = React.useMemo(() => toProxyUrl(rawBuildUrl), [rawBuildUrl, toProxyUrl]);
+  const activeBuildUrl = React.useMemo(
+    () => toProxyUrl(rawBuildUrl),
+    [rawBuildUrl, toProxyUrl],
+  );
 
   if (loading) {
     return (
@@ -119,7 +122,8 @@ export const ClientLink = () => {
     );
   }
 
-  const iframeSrc = toProxyUrl(previewBuildUrl ?? rawBuildUrl) ?? activeBuildUrl;
+  const iframeSrc =
+    toProxyUrl(previewBuildUrl ?? rawBuildUrl) ?? activeBuildUrl;
 
   const isLocked = activeRelease?.isLocked ?? false;
 
@@ -207,8 +211,9 @@ export const ClientLink = () => {
               height="100%"
               className="block w-full h-full border-0"
               allow="display-capture"
-              sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-              style={{ minHeight: "calc(100vh - 2.5rem)" }}
+              // sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+              // style={{ minHeight: "calc(100vh - 2.5rem)" }}
+              style={{ height: "100vh" }}
               title="Build Preview"
             />
           ) : null}

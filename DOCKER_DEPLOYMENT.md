@@ -31,7 +31,7 @@ Copy **`/.env.example`** to **`/.env`** in the repo root for Docker. For non-Doc
 | **Where config is read** | **Repo root** `.env` (same folder as `docker-compose.yml`) | **Backend:** `backend/.env` — **Frontend:** `frontend/.env` (or `.env.local`) |
 | **Database** | **Production:** Supabase (set `DATABASE_URL` in root `.env`; no `db` container). **Local:** optional `db` container (`--profile with-db`) or existing Postgres. | Your **existing** Postgres (local or remote). Credentials in `backend/.env` as `DATABASE_URL`. |
 | **Backend env** | Set in `docker-compose.yml` + repo root `.env` (e.g. `DATABASE_URL` from Supabase or `POSTGRES_*` for local Docker DB). | Read from `backend/.env` (e.g. `DATABASE_URL`, `PORT`, `JWT_SECRET`). |
-| **Frontend env** | Baked at **build time** from repo root `.env`: `VITE_API_URL`, `VITE_FRONTEND_URL`. | Read from `frontend/.env`: `VITE_API_URL`, etc. |
+| **Frontend env** | Baked at **build time** from repo root `.env`: `VITE_API_URL`, `VITE_FRONTEND_URL`, `VITE_MODE`, `VITE_GOOGLE_CLIENT_ID`. | Read from `frontend/.env`: `VITE_API_URL`, etc. |
 
 **Summary:**  
 - **Docker** → use **repo root** `.env`. Production: `DATABASE_URL` = Supabase (no `db` container). Local: optional `db` service (`--profile with-db`) or existing Postgres.  
@@ -99,13 +99,15 @@ To use your **existing** Postgres (same DB as when you run the app normally) so 
 | `POSTGRES_DB` | db, backend | Database name (default: zipsync) |
 | `VITE_API_URL` | frontend (build) | URL the **browser** uses to call the API (e.g. http://localhost:5000 or https://api.yourdomain.com) |
 | `VITE_FRONTEND_URL` | frontend (build) | Frontend base URL (e.g. http://localhost:3000) |
+| `VITE_MODE` | frontend (build) | Set to `production` so `frontend/src/config` treats the app as production (default in compose). |
+| `VITE_GOOGLE_CLIENT_ID` | frontend (build) | Google OAuth client ID for login; optional—empty uses app fallback. |
 | `JWT_SECRET` | backend | Secret for JWT (set in production) |
 | `BASE_URL` | backend | Backend base URL for generated links |
 | `NGINX_BASE_DOMAIN` | backend | Base domain for project subdomains (see INSTANCE_SETUP.md) |
 | `NGINX_UPSTREAM_HOST` | (optional) | Only if you use a **separate** nginx container; otherwise nginx runs **inside** backend and proxies to `localhost:<port>`. |
 | `PROJECT_PORT_END` | docker-compose | Last port in the published project port range (default 8100 → 8001–8100). Only needed for direct host access; nginx uses the Docker network. Increase if you have many projects (e.g. 8999). |
 
-For production, set `VITE_API_URL` and `VITE_FRONTEND_URL` to your public URLs **before** building the frontend image (e.g. in `.env` when running `docker compose build`).
+For production, set `VITE_API_URL`, `VITE_FRONTEND_URL`, and optionally `VITE_GOOGLE_CLIENT_ID`, **before** building the frontend image (e.g. in `.env` when running `docker compose build --no-cache frontend`). `VITE_MODE` defaults to `production` in compose.
 
 ## Nginx only inside backend (no separate nginx service)
 

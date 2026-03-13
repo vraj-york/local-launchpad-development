@@ -27,10 +27,10 @@ const config = {
     FRONTEND_URL: import.meta.env.VITE_FRONTEND_URL || 'http://localhost:5173',
 
     // Current environment (development/production)
-    NODE_ENV: import.meta.env.MODE || 'development',
+    NODE_ENV: import.meta.env.VITE_MODE || 'development',
 
     // Helper to check if running in production
-    isProduction: import.meta.env.MODE === 'production',
+    isProduction: import.meta.env.VITE_MODE === 'production',
     GOOGLE_CLIENT_ID: import.meta.env.VITE_GOOGLE_CLIENT_ID || "516448789962-jhsndv38lfpdt30h334j8khu825fried.apps.googleusercontent.com",
 };
 

@@ -282,29 +282,42 @@ async function captureIframeViewport(iframe) {
     );
   }
 
-  console.log(`${LOG} captureIframeViewport — Step 5/6: computing viewport dimensions`);
+  console.log(`${LOG} captureIframeViewport — Step 5/6: computing viewport and document dimensions`);
   const viewportW = Math.max(1, Math.floor(iframe.clientWidth || iframeWindow.innerWidth));
   const viewportH = Math.max(1, Math.floor(iframe.clientHeight || iframeWindow.innerHeight));
   const scrollX = iframeWindow.scrollX ?? iframeWindow.pageXOffset ?? 0;
   const scrollY = iframeWindow.scrollY ?? iframeWindow.pageYOffset ?? 0;
-  console.log(`${LOG} captureIframeViewport — Step 5/6: viewport`, { viewportW, viewportH, scrollX, scrollY });
+  // Full document size so we capture everything, then crop to visible viewport
+  const docScrollWidth = Math.max(iframeRoot.scrollWidth, iframeWindow.innerWidth, viewportW);
+  const docScrollHeight = Math.max(iframeRoot.scrollHeight, iframeWindow.innerHeight, viewportH);
+  console.log(`${LOG} captureIframeViewport — Step 5/6: viewport`, { viewportW, viewportH, scrollX, scrollY, docScrollWidth, docScrollHeight });
 
-  console.log(`${LOG} captureIframeViewport — Step 6/6: running html2canvas on iframe documentElement`);
+  console.log(`${LOG} captureIframeViewport — Step 6/6: running html2canvas on full iframe document, then cropping to visible viewport`);
   // Resolve iframe images relative to iframe's origin so inlined fetches hit /iframe-preview/<port>/... not parent origin
   const imageBaseUrl = iframeDoc.baseURI || (iframeWindow.location.origin + (iframeWindow.location.pathname || "/"));
-  const canvas = await captureWithHtml2Canvas(iframeRoot, {
+  const scale = window.devicePixelRatio || 1;
+  // Capture full document (no scroll offset) so we get the entire page
+  const fullCanvas = await captureWithHtml2Canvas(iframeRoot, {
     imageBaseUrl,
-    width: viewportW,
-    height: viewportH,
-    windowWidth: iframeWindow.innerWidth,
-    windowHeight: iframeWindow.innerHeight,
-    x: 0,
-    y: 0,
-    scrollX,
-    scrollY,
+    width: docScrollWidth,
+    height: docScrollHeight,
+    windowWidth: docScrollWidth,
+    windowHeight: docScrollHeight,
+    scrollX: 0,
+    scrollY: 0,
   });
-  console.log(`${LOG} captureIframeViewport — Step 6/6: done`, { canvasWidth: canvas.width, canvasHeight: canvas.height });
-  return canvas;
+  // Crop to the currently visible viewport: (scrollX, scrollY) with size (viewportW, viewportH)
+  const srcX = Math.min(scrollX * scale, Math.max(0, fullCanvas.width - viewportW * scale));
+  const srcY = Math.min(scrollY * scale, Math.max(0, fullCanvas.height - viewportH * scale));
+  const srcW = Math.min(viewportW * scale, fullCanvas.width - srcX);
+  const srcH = Math.min(viewportH * scale, fullCanvas.height - srcY);
+  const croppedCanvas = document.createElement("canvas");
+  croppedCanvas.width = viewportW * scale;
+  croppedCanvas.height = viewportH * scale;
+  const ctx = croppedCanvas.getContext("2d");
+  ctx.drawImage(fullCanvas, srcX, srcY, srcW, srcH, 0, 0, croppedCanvas.width, croppedCanvas.height);
+  console.log(`${LOG} captureIframeViewport — Step 6/6: done`, { canvasWidth: croppedCanvas.width, canvasHeight: croppedCanvas.height });
+  return croppedCanvas;
 }
 
 export const captureFullPage = async () => {
