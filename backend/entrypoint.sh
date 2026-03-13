@@ -50,7 +50,21 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
+    location /__iframe_backend {
+        internal;
+        rewrite ^/__iframe_backend(.*)\$ \$1 break;
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Referer \$http_referer;
+    }
     location / {
+        if (\$iframe_referer = 1) {
+            rewrite ^ /__iframe_backend\$request_uri last;
+        }
         proxy_pass http://frontend:80/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
