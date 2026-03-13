@@ -11,6 +11,7 @@ import {
   createTag,
   createBranch,
 } from "./github.service.js";
+import config from "../config/index.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import {
   runBuildSequence,
@@ -205,7 +206,7 @@ console.log('buildOutputPath:', buildOutputPath);
 
       await reloadNginx();
 
-      const domain = process.env.BASE_DOMAIN || "localhost";
+      const domain = config.getBuildUrlHost();
       const buildUrl = `http://${domain}:${project.port}`;
 
       newVersion = await prisma.$transaction(async (tx) => {

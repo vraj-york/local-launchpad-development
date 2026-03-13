@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 import ApiError from "../utils/apiError.js";
 import { createRoadmapWithItems } from "./roadmap.service.js";
 import { fetchProjectJiraTickets } from "../utils/jiraIntegration.js";
+import config from "../config/index.js";
 import { getBackendRoot, getProjectsDir, getNginxConfigsDir, getNginxBaseDomain, getNginxUpstreamHost } from "../utils/instanceRoot.js";
 import axios from "axios";
 import path from "path";
@@ -828,7 +829,7 @@ export async function activateProjectVersionService({
 
     await reloadNginxRelease();
 
-    const domain = process.env.BASE_DOMAIN || "localhost";
+    const domain = config.getBuildUrlHost();
     const liveBuildUrl =
       project.port != null
         ? `http://${domain}:${project.port}`
@@ -1203,7 +1204,7 @@ export const switchProjectVersion = async (
             JSON.stringify({ createdAt: Date.now(), tag }),
             "utf8",
           );
-          const domain = process.env.BASE_DOMAIN || "localhost";
+          const domain = config.getBuildUrlHost();
           const projectUrl = `http://${domain}:${project.port}`;
           return {
             message: "Preview ready (cached). Same URL; refresh to see it.",
@@ -1248,7 +1249,7 @@ export const switchProjectVersion = async (
       await fs.remove(previewRepo).catch(() => { });
     }
 
-    const domain = process.env.BASE_DOMAIN || "localhost";
+    const domain = config.getBuildUrlHost();
     const projectUrl = `http://${domain}:${project.port}`;
     const previewUrl = `${projectUrl}?preview=1`;
 
