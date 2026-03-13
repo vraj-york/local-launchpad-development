@@ -805,7 +805,6 @@ export const uploadReleaseVersionService = async (
     const validatedProjectName = validateProjectName(project.name);
 
     const gitWorkingDir = sourceRoot;
-    console.log('gitWorkingDir:', gitWorkingDir);
     const permanentGitDir = path.join(projectFolder, ".git");
     const localGitDir = path.join(gitWorkingDir, ".git");
 
@@ -815,7 +814,6 @@ export const uploadReleaseVersionService = async (
     }
 
     const remoteUrl = `https://${githubCreds.githubUsername}:${githubCreds.githubToken}@github.com/${githubCreds.githubUsername}/${validatedProjectName}.git`;
-  console.log('remoteUrl:', remoteUrl);
     /* Initialize repo if first time */
     if (!fs.existsSync(localGitDir)) {
       runCommand("git init", gitWorkingDir);
@@ -831,7 +829,6 @@ export const uploadReleaseVersionService = async (
         validatedProjectName,
         githubCreds,
       );
-      console.log('repoExists:', repoExists);
       if (!repoExists) {
         await createGithubRepo(validatedProjectName, githubCreds);
       }
