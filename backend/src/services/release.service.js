@@ -6,6 +6,7 @@ import { execSync, spawn, exec } from "child_process";
 import crypto from "crypto";
 import fetch from "node-fetch";
 import ApiError from "../utils/apiError.js";
+import config from "../config/index.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
 // import { uploadFileToS3Multipart, uploadDirectoryToS3 } from "../utils/uploadFiletoS3.js";
@@ -884,8 +885,7 @@ export const uploadReleaseVersionService = async (
 
     await reloadNginx();
 
-    const domain = process.env.BASE_DOMAIN || "localhost";
-
+    const domain = config.getBuildUrlHost();
     const buildUrl = `http://${domain}:${project.port}`;
 
     /* -------------------- 12️⃣ DB Update -------------------- */

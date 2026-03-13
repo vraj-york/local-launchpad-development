@@ -59,7 +59,7 @@ nano .env
 | `DATABASE_URL` | Your **Supabase** connection string (Supabase Dashboard → Project Settings → Database). Use the URI, e.g. `postgresql://postgres.[project-ref]:[YOUR-PASSWORD]@aws-0-[region].pooler.supabase.com:5432/postgres`. Use **Session** (direct) connection if the pooler causes migration issues. |
 | `VITE_API_URL` | URL the browser uses for the API (e.g. `http://YOUR_EC2_IP:5000` or `https://api.yourdomain.com`) |
 | `VITE_FRONTEND_URL` | Frontend base URL (e.g. `http://YOUR_EC2_IP:3000` or `https://app.yourdomain.com`) |
-| `BASE_URL` | Same as backend URL (e.g. `http://YOUR_EC2_IP:5000`) |
+| `BASE_URL` | Same as backend URL (e.g. `http://YOUR_EC2_IP:5000`). **Required for correct build URLs:** upload/release and live URLs use the host from this (or `BASE_DOMAIN` if set). |
 | `NGINX_BASE_DOMAIN` | Your base domain (e.g. `yourdomain.com`) or leave `localhost` for IP-only access |
 | `JWT_SECRET` | Long random secret (e.g. `openssl rand -base64 32`) |
 
