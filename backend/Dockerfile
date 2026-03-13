@@ -3,8 +3,8 @@ FROM node:20-alpine AS base
 
 WORKDIR /app
 
-# Nginx for project subdomains on port 80 (proxies to static servers on 127.0.0.1:PORT)
-RUN apk add --no-cache nginx \
+# Nginx for project subdomains on port 80; git for release upload (init, commit, push to GitHub)
+RUN apk add --no-cache nginx git \
     && mkdir -p /var/log/nginx \
     && rm -f /etc/nginx/http.d/default.conf 2>/dev/null || true
 
