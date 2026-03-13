@@ -35,7 +35,7 @@ services:
       - 8.8.8.8
       - 8.8.4.4
     ports:
-      - "8080:80"     # Nginx inside backend — project subdomains (host 8080 to avoid port 80)
+      - "8888:80"     # Nginx inside backend — project subdomains (8888 to avoid port 80 and project range 8001-8100)
       - "5000:5000"   # API
       - "8001-${PROJECT_PORT_END:-8100}:8001-${PROJECT_PORT_END:-8100}"
     extra_hosts:

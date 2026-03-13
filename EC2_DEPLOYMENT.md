@@ -119,7 +119,7 @@ This starts:
 
 - **Backend** on port `5000`
 - **Frontend** (Nginx serving built app) on port `3000`
-- **Nginx** (project subdomains) on port `8080` (host; avoids conflict with port 80)
+- **Nginx** (project subdomains) on port `8888` (host; avoids port 80 and project port range 8001–8100)
 
 No PostgreSQL runs on EC2; the backend uses Supabase via `DATABASE_URL`.
 
@@ -132,7 +132,7 @@ Open these ports in the instance security group:
 | Port | Service   | Inbound rule        |
 |------|-----------|----------------------|
 | 22   | SSH       | Your IP (or restrict as needed) |
-| 8080 | Nginx     | 0.0.0.0/0 (or your LB/domain) |
+| 8888 | Nginx     | 0.0.0.0/0 (or your LB/domain) |
 | 3000 | Frontend  | 0.0.0.0/0 (or your LB/domain) |
 | 5000 | Backend   | 0.0.0.0/0 (or your LB/domain) |
 
@@ -142,7 +142,7 @@ Open these ports in the instance security group:
 
 - **Frontend**: `http://YOUR_EC2_IP:3000`
 - **Backend API**: `http://YOUR_EC2_IP:5000`
-- **Nginx** (project subdomains): `http://YOUR_EC2_IP:8080`
+- **Nginx** (project subdomains): `http://YOUR_EC2_IP:8888`
 - **Default login** (after first start): `admin@example.com` / `Admin@123` (change after first login)
 
 ---
