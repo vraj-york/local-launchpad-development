@@ -36,6 +36,7 @@ services:
       - 8.8.4.4
     ports:
       - "8888:80"     # Nginx inside backend — project subdomains (8888 to avoid port 80 and project range 8001-8100)
+      - "443:443"     # HTTPS when SSL_DOMAIN is set and certs mounted
       - "5000:5000"   # API
       - "8001-${PROJECT_PORT_END:-8100}:8001-${PROJECT_PORT_END:-8100}"
     extra_hosts:
@@ -50,12 +51,14 @@ services:
       INSTANCE_ROOT: /app
       BASE_URL: ${BASE_URL:-http://localhost:5000}
       NGINX_BASE_DOMAIN: ${NGINX_BASE_DOMAIN:-localhost}
+      SSL_DOMAIN: ${SSL_DOMAIN:-}
       # Nginx runs in same container as Node — configs use proxy_pass http://localhost:<port>
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
     volumes:
       - ./backend/projects:/app/projects
       - backend_nginx_configs:/app/nginx-configs
       - backend_uploads:/app/uploads
+      - /etc/letsencrypt:/etc/letsencrypt:ro   # Read-only for SSL (Certbot on host)
     depends_on:
       db:
         condition: service_healthy
