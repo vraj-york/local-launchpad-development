@@ -16,7 +16,46 @@ This guide walks you through deploying **Launchpad** on a single **Amazon EC2** 
 
 ---
 
-## 2. Install Docker and Docker Compose
+## 2. Free port 80 (if “port already in use”)
+
+If `docker compose up` fails with “port 80 already in use”, something on the host is using it (e.g. Apache or nginx). Free it with:
+
+```bash
+# See what is using port 80
+sudo lsof -i :80
+# or
+sudo ss -tlnp | grep :80
+```
+
+**Ubuntu / Debian** – stop and disable the service that uses 80:
+
+```bash
+# If Apache (apache2) is using 80:
+sudo systemctl stop apache2
+sudo systemctl disable apache2
+
+# If nginx on the host is using 80:
+sudo systemctl stop nginx
+sudo systemctl disable nginx
+```
+
+**Amazon Linux 2023** – same idea:
+
+```bash
+# Apache (httpd)
+sudo systemctl stop httpd
+sudo systemctl disable httpd
+
+# Or nginx
+sudo systemctl stop nginx
+sudo systemctl disable nginx
+```
+
+Then start your stack again: `docker compose up -d --build`.
+
+---
+
+## 3. Install Docker and Docker Compose
 
 ```bash
 # Update system
@@ -38,7 +77,7 @@ sudo usermod -aG docker ubuntu
 
 ---
 
-## 3. Clone the repo and set environment
+## 4. Clone the repo and set environment
 
 ```bash
 # Clone (replace with your repo URL)
@@ -67,7 +106,7 @@ nano .env
 
 ---
 
-## 4. Build and start the stack
+## 5. Build and start the stack
 
 ```bash
 cd /home/ubuntu/launchpad
@@ -80,34 +119,35 @@ This starts:
 
 - **Backend** on port `5000`
 - **Frontend** (Nginx serving built app) on port `3000`
-- **Nginx** (project subdomains) on port `80`
+- **Nginx** (project subdomains) on port `8080` (host; avoids conflict with port 80)
 
 No PostgreSQL runs on EC2; the backend uses Supabase via `DATABASE_URL`.
 
 ---
 
-## 5. EC2 security group
+## 6. EC2 security group
 
 Open these ports in the instance security group:
 
 | Port | Service   | Inbound rule        |
 |------|-----------|----------------------|
 | 22   | SSH       | Your IP (or restrict as needed) |
-| 80   | Nginx     | 0.0.0.0/0 (or your LB/domain) |
+| 8080 | Nginx     | 0.0.0.0/0 (or your LB/domain) |
 | 3000 | Frontend  | 0.0.0.0/0 (or your LB/domain) |
 | 5000 | Backend   | 0.0.0.0/0 (or your LB/domain) |
 
 ---
 
-## 6. Verify
+## 7. Verify
 
 - **Frontend**: `http://YOUR_EC2_IP:3000`
 - **Backend API**: `http://YOUR_EC2_IP:5000`
+- **Nginx** (project subdomains): `http://YOUR_EC2_IP:8080`
 - **Default login** (after first start): `admin@example.com` / `Admin@123` (change after first login)
 
 ---
 
-## 7. Useful Docker commands
+## 8. Useful Docker commands
 
 ```bash
 cd /home/ubuntu/launchpad
