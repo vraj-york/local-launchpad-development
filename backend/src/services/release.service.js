@@ -646,7 +646,7 @@ export const runBuildSequence = async (buildContextPath, opts = {}) => {
   }
 
   // Always include devDependencies so build tools (vite, webpack, etc.) are installed.
-  // Backend container sets NODE_ENV=production, which would otherwise omit devDeps.
+  // Backend container sets NODE_ENV=production; npm omits devDeps unless we override.
   const installArgs = opts.fastInstall
     ? [
         "install",
@@ -658,14 +658,34 @@ export const runBuildSequence = async (buildContextPath, opts = {}) => {
         "error",
       ]
     : ["install", "--include=dev"];
+
+  // Force devDependencies: NODE_ENV=production alone can still skip devDeps on some npm versions.
+  const installEnv = {
+    ...process.env,
+    NODE_ENV: "development",
+    NPM_CONFIG_PRODUCTION: "false",
+  };
   await execa("npm", installArgs, {
     cwd: buildContextPath,
     stdio: "inherit",
+    env: installEnv,
   });
 
+  // Ensure node_modules/.bin is on PATH when script is "vite build" (shell looks up vite).
+  // Must match installEnv: container has NODE_ENV=production; npm can omit .bin from script
+  // PATH when production, so vite/webpack stay "not found" (exit 127) even after install.
+  const binPath = path.join(buildContextPath, "node_modules", ".bin");
+  const pathSep = process.platform === "win32" ? ";" : ":";
+  const buildEnv = {
+    ...process.env,
+    NODE_ENV: "development",
+    NPM_CONFIG_PRODUCTION: "false",
+    PATH: `${binPath}${pathSep}${process.env.PATH || ""}`,
+  };
   await execa("npm", ["run", "build"], {
     cwd: buildContextPath,
     stdio: "inherit",
+    env: buildEnv,
   });
 
   // return actual build output folder
