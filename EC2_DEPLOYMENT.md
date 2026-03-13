@@ -100,6 +100,7 @@ nano .env
 | `VITE_FRONTEND_URL` | Frontend base URL (e.g. `http://YOUR_EC2_IP:3000` or `https://app.yourdomain.com`) |
 | `BASE_URL` | Same as backend URL (e.g. `http://YOUR_EC2_IP:5000`). **Required for correct build URLs:** upload/release and live URLs use the host from this (or `BASE_DOMAIN` if set). |
 | `NGINX_BASE_DOMAIN` | Your base domain (e.g. `yourdomain.com`) or leave `localhost` for IP-only access |
+| `SSL_DOMAIN` | **(Optional)** Your domain for HTTPS (e.g. `launchpad.yorkdevs.link`). Requires Let's Encrypt certs on the host at `/etc/letsencrypt/live/<domain>/`. Nginx then serves `https://<domain>/` (frontend) and `https://<domain>/api/` (API). |
 | `JWT_SECRET` | Long random secret (e.g. `openssl rand -base64 32`) |
 
 **Do not** set `POSTGRES_*` or start the Docker `db` service in production; the database is Supabase only.
@@ -132,22 +133,41 @@ Open these ports in the instance security group:
 | Port | Service   | Inbound rule        |
 |------|-----------|----------------------|
 | 22   | SSH       | Your IP (or restrict as needed) |
+| 443  | HTTPS     | 0.0.0.0/0 (when using `SSL_DOMAIN` and Let's Encrypt) |
 | 8888 | Nginx     | 0.0.0.0/0 (or your LB/domain) |
 | 3000 | Frontend  | 0.0.0.0/0 (or your LB/domain) |
 | 5000 | Backend   | 0.0.0.0/0 (or your LB/domain) |
 
 ---
 
-## 7. Verify
+## 7. HTTPS with your domain (optional)
 
-- **Frontend**: `http://YOUR_EC2_IP:3000`
-- **Backend API**: `http://YOUR_EC2_IP:5000`
+If you have a domain (e.g. `launchpad.yorkdevs.link`) and Let's Encrypt certs on the host:
+
+1. **Get certs** (if needed) — e.g. `sudo certbot certonly --standalone -d launchpad.yorkdevs.link` (stop Docker first so port 80 is free), then start Docker again.
+2. **In `.env`** set:
+   - `SSL_DOMAIN=launchpad.yorkdevs.link`
+   - `BASE_URL=https://launchpad.yorkdevs.link`
+   - `VITE_API_URL=https://launchpad.yorkdevs.link`
+   - `VITE_FRONTEND_URL=https://launchpad.yorkdevs.link`
+3. **Rebuild frontend** so the browser uses HTTPS URLs: `docker compose build --no-cache frontend && docker compose up -d`.
+4. **Open port 443** in the EC2 security group (see table above).
+5. **Point DNS** for your domain to the EC2 public IP.
+
+Nginx in the backend will serve `https://<SSL_DOMAIN>/` (frontend) and `https://<SSL_DOMAIN>/api/` (API) using the certs from `/etc/letsencrypt`.
+
+---
+
+## 8. Verify
+
+- **Frontend**: `http://YOUR_EC2_IP:3000` (or `https://YOUR_DOMAIN` when `SSL_DOMAIN` is set)
+- **Backend API**: `http://YOUR_EC2_IP:5000` (or `https://YOUR_DOMAIN/api` when using HTTPS)
 - **Nginx** (project subdomains): `http://YOUR_EC2_IP:8888`
 - **Default login** (after first start): `admin@example.com` / `Admin@123` (change after first login)
 
 ---
 
-## 8. Useful Docker commands
+## 9. Useful Docker commands
 
 ```bash
 cd /home/ubuntu/launchpad

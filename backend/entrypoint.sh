@@ -10,6 +10,57 @@ if [ -z "$(ls -A /app/nginx-configs/*.conf 2>/dev/null)" ]; then
   echo 'server { listen 127.0.0.1:65535; return 503; }' >> /app/nginx-configs/_placeholder.conf
 fi
 
+# HTTPS: generate ssl.conf when SSL_DOMAIN is set and certs exist (e.g. /etc/letsencrypt from host)
+if [ -n "$SSL_DOMAIN" ] && [ -f "/etc/letsencrypt/live/${SSL_DOMAIN}/fullchain.pem" ]; then
+  cat > /app/nginx-configs/ssl.conf << EOF
+# Generated for SSL_DOMAIN=${SSL_DOMAIN} — / -> frontend, /api -> backend
+server {
+    listen 443 ssl;
+    server_name ${SSL_DOMAIN};
+    ssl_certificate /etc/letsencrypt/live/${SSL_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${SSL_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:5000/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_cache_bypass \$http_upgrade;
+    }
+    location /api {
+        proxy_pass http://127.0.0.1:5000/api;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    location / {
+        proxy_pass http://frontend:80/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+  echo "Generated /app/nginx-configs/ssl.conf for SSL_DOMAIN=${SSL_DOMAIN}"
+else
+  if [ -n "$SSL_DOMAIN" ]; then
+    echo "[WARN] SSL_DOMAIN=${SSL_DOMAIN} set but cert not found at /etc/letsencrypt/live/${SSL_DOMAIN}/fullchain.pem — HTTPS disabled"
+  fi
+fi
+
 # Start nginx (daemon mode) then Node; project configs proxy to 127.0.0.1:<port>
 if command -v nginx >/dev/null 2>&1; then
   nginx
