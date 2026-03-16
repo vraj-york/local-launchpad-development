@@ -25,7 +25,7 @@ COPY ecosystem.config.cjs ./
 # Entrypoint and nginx configs for deployment
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
-COPY nginx-configs ./nginx-configs/
+RUN mkdir -p ./nginx-configs
 COPY nginx-frontend.conf ./
 
 EXPOSE 5000
