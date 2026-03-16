@@ -364,96 +364,6 @@ export const createProjectService = async ({ userId, body }) => {
     throw new ApiError(500, `Project creation failed: ${error.message}`);
   }
 };
-export const createProjectService_old = async ({ userId, body }) => {
-  const {
-    name,
-    assignedManagerId,
-    // ... other fields
-  } = body;
-
-  /**
-     * 1. Validate assigned manager exists
-     */
-  const managerExists = await prisma.user.findFirst({
-    where: {
-      id: Number(assignedManagerId),
-      role: "manager",
-    },
-    select: { id: true },
-  });
-
-  if (!managerExists) {
-    throw new ApiError(400, "Assigned manager not found");
-  }
-
-  /**
-   * 2. Validate External Connections
-   * Perform these before opening the DB transaction to keep it lean.
-   */
-  await Promise.all([
-    // validateJiraConnection(jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken)
-  ]);
-  const projectName = name.toLowerCase().replace(/\s+/g, '-');
-
-  // --- PATH CONFIGURATION (always under backend, never frontend) ---
-  // 1. Define the relative paths for the Database
-  const relativeProjectPath = path.join("projects", projectName);
-  const relativeGitRepoPath = path.join(relativeProjectPath, ".git");
-
-  // 2. Define the absolute paths for the OS (fsExtra / execSync)
-  const absoluteProjectPath = path.join(getProjectsDir(), projectName);
-  const absoluteNginxDir = getNginxConfigsDir();
-  const nginxConfigFileName = `${projectName}.conf`;
-  const absoluteNginxConfigPath = path.join(absoluteNginxDir, nginxConfigFileName);
-
-  // 3. Port Allocation
-  const maxPortProject = await prisma.project.aggregate({ _max: { port: true } });
-  const port = (maxPortProject._max.port || 8000) + 1;
-
-  try {
-    // 5. Directory Creation (Use ABSOLUTE paths)
-    await fsExtra.ensureDir(absoluteProjectPath);
-    await fsExtra.ensureDir(absoluteNginxDir);
-
-    // 6. Git Initialization (Use ABSOLUTE path)
-    execSync("git init", { cwd: absoluteProjectPath });
-
-    // 7. Nginx Configuration
-    const nginxTemplate = `server {
-    listen 80;
-    server_name ${projectName}.example.com;
-    
-    location / {
-        proxy_pass http://localhost:${port};
-        // ... rest of template
-    }
-}`;
-    await fsExtra.writeFile(absoluteNginxConfigPath, nginxTemplate);
-
-    // 8. Database Persistence (Use RELATIVE paths)
-    return await prisma.$transaction(async (tx) => {
-      const project = await tx.project.create({
-        data: {
-          ...body,
-          assignedManagerId: Number(assignedManagerId),
-          createdById: userId,
-          port,
-          // Store relative strings in DB
-          projectPath: relativeProjectPath,
-          gitRepoPath: relativeGitRepoPath,
-          nginxConfigPath: path.join('nginx-configs', nginxConfigFileName)
-        },
-      });
-
-      return project;
-    });
-  } catch (error) {
-    // Cleanup on failure (Use ABSOLUTE paths)
-    if (await fsExtra.pathExists(absoluteProjectPath)) await fsExtra.remove(absoluteProjectPath);
-    if (await fsExtra.pathExists(absoluteNginxConfigPath)) await fsExtra.remove(absoluteNginxConfigPath);
-    throw new ApiError(500, `Project creation failed: ${error.message}`);
-  }
-};
 /**
  * Dynamically finds where Nginx is installed on this specific machine
  */
@@ -747,7 +657,7 @@ export async function activateProjectVersionService({
 
     if (fs.existsSync(gitDir)) {
       await fs.ensureDir(path.dirname(worktreeDir));
-      await fs.remove(worktreeDir).catch(() => {});
+      await fs.remove(worktreeDir).catch(() => { });
       await fs.ensureDir(worktreeDir);
       runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
       runCommand(
@@ -798,7 +708,7 @@ export async function activateProjectVersionService({
         buildOutputPath = await runBuildSequence(sourceRoot);
         // Do not remove worktreeDir here — same as worktree path; copy uses buildOutputPath inside it.
       } catch (e) {
-        await fs.remove(worktreeDir).catch(() => {});
+        await fs.remove(worktreeDir).catch(() => { });
         throw e;
       }
     } else {
@@ -821,10 +731,10 @@ export async function activateProjectVersionService({
           backendRoot,
         );
       } catch {
-        await fs.remove(worktreeDir).catch(() => {});
+        await fs.remove(worktreeDir).catch(() => { });
       }
     } else {
-      await fs.remove(worktreeDir).catch(() => {});
+      await fs.remove(worktreeDir).catch(() => { });
     }
 
     await reloadNginxRelease();
@@ -857,7 +767,7 @@ export async function activateProjectVersionService({
       tag,
     };
   } finally {
-    await fs.remove(worktreeDir).catch(() => {});
+    await fs.remove(worktreeDir).catch(() => { });
     await prisma.project.update({
       where: { id: projectId },
       data: { isUploading: false },
