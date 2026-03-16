@@ -7,7 +7,7 @@ import {
   TabsTrigger,
   TabsContent,
 } from "../components/ui/tabs";
-import { ArrowLeft, GitCommit, FileDiff } from "lucide-react";
+import { ArrowLeft, GitCommit, FileDiff, ExternalLink } from "lucide-react";
 import DiffModal from "../components/DiffModal";
 import {
   fetchProjectById,
@@ -20,6 +20,7 @@ import {
 // import RoadMapManagement from '@/components/RoadMapManagement';
 import ReleaseManagement from "@/components/ReleaseManagement";
 import { PageHeader } from "@/components/PageHeader";
+import config from "@/config";
 // import { toast } from 'sonner';
 
 const ProjectDetails = () => {
@@ -81,6 +82,11 @@ const ProjectDetails = () => {
   const projectName = project?.name || "Project";
   const projectDescription = project?.description || "This is Testing Project";
 
+  const activeVersionUrl = project?.versions?.[0]?.buildUrl ?? null;
+  const clientUrl = project
+    ? `${typeof window !== "undefined" ? window.location.origin : config.FRONTEND_URL}/projects/public/${project.id}`
+    : null;
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] text-slate-500">
@@ -108,7 +114,17 @@ const ProjectDetails = () => {
 
         <PageHeader title={projectName} description={projectDescription}>
           <div className="flex gap-2">
-            <Button
+          <Button
+            disabled={!activeVersionUrl}
+            onClick={() => window.open(clientUrl, "_blank")}
+            variant="outline"
+            size="sm"
+            className="h-8 px-2 lg:px-3"
+          >
+            <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+            Client Link
+          </Button>
+            {/* <Button
               variant="outline"
               className="gap-2"
               onClick={() => setIsDiffModalOpen(true)}
@@ -123,7 +139,7 @@ const ProjectDetails = () => {
             >
               <FileDiff className="w-4 h-4" />
               View Changes
-            </Button>
+            </Button> */}
           </div>
         </PageHeader>
       </div>
