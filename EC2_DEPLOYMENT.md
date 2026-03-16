@@ -101,6 +101,7 @@ nano .env
 | `BASE_URL` | Same as backend URL (e.g. `http://YOUR_EC2_IP:5000`). **Required for correct build URLs:** upload/release and live URLs use the host from this (or `BASE_DOMAIN` if set). |
 | `NGINX_BASE_DOMAIN` | Your base domain (e.g. `yourdomain.com`) or leave `localhost` for IP-only access |
 | `SSL_DOMAIN` | **(Optional)** Your domain for HTTPS (e.g. `launchpad.yorkdevs.link`). Requires Let's Encrypt certs on the host at `/etc/letsencrypt/live/<domain>/`. Nginx then serves `https://<domain>/` (frontend) and `https://<domain>/api/` (API). |
+| `NGINX_SSL_WILDCARD_DOMAIN` | **(Optional)** Same as your main domain (e.g. `launchpad.yorkdevs.link`) when you have a **wildcard** cert for `*.<domain>`. Build URLs then use `https://<project>.launchpad.yorkdevs.link` (no port). Requires wildcard cert at `/etc/letsencrypt/live/<domain>/`. |
 | `JWT_SECRET` | Long random secret (e.g. `openssl rand -base64 32`) |
 
 **Do not** set `POSTGRES_*` or start the Docker `db` service in production; the database is Supabase only.
@@ -156,13 +157,33 @@ If you have a domain (e.g. `launchpad.yorkdevs.link`) and Let's Encrypt certs on
 
 Nginx in the backend will serve `https://<SSL_DOMAIN>/` (frontend) and `https://<SSL_DOMAIN>/api/` (API) using the certs from `/etc/letsencrypt`.
 
+### 7.1 HTTPS for project/build URLs (wildcard cert)
+
+To have **build URLs** use **https** (e.g. `https://p1.launchpad.yorkdevs.link` with no port) instead of `http://...:8888`:
+
+1. **Get a wildcard cert** (DNS challenge; port 80 not needed):
+   ```bash
+   sudo certbot certonly --manual --preferred-challenges dns -d "*.launchpad.yorkdevs.link" -d "launchpad.yorkdevs.link"
+   ```
+   Add the TXT record(s) Certbot shows to your DNS; then continue. Certs are written to `/etc/letsencrypt/live/launchpad.yorkdevs.link/`.
+
+2. **In `.env`** set (same value as your main domain):
+   - `NGINX_SSL_WILDCARD_DOMAIN=launchpad.yorkdevs.link`
+   - Ensure `NGINX_BASE_DOMAIN=launchpad.yorkdevs.link` so subdomains match.
+
+3. **Restart backend** so nginx picks up the new env: `docker compose up -d --build backend`.
+
+4. **DNS**: Add a wildcard A record `*.launchpad.yorkdevs.link` → your EC2 IP (or one A record per project subdomain).
+
+**Note:** New projects get an nginx 443 block automatically. For **existing** projects, regenerate the nginx config (e.g. edit and save the project in the app, or recreate the project config) so the 443 block is added.
+
 ---
 
 ## 8. Verify
 
 - **Frontend**: `http://YOUR_EC2_IP:3000` (or `https://YOUR_DOMAIN` when `SSL_DOMAIN` is set)
 - **Backend API**: `http://YOUR_EC2_IP:5000` (or `https://YOUR_DOMAIN/api` when using HTTPS)
-- **Nginx** (project subdomains): `http://YOUR_EC2_IP:8888`
+- **Nginx** (project subdomains): `http://YOUR_EC2_IP:8888` (or `https://<project>.YOUR_DOMAIN` when `NGINX_SSL_WILDCARD_DOMAIN` is set)
 - **Default login** (after first start): `admin@example.com` / `Admin@123` (change after first login)
 
 ---

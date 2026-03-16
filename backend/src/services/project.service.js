@@ -21,10 +21,13 @@ import {
   reloadNginx as reloadNginxRelease,
   createGithubRepo,
   addGithubCollaborator,
-  checkRepoExists,
 } from "./release.service.js";
 import { parseGitRepoPath } from "./github.service.js";
-import { configDotenv } from "dotenv";
+
+const PREVIEW_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
+const PREVIEW_META_FILE = ".preview-meta.json";
+const PREVIEW_CLEANUP_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const PREVIEW_LAST_CLEANUP_FILE = ".last-cleanup-at";
 
 const execAsync = promisify(exec);
 
@@ -146,6 +149,37 @@ function generateNginxConfigTemplate(projectName, port) {
   const baseDomain = getNginxBaseDomain();
   const upstreamHost = getNginxUpstreamHost();
   const serverName = `${projectName}.${baseDomain}`;
+  const sslWildcard = process.env.NGINX_SSL_WILDCARD_DOMAIN;
+  const sslBlock =
+    sslWildcard &&
+    `server {
+    listen 443 ssl;
+    server_name ${projectName}.${sslWildcard};
+    ssl_certificate /etc/letsencrypt/live/${sslWildcard}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${sslWildcard}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass http://${upstreamHost}:${port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        add_header X-Release-Version \$upstream_http_x_release_version;
+    }
+    location /health {
+        access_log off;
+        return 200 "healthy\\n";
+        add_header Content-Type text/plain;
+    }
+    access_log /var/log/nginx/${projectName}_ssl_access.log;
+    error_log /var/log/nginx/${projectName}_ssl_error.log;
+}`;
   return `# Nginx configuration for ${projectName} (dynamic port ${port})
 server {
     listen 80;
@@ -173,25 +207,10 @@ server {
 
     access_log /var/log/nginx/${projectName}_access.log;
     error_log /var/log/nginx/${projectName}_error.log;
-}`;
+}${sslBlock ? "\n" + sslBlock : ""}`;
 }
 
-async function restartNginx() {
-  try {
-    // Force the absolute path to the executable
-    const nginxBin = '/opt/homebrew/bin/nginx';
-    const restartCmd = `sudo ${nginxBin} -s reload`;
 
-    const { stdout, stderr } = await execAsync(restartCmd);
-
-    if (stderr) console.warn('[WARN] Nginx stderr:', stderr);
-    return true;
-  } catch (error) {
-    // If it still fails, it's likely the password prompt blocking the sync execution
-    console.error('[ERROR] Nginx restart failed. Is NOPASSWD configured?');
-    return false;
-  }
-}
 /**
  * Automatically opens a specific port on the Linux firewall (UFW).
  * @param {number} port - The project's assigned port (e.g., 8001)
@@ -740,10 +759,12 @@ export async function activateProjectVersionService({
     await reloadNginxRelease();
 
     const domain = config.getBuildUrlHost();
-    const protocol = config.getBuildUrlProtocol();
+    const sslWildcard = process.env.NGINX_SSL_WILDCARD_DOMAIN;
     const liveBuildUrl =
       project.port != null
-        ? `${protocol}://${domain}:${project.port}`
+        ? sslWildcard
+          ? `https://${project.name}.${sslWildcard}`
+          : `http://${domain}:${project.port}`
         : version.buildUrl;
 
     await prisma.$transaction(async (tx) => {
@@ -962,15 +983,6 @@ export const getJiraTicketsService = async (projectId, user) => {
 
 
 
-/** Remove _preview dirs older than this (ms) so _preview does not stay filled forever. */
-const PREVIEW_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
-
-// Stored next to serve/ so express.static(serve) does not expose it
-const PREVIEW_META_FILE = ".preview-meta.json";
-/** Skip full cleanupStalePreviews scan if last run was within this window (ms) */
-const PREVIEW_CLEANUP_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-const PREVIEW_LAST_CLEANUP_FILE = ".last-cleanup-at";
-
 /**
  * Delete stale preview dirs under _preview/ after PREVIEW_TTL_MS.
  * Uses .preview-meta.json { createdAt } next to each project dir when present; else dir mtime.
@@ -1116,8 +1128,10 @@ export const switchProjectVersion = async (
             "utf8",
           );
           const domain = config.getBuildUrlHost();
-          const protocol = config.getBuildUrlProtocol();
-          const projectUrl = `${protocol}://${domain}:${project.port}`;
+          const sslWildcard = process.env.NGINX_SSL_WILDCARD_DOMAIN;
+          const projectUrl = sslWildcard
+            ? `https://${project.name}.${sslWildcard}`
+            : `http://${domain}:${project.port}`;
           return {
             message: "Preview ready (cached). Same URL; refresh to see it.",
             version: versionLabel,
@@ -1162,8 +1176,10 @@ export const switchProjectVersion = async (
     }
 
     const domain = config.getBuildUrlHost();
-    const protocol = config.getBuildUrlProtocol();
-    const projectUrl = `${protocol}://${domain}:${project.port}`;
+    const sslWildcard = process.env.NGINX_SSL_WILDCARD_DOMAIN;
+    const projectUrl = sslWildcard
+      ? `https://${project.name}.${sslWildcard}`
+      : `http://${domain}:${project.port}`;
     const previewUrl = `${projectUrl}?preview=1`;
 
     return {
