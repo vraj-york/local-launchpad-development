@@ -101,7 +101,6 @@ nano .env
 | `BASE_URL` | Same as backend URL (e.g. `http://YOUR_EC2_IP:5000`). **Required for correct build URLs:** upload/release and live URLs use the host from this (or `BASE_DOMAIN` if set). |
 | `NGINX_BASE_DOMAIN` | Your base domain (e.g. `yourdomain.com`) or leave `localhost` for IP-only access |
 | `SSL_DOMAIN` | **(Optional)** Your domain for HTTPS (e.g. `launchpad.yorkdevs.link`). Requires Let's Encrypt certs on the host at `/etc/letsencrypt/live/<domain>/`. Nginx then serves `https://<domain>/` (frontend) and `https://<domain>/api/` (API). |
-| `NGINX_SSL_WILDCARD_DOMAIN` | **(Optional)** Wildcard domain for project subdomains over HTTPS (e.g. `launchpad.yorkdevs.link`). Requires a wildcard cert at `/etc/letsencrypt/live/<domain>/` (use Certbot DNS challenge). Build/live URLs become `https://<projectName>.<domain>`; new projects get a 443 server block automatically. |
 | `JWT_SECRET` | Long random secret (e.g. `openssl rand -base64 32`) |
 
 **Do not** set `POSTGRES_*` or start the Docker `db` service in production; the database is Supabase only.
@@ -156,15 +155,6 @@ If you have a domain (e.g. `launchpad.yorkdevs.link`) and Let's Encrypt certs on
 5. **Point DNS** for your domain to the EC2 public IP.
 
 Nginx in the backend will serve `https://<SSL_DOMAIN>/` (frontend) and `https://<SSL_DOMAIN>/api/` (API) using the certs from `/etc/letsencrypt`.
-
-### 7.1. Wildcard SSL for project subdomains (optional)
-
-To serve each project at `https://<projectName>.<domain>` (e.g. `https://myapp.launchpad.yorkdevs.link`):
-
-1. **Obtain a wildcard cert** for `*.<your-subdomain>.<tld>` (e.g. `*.launchpad.yorkdevs.link`). Let's Encrypt requires a **DNS challenge** (Certbot plugin or manual TXT record). Example: `sudo certbot certonly --manual -d "*.launchpad.yorkdevs.link" -d "launchpad.yorkdevs.link"`.
-2. **In `.env`** set `NGINX_SSL_WILDCARD_DOMAIN=launchpad.yorkdevs.link` (the domain you certified; no wildcard prefix).
-3. **DNS**: Ensure an A record for `*.launchpad.yorkdevs.link` (or your subdomain) points to the EC2 IP. Note: `launchpad.yorkdevs.link` itself needs its own A record; the wildcard does not cover the bare subdomain.
-4. New projects get a second nginx server block (listen 443) and build/live URLs use `https://<projectName>.<NGINX_SSL_WILDCARD_DOMAIN>`. **Already-created projects** get the 443 block automatically on the next backend startup (or redeploy): the backend regenerates all project nginx configs when `NGINX_SSL_WILDCARD_DOMAIN` is set.
 
 ---
 
