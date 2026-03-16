@@ -23,21 +23,6 @@ import {
 } from "lucide-react";
 import { Badge } from "./ui/badge";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -586,16 +571,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                       <Badge className="bg-primary text-primary-foreground">
                                         <CheckCircle size={14} /> Active
                                       </Badge>
-                                    )}
-                                    {version.buildUrl && (
-                                      <a
-                                        href={version.buildUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-emerald-600 hover:text-emerald-700 text-xs font-medium flex items-center gap-1"
-                                      >
-                                        Live Build ↗
-                                      </a>
                                     )}
                                   </div>
                                 </div>

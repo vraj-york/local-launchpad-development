@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import logo from "../assets/york-logo.png";
+import logo from "../assets/launchpad-logo-svg.svg";
 
 export function AppSidebar() {
   const { user, logout } = useAuth();
@@ -43,9 +43,8 @@ export function AppSidebar() {
           <img
             src={logo}
             alt="Zip Sync Logo"
-            className="w-10 h-10 object-contain"
+            className="max-w-38 object-contain"
           />
-          <span className="text-lg font-bold truncate">Launch Pad</span>
         </div>
       </SidebarHeader>
       <SidebarContent>

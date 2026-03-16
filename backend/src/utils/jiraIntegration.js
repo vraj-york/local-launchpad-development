@@ -367,18 +367,66 @@ export async function testJiraConnection() {
 
 
 /**
- * Build Jira ADF description content: description paragraph + optional metadata section.
- * @param {string} description - Main description text
+ * Check if a line looks like a list item (bullet or numbered).
+ * @param {string} line - Trimmed line
+ * @returns {{ isList: boolean, text: string }}
+ */
+function parseListLine(line) {
+    const trimmed = line.trim();
+    if (!trimmed) return { isList: false, text: '' };
+    const bulletMatch = trimmed.match(/^([-•*]\s+)(.*)$/s);
+    if (bulletMatch) return { isList: true, text: bulletMatch[2].trim() };
+    const numberedMatch = trimmed.match(/^(\d+\.)\s+(.*)$/);
+    if (numberedMatch) return { isList: true, text: numberedMatch[2].trim() };
+    return { isList: false, text: trimmed };
+}
+
+/**
+ * Build Jira ADF description content from plain text (supports multiple lines and pointwise lists).
+ * Converts newlines to paragraphs and lines starting with -, •, *, or "1." to bullet lists.
+ * @param {string} description - Main description text (may contain newlines and bullet points)
  * @param {Object|null} metadata - Optional metadata object (e.g. browser, pageUrl, screenResolution)
  * @returns {Array} ADF content array
  */
 function buildDescriptionContent(description, metadata) {
-    const content = [
-        {
-            type: 'paragraph',
-            content: [{ type: 'text', text: description || '' }]
+    const content = [];
+    const raw = typeof description === 'string' ? description : '';
+    const lines = raw.split(/\r?\n/).map((l) => l.trimEnd());
+
+    let listItems = [];
+    const flushList = () => {
+        if (listItems.length > 0) {
+            content.push({
+                type: 'bulletList',
+                content: listItems.map((text) => ({
+                    type: 'listItem',
+                    content: [{ type: 'paragraph', content: [{ type: 'text', text: text || ' ' }] }]
+                }))
+            });
+            listItems = [];
         }
-    ];
+    };
+
+    for (const line of lines) {
+        const { isList, text } = parseListLine(line);
+        if (isList && text) {
+            listItems.push(text);
+        } else {
+            flushList();
+            if (text) {
+                content.push({
+                    type: 'paragraph',
+                    content: [{ type: 'text', text }]
+                });
+            }
+        }
+    }
+    flushList();
+
+    if (content.length === 0) {
+        content.push({ type: 'paragraph', content: [{ type: 'text', text: ' ' }] });
+    }
+
     if (metadata && typeof metadata === 'object' && Object.keys(metadata).length > 0) {
         const skipKeys = ['raw'];
         const labels = {
@@ -412,6 +460,16 @@ function buildDescriptionContent(description, metadata) {
 }
 
 /**
+ * Jira summary must not contain newlines. Replace all newline-like chars with space and trim.
+ * @param {string} s
+ * @returns {string}
+ */
+function toSingleLineSummary(s) {
+    if (s == null || typeof s !== 'string') return 'Feedback from widget';
+    return s.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Feedback from widget';
+}
+
+/**
  * Create a single Jira ticket using project-specific config (e.g. from DB).
  * Used by feedback flow: one ticket per submission with description and optional metadata.
  * @param {Object} ticketData - { title, description, metadata? }
@@ -429,10 +487,11 @@ export async function createJiraTicketWithConfig(ticketData, config) {
     const auth = Buffer.from(`${email}:${apiToken}`).toString('base64');
     const url = `${baseUrl.replace(/\/$/, '')}/rest/api/3/issue`;
     const descriptionContent = buildDescriptionContent(ticketData.description, ticketData.metadata || null);
+    const summary = toSingleLineSummary(ticketData.title).slice(0, 255);
     const payload = {
         fields: {
             project: { key: projectKey },
-            summary: ticketData.title || 'Feedback from widget',
+            summary,
             issuetype: { name: issueType || 'Task' },
             description: {
                 type: 'doc',

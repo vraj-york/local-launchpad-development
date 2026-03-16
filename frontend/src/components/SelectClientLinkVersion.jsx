@@ -61,6 +61,9 @@ export function SelectClientLinkVersion({
       toast.success(
         (result?.version ? `v${result.version}` : versionLabel) +
           " preview ready",
+        {
+          position: "top-right",
+        },
       );
       onSwitched?.({
         buildUrl: result?.buildUrl,

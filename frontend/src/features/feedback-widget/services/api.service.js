@@ -8,6 +8,7 @@ export const submitFeedback = async (apiUrl, projectId, data) => {
     formData.append("description", data.description);
     formData.append("metadata", JSON.stringify(data.metadata));
     formData.append("screenshot", data.screenshot);
+    if (data.issueType) formData.append("issueType", data.issueType);
 
     const response = await fetch(`${apiUrl}/api/feedback`, {
       method: "POST",
