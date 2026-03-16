@@ -50,7 +50,6 @@ const CreateProject = () => {
   const [jiraUsername, setJiraUsername] = useState("");
   const [jiraApiToken, setJiraApiToken] = useState("");
   const [jiraProjectKey, setJiraProjectKey] = useState("");
-  const [jiraIssueType, setJiraIssueType] = useState("");
 
   // UI State
   const [error, setError] = useState("");
@@ -105,8 +104,6 @@ const CreateProject = () => {
       errors.jiraApiToken = "Jira API Token is required";
     if (!jiraProjectKey.trim())
       errors.jiraProjectKey = "Jira Project Key is required";
-    if (!jiraIssueType.trim())
-      errors.jiraIssueType = "Jira Default Issue Type is required";
 
     // Roadmap is optional; validate only when user has added roadmaps
     // if (roadmaps.length > 0) {
@@ -182,7 +179,6 @@ const CreateProject = () => {
         // roadmaps: processedRoadmaps,
         jiraBaseUrl: jiraBaseUrl,
         jiraProjectKey: jiraProjectKey,
-        jiraIssueType: jiraIssueType,
         jiraUsername: jiraUsername,
         jiraApiToken: jiraApiToken,
       };
@@ -517,14 +513,6 @@ const CreateProject = () => {
                     <code className="bg-slate-200/80 px-1 rounded">PROJ</code>,{" "}
                     <code className="bg-slate-200/80 px-1 rounded">DEV</code>).
                   </li>
-                  <li>
-                    <strong>Default Issue Type</strong> — Any issue type your
-                    project uses (e.g.{" "}
-                    <code className="bg-slate-200/80 px-1 rounded">Bug</code>,{" "}
-                    <code className="bg-slate-200/80 px-1 rounded">Task</code>,{" "}
-                    <code className="bg-slate-200/80 px-1 rounded">Story</code>
-                    ). You can see them when creating an issue in Jira.
-                  </li>
                 </ol>
               </div>
             )}
@@ -565,41 +553,22 @@ const CreateProject = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="jiraProjectKey">Project Key</Label>
-                <Input
-                  id="jiraProjectKey"
-                  placeholder="PROJ or DEV (from project URL/settings)"
-                  value={jiraProjectKey}
-                  onChange={(e) => setJiraProjectKey(e.target.value)}
-                  className={
-                    validationErrors.jiraProjectKey ? "border-destructive" : ""
-                  }
-                />
-                {validationErrors.jiraProjectKey && (
-                  <p className="text-sm text-destructive mt-1">
-                    {validationErrors.jiraProjectKey}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="jiraIssueType">Default Issue Type</Label>
-                <Input
-                  id="jiraIssueType"
-                  placeholder="Bug, Task, Story (exact name from Jira)"
-                  value={jiraIssueType}
-                  onChange={(e) => setJiraIssueType(e.target.value)}
-                  className={
-                    validationErrors.jiraIssueType ? "border-destructive" : ""
-                  }
-                />
-                {validationErrors.jiraIssueType && (
-                  <p className="text-sm text-destructive mt-1">
-                    {validationErrors.jiraIssueType}
-                  </p>
-                )}
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="jiraProjectKey">Project Key</Label>
+              <Input
+                id="jiraProjectKey"
+                placeholder="PROJ or DEV (from project URL/settings)"
+                value={jiraProjectKey}
+                onChange={(e) => setJiraProjectKey(e.target.value)}
+                className={
+                  validationErrors.jiraProjectKey ? "border-destructive" : ""
+                }
+              />
+              {validationErrors.jiraProjectKey && (
+                <p className="text-sm text-destructive mt-1">
+                  {validationErrors.jiraProjectKey}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">

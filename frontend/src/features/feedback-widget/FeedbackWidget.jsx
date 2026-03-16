@@ -131,13 +131,13 @@ const FeedbackWidget = ({ config }) => {
     };
   }, [isCapturing]);
 
-  const handleAnnotationSave = (blob, dataUrl, description) => {
+  const handleAnnotationSave = (blob, dataUrl, description, issueType = "Bug") => {
     setAnnotatedBlob(blob);
     setAnnotatedDataUrl(dataUrl);
-    handleSubmit(description, blob);
+    handleSubmit(description, blob, issueType);
   };
 
-  const handleSubmit = async (description, blobToSubmit) => {
+  const handleSubmit = async (description, blobToSubmit, issueType = "Bug") => {
     setStep(STEPS.SUBMITTING);
     setError(null);
 
@@ -148,6 +148,7 @@ const FeedbackWidget = ({ config }) => {
         description,
         metadata,
         screenshot: screenshotFile,
+        issueType,
       };
 
       const response = await submitFeedback(
@@ -304,6 +305,16 @@ const FeedbackWidget = ({ config }) => {
                 </svg>
               </div>
               <h3>Feedback Submitted!</h3>
+
+              {result.jiraError && (
+                <div
+                  className="feedback-widget-jira-error"
+                  role="alert"
+                >
+                  <strong>Jira ticket could not be created:</strong>{" "}
+                  {result.jiraError}
+                </div>
+              )}
 
               <div className="feedback-widget-success-preview">
                 {annotatedDataUrl && (

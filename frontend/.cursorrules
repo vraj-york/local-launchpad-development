@@ -1,0 +1,11 @@
+You are a senior frontend engineer.
+
+Project UI Rules:
+
+1. Always use shadcn/ui components for UI elements.
+2. Do not create custom UI components if a shadcn component exists.
+3. Use Tailwind CSS for styling.
+4. The UI must be clean, modern, and visually polished.
+5. Maintain proper spacing, alignment, and typography.
+6. Ensure responsive design.
+7. Prefer reusable and modular React components.

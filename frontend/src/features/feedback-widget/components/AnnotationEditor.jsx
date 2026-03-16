@@ -1,12 +1,41 @@
-import React, { useEffect, useState } from 'react';
-import { Tldraw, exportToBlob } from 'tldraw';
-import 'tldraw/tldraw.css';
+import React, { useEffect, useState } from "react";
+import { Tldraw, exportToBlob } from "tldraw";
+import { ArrowUp, Bug, TrendingUp } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import "tldraw/tldraw.css";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+
+const ISSUE_TYPE_OPTIONS = [
+  {
+    value: "Improvements",
+    label: "Improvements",
+    icon: ArrowUp,
+    iconBg: "bg-green-100",
+    iconColor: "text-green-500",
+  },
+  {
+    value: "Bug",
+    label: "Bug",
+    icon: Bug,
+    iconBg: "bg-red-100",
+    iconColor: "text-red-500",
+  },
+];
 
 const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
   const [editor, setEditor] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [description, setDescription] = useState('');
-  const [error, setError] = useState('');
+  const [description, setDescription] = useState("");
+  const [issueType, setIssueType] = useState("Bug");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!editor || !screenshot) {
@@ -21,7 +50,7 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
 
         const img = new Image();
         img.src = screenshot;
-        
+
         await new Promise((resolve, reject) => {
           img.onload = resolve;
           img.onerror = reject;
@@ -32,11 +61,11 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
         // Convert data URL to blob
         const response = await fetch(screenshot);
         const blob = await response.blob();
-        const file = new File([blob], 'screenshot.png', { type: 'image/png' });
+        const file = new File([blob], "screenshot.png", { type: "image/png" });
 
         // Use the editor's putExternalContent method to add the image
         await editor.putExternalContent({
-          type: 'files',
+          type: "files",
           files: [file],
           point: { x: 0, y: 0 },
           ignoreParent: false,
@@ -48,7 +77,7 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
         const shapes = editor.getCurrentPageShapes();
         const imageShape = shapes[shapes.length - 1];
 
-        if (imageShape && imageShape.type === 'image') {
+        if (imageShape && imageShape.type === "image") {
           editor.updateShape({
             ...imageShape,
             isLocked: true,
@@ -62,9 +91,8 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
             setIsLoading(false);
           }
         }, 100);
-
       } catch (error) {
-        console.error('Failed to load screenshot:', error);
+        console.error("Failed to load screenshot:", error);
         setIsLoading(false);
       }
     };
@@ -79,37 +107,37 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
   const handleSave = async () => {
     // Validate description
     if (!description.trim()) {
-      setError('Please provide a description');
+      setError("Please provide a description");
       return;
     }
 
     if (description.trim().length < 10) {
-      setError('Description must be at least 10 characters');
+      setError("Description must be at least 10 characters");
       return;
     }
 
     if (!editor) {
       const response = await fetch(screenshot);
       const blob = await response.blob();
-      onSave(blob, screenshot, description);
+      onSave(blob, screenshot, description, issueType);
       return;
     }
 
     try {
       const shapeIds = Array.from(editor.getCurrentPageShapeIds());
-      
+
       if (shapeIds.length === 0) {
         const response = await fetch(screenshot);
         const blob = await response.blob();
-        onSave(blob, screenshot, description);
+        onSave(blob, screenshot, description, issueType);
         return;
       }
 
       const blob = await exportToBlob({
         editor,
         ids: shapeIds,
-        format: 'png',
-        opts: { 
+        format: "png",
+        opts: {
           background: true,
           bounds: editor.getCurrentPageBounds(),
           scale: 1,
@@ -118,14 +146,14 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
 
       const reader = new FileReader();
       reader.onloadend = () => {
-        onSave(blob, reader.result, description);
+        onSave(blob, reader.result, description, issueType);
       };
       reader.readAsDataURL(blob);
     } catch (error) {
-      console.error('Failed to export annotation:', error);
+      console.error("Failed to export annotation:", error);
       const response = await fetch(screenshot);
       const blob = await response.blob();
-      onSave(blob, screenshot, description);
+      onSave(blob, screenshot, description, issueType);
     }
   };
 
@@ -137,136 +165,129 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
 
   // Custom tools - only keep the ones we want
   const tools = [
-    'select',
-    'draw',
-    'arrow',
-    'rectangle',
-    'ellipse', 
-    'text',
-    'highlight',
+    "select",
+    "draw",
+    "arrow",
+    "rectangle",
+    "ellipse",
+    "text",
+    "highlight",
   ];
 
   return (
-    <div style={{ 
-      display: 'flex', 
-      gap: '24px', 
-      height: '100%',
-      minHeight: '600px'
-    }}>
+    <div
+      style={{
+        display: "flex",
+        gap: "24px",
+        height: "100%",
+        minHeight: "600px",
+      }}
+    >
       {/* Left side - tldraw editor */}
-      <div style={{ flex: '1 1 65%', position: 'relative' }}>
+      <div style={{ flex: "1 1 65%", position: "relative" }}>
         {isLoading && (
-          <div style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: 1000,
-            background: 'white',
-            padding: '20px',
-            borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-          }}>
+          <div
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              zIndex: 1000,
+              background: "white",
+              padding: "20px",
+              borderRadius: "8px",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+            }}
+          >
             <div className="feedback-widget-spinner" />
-            <p style={{ marginTop: '10px', fontSize: '14px', color: '#6b7280' }}>
+            <p
+              style={{ marginTop: "10px", fontSize: "14px", color: "#6b7280" }}
+            >
               Loading screenshot...
             </p>
           </div>
         )}
-        
-        <div style={{ 
-          width: '100%', 
-          height: '100%',
-          border: '2px solid #e5e7eb',
-          borderRadius: '8px',
-          overflow: 'hidden',
-          background: '#f9fafb',
-        }}>
-          <Tldraw
-            onMount={setEditor}
-            autoFocus
-            components={components}
-          />
+
+        <div
+          style={{
+            width: "100%",
+            height: "100%",
+            border: "2px solid #e5e7eb",
+            borderRadius: "8px",
+            overflow: "hidden",
+            background: "#f9fafb",
+          }}
+        >
+          <Tldraw onMount={setEditor} autoFocus components={components} />
         </div>
       </div>
 
       {/* Right side - Description form */}
-      <div style={{ 
-        flex: '0 0 35%',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '16px'
-      }}>
-        <div>
-          <h3 style={{ 
-            margin: '0 0 8px', 
-            fontSize: '18px',
-            fontWeight: '600',
-            color: '#111827',
-            fontFamily: 'system-ui'
-          }}>
+      <div className="flex flex-col gap-4 flex-[0_0_35%]">
+        <div className="space-y-1.5">
+          <h3 className="text-lg font-semibold text-foreground leading-none">
             Describe the Issue
           </h3>
-          <p style={{ 
-            margin: '0 0 16px',
-            fontSize: '14px',
-            color: '#6b7280',
-            fontFamily: 'system-ui'
-          }}>
-            Use the tools on the left to annotate the screenshot, then describe what you're seeing.
+          <p className="text-sm text-muted-foreground">
+            Use the tools on the left to edit the screenshot, then briefly
+            describe the issue you’re facing.
           </p>
         </div>
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <label htmlFor="feedback-description" style={{
-            fontSize: '14px',
-            fontWeight: '500',
-            color: '#374151',
-            marginBottom: '8px',
-            fontFamily: 'system-ui'
-          }}>
-            Description <span style={{ color: '#ef4444' }}>*</span>
-          </label>
-          <textarea
+        <div className="space-y-2">
+          <Label htmlFor="feedback-issue-type">
+            Issue type <span className="text-destructive">*</span>
+          </Label>
+          <Select value={issueType} onValueChange={setIssueType}>
+            <SelectTrigger id="feedback-issue-type" className="w-full px-1.5">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="z-[1000001]" position="popper">
+              {ISSUE_TYPE_OPTIONS.map((opt) => {
+                const Icon = opt.icon;
+                return (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${opt?.iconBg}`}
+                      >
+                        <Icon className={`h-2 w-2 ${opt?.iconColor}`} />
+                      </span>
+                      {opt.label}
+                    </span>
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col space-y-2">
+          <Label htmlFor="feedback-description">
+            Description <span className="text-destructive">*</span>
+          </Label>
+          <Textarea
             id="feedback-description"
             placeholder="Please describe what you're seeing, what you expected, or any feedback you have..."
             value={description}
             onChange={(e) => {
               setDescription(e.target.value);
-              setError('');
+              setError("");
             }}
             maxLength={2000}
-            style={{
-              flex: 1,
-              padding: '12px',
-              border: '1px solid #d1d5db',
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontFamily: 'system-ui',
-              resize: 'none',
-              minHeight: '200px'
-            }}
+            className="min-h-[300px] resize-none"
           />
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between',
-            fontSize: '12px',
-            color: '#9ca3af',
-            marginTop: '4px'
-          }}>
-            <span>{error && <span style={{ color: '#ef4444' }}>{error}</span>}</span>
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>
+              {error && <span className="text-destructive">{error}</span>}
+            </span>
             <span>{description.length}/2000</span>
           </div>
         </div>
 
-        <button
-          type="button"
-          className="feedback-widget-btn feedback-widget-btn-primary"
-          onClick={handleSave}
-          style={{ marginTop: 'auto', alignSelf: 'flex-start' }}
-        >
+        <Button type="button" onClick={handleSave} className="w-fit">
           Submit Feedback
-        </button>
+        </Button>
       </div>
     </div>
   );
