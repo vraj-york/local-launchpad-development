@@ -96,6 +96,45 @@ const ProjectDetails = () => {
     );
   }
 
+  if (!project) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[100vh] px-4 bg-gradient-to-b from-slate-50 to-slate-100">
+        <div className="text-center max-w-md rounded-2xl bg-white/80 backdrop-blur-sm border border-slate-200/60 shadow-lg p-8">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-br from-slate-200 to-slate-300 text-slate-500 mb-4">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-7 w-7"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold text-slate-800 mb-2">
+            No project found
+          </h2>
+          <p className="text-slate-500 text-sm mb-6">
+            The project you're looking for doesn't exist or you don't have
+            access to it. Check the URL or go back to the projects list.
+          </p>
+          <Button
+            variant="outline"
+            onClick={() => navigate("/projects")}
+            className="text-slate-700 border-slate-300"
+          >
+            Back to Projects
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto">
       {/* Header */}

@@ -18,6 +18,9 @@
 /launchpad-frontend/build/
 
 
+/backend/nginx/sites-enabled
+/backend/nginx-configs
+
 # Env files (secrets) – .env.example is tracked for reference
 /backend/.env
 /frontend/.env
