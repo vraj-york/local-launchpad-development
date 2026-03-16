@@ -73,7 +73,7 @@ model ProjectVersion {
   projectId   Int
   releaseId   Int?     // Link to release (optional for backward compatibility)
   version     String   // e.g., "1.0.0", "1.1.0", "2.0.0"
-  zipFilePath String   // Legacy column; kept to avoid data loss. App uses gitTag only—write same value as gitTag when creating.
+  zipFilePath String?   // Legacy column; kept to avoid data loss. App uses gitTag only—write same value as gitTag when creating.
   gitTag      String   // Git tag / ref for checkout & activate (primary)
   buildUrl    String
   isActive    Boolean  @default(false) // Only one version can be active per project
