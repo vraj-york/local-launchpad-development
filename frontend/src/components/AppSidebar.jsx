@@ -45,7 +45,7 @@ export function AppSidebar() {
             alt="Zip Sync Logo"
             className="w-10 h-10 object-contain"
           />
-          <span className="text-lg font-bold truncate">LaunchPad</span>
+          <span className="text-lg font-bold truncate">Launch Pad</span>
         </div>
       </SidebarHeader>
       <SidebarContent>
