@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2 } from "lucide-react";
 import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
+import logo from "../assets/launchpad-logo-svg.svg";
 
 const clientId =
   import.meta.env.VITE_GOOGLE_CLIENT_ID ||
@@ -250,7 +251,7 @@ const LoginPage = () => {
           <CardHeader className="space-y-1 text-center">
             <div className="flex justify-center mb-4">
               <img
-                src="/logo.png"
+                src={logo}
                 alt="Zip Sync Logo"
                 className="w-[200px] h-auto block"
               />
