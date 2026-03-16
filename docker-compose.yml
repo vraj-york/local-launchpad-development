@@ -52,7 +52,6 @@ services:
       BASE_URL: ${BASE_URL:-http://localhost:5000}
       NGINX_BASE_DOMAIN: ${NGINX_BASE_DOMAIN:-localhost}
       SSL_DOMAIN: ${SSL_DOMAIN:-}
-      NGINX_SSL_WILDCARD_DOMAIN: ${NGINX_SSL_WILDCARD_DOMAIN:-}
       # Nginx runs in same container as Node — configs use proxy_pass http://localhost:<port>
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
     volumes:

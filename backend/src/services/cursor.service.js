@@ -207,10 +207,8 @@ console.log('buildOutputPath:', buildOutputPath);
       await reloadNginx();
 
       const domain = config.getBuildUrlHost();
-      const sslWildcard = process.env.NGINX_SSL_WILDCARD_DOMAIN;
-      const buildUrl = sslWildcard
-        ? `https://${project.name}.${sslWildcard}`
-        : `http://${domain}:${project.port}`;
+      const protocol = config.getBuildUrlProtocol();
+      const buildUrl = `${protocol}://${domain}:${project.port}`;
 
       newVersion = await prisma.$transaction(async (tx) => {
         await tx.projectVersion.updateMany({
