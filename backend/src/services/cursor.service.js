@@ -207,7 +207,8 @@ console.log('buildOutputPath:', buildOutputPath);
       await reloadNginx();
 
       const domain = config.getBuildUrlHost();
-      const buildUrl = `http://${domain}:${project.port}`;
+      const protocol = config.getBuildUrlProtocol();
+      const buildUrl = `${protocol}://${domain}:${project.port}`;
 
       newVersion = await prisma.$transaction(async (tx) => {
         await tx.projectVersion.updateMany({

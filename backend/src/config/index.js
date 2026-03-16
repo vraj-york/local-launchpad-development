@@ -21,6 +21,11 @@ function getBuildUrlHost() {
   }
 }
 
+/** Protocol for project build/live URLs: https when BASE_URL is https, else http. */
+function getBuildUrlProtocol() {
+  return (BASE_URL || '').startsWith('https') ? 'https' : 'http';
+}
+
 const config = {
   // Base URL - used for generating build URLs and API responses
   BASE_URL,
@@ -36,6 +41,8 @@ const config = {
 
   /** Host for project build URLs (EC2 IP or domain when BASE_URL/BASE_DOMAIN set). */
   getBuildUrlHost,
+  /** Protocol for build URLs so live env uses https when BASE_URL is https. */
+  getBuildUrlProtocol,
 };
 
 export default config;

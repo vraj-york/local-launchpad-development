@@ -830,9 +830,10 @@ export async function activateProjectVersionService({
     await reloadNginxRelease();
 
     const domain = config.getBuildUrlHost();
+    const protocol = config.getBuildUrlProtocol();
     const liveBuildUrl =
       project.port != null
-        ? `http://${domain}:${project.port}`
+        ? `${protocol}://${domain}:${project.port}`
         : version.buildUrl;
 
     await prisma.$transaction(async (tx) => {
@@ -1205,7 +1206,8 @@ export const switchProjectVersion = async (
             "utf8",
           );
           const domain = config.getBuildUrlHost();
-          const projectUrl = `http://${domain}:${project.port}`;
+          const protocol = config.getBuildUrlProtocol();
+          const projectUrl = `${protocol}://${domain}:${project.port}`;
           return {
             message: "Preview ready (cached). Same URL; refresh to see it.",
             version: versionLabel,
@@ -1250,7 +1252,8 @@ export const switchProjectVersion = async (
     }
 
     const domain = config.getBuildUrlHost();
-    const projectUrl = `http://${domain}:${project.port}`;
+    const protocol = config.getBuildUrlProtocol();
+    const projectUrl = `${protocol}://${domain}:${project.port}`;
     const previewUrl = `${projectUrl}?preview=1`;
 
     return {
