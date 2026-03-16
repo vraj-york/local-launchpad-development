@@ -149,6 +149,39 @@ function generateNginxConfigTemplate(projectName, port) {
   const baseDomain = getNginxBaseDomain();
   const upstreamHost = getNginxUpstreamHost();
   const serverName = `${projectName}.${baseDomain}`;
+  const sslWildcard = process.env.NGINX_SSL_WILDCARD_DOMAIN;
+  const sslBlock =
+    sslWildcard &&
+    `
+server {
+    listen 443 ssl;
+    server_name ${projectName}.${sslWildcard};
+    ssl_certificate /etc/letsencrypt/live/${sslWildcard}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${sslWildcard}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    client_max_body_size 1024m;
+
+    location / {
+        proxy_pass http://${upstreamHost}:${port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        add_header X-Release-Version \$upstream_http_x_release_version;
+    }
+    location /health {
+        access_log off;
+        return 200 "healthy\\n";
+        add_header Content-Type text/plain;
+    }
+    access_log /var/log/nginx/${projectName}_ssl_access.log;
+    error_log /var/log/nginx/${projectName}_ssl_error.log;
+}`;
   return `# Nginx configuration for ${projectName} (dynamic port ${port})
 server {
     listen 80;
@@ -176,7 +209,7 @@ server {
 
     access_log /var/log/nginx/${projectName}_access.log;
     error_log /var/log/nginx/${projectName}_error.log;
-}`;
+}${sslBlock || ""}`;
 }
 
 
@@ -220,13 +253,54 @@ export const reloadNginx = async () => {
     if (os.platform() !== 'darwin') throw error;
   }
 };
+
+/**
+ * Regenerate nginx config for all projects that have a port.
+ * When NGINX_SSL_WILDCARD_DOMAIN is set, this adds the 443 SSL block to existing projects
+ * so they get HTTPS without manual re-save. Called on backend startup.
+ */
+export const regenerateAllProjectNginxConfigs = async () => {
+  if (!process.env.NGINX_SSL_WILDCARD_DOMAIN) return;
+  try {
+    const projects = await prisma.project.findMany({
+      where: { port: { not: null } },
+      select: { name: true, port: true },
+    });
+    if (projects.length === 0) return;
+    const nginxAvailableDir = getNginxConfigsDir();
+    for (const p of projects) {
+      const projectName = p.name.toLowerCase().replace(/\s+/g, "-");
+      const configContent = generateNginxConfigTemplate(projectName, p.port);
+      await fsExtra.writeFile(
+        path.join(nginxAvailableDir, `${projectName}.conf`),
+        configContent
+      );
+    }
+    await reloadNginx();
+    console.log(`[startup] Regenerated nginx config for ${projects.length} project(s) (SSL wildcard).`);
+  } catch (err) {
+    console.warn("[startup] regenerateAllProjectNginxConfigs failed:", err.message);
+  }
+};
+
 export const createProjectService = async ({ userId, body }) => {
   const { name, assignedManagerId, jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken, githubUsername, githubToken } = body;
   const isLinux = os.platform() === 'linux';
   const nginxBinary = isLinux ? '/usr/sbin/nginx' : '/opt/homebrew/bin/nginx';
 
   try {
-    // 1. Validate Manager
+    // 1. Project name must be unique (case-insensitive)
+    const nameTrimmed = (name && typeof name === "string") ? name.trim() : "";
+    if (!nameTrimmed) throw new ApiError(400, "Project name is required");
+    const existingProject = await prisma.project.findFirst({
+      where: { name: { equals: nameTrimmed, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (existingProject) {
+      throw new ApiError(400, "Project name already exists. Choose a unique name.");
+    }
+
+    // 2. Validate Manager
     const managerExists = await prisma.user.findFirst({
       where: { id: Number(assignedManagerId), role: "manager" },
       select: { id: true },
@@ -589,6 +663,7 @@ export async function activateProjectVersionService({
       version: true,
       gitTag: true,
       zipFilePath: true, // legacy; fallback if gitTag empty
+      releaseId: true,
     },
   });
 
@@ -597,6 +672,24 @@ export async function activateProjectVersionService({
   }
   if (version.isActive) {
     throw new ApiError(400, "Version is already active");
+  }
+
+  // To activate a different version, the release that currently has the active version must be locked first
+  const currentActive = await prisma.projectVersion.findFirst({
+    where: { projectId, isActive: true },
+    select: { releaseId: true },
+  });
+  if (currentActive?.releaseId) {
+    const activeRelease = await prisma.release.findUnique({
+      where: { id: currentActive.releaseId },
+      select: { isLocked: true },
+    });
+    if (activeRelease && !activeRelease.isLocked) {
+      throw new ApiError(
+        400,
+        "Lock the current active release before activating another version",
+      );
+    }
   }
   const tag =
     (version.gitTag && version.gitTag.trim()) ||
@@ -728,10 +821,12 @@ export async function activateProjectVersionService({
     await reloadNginxRelease();
 
     const domain = config.getBuildUrlHost();
-    const protocol = config.getBuildUrlProtocol();
+    const sslWildcard = process.env.NGINX_SSL_WILDCARD_DOMAIN;
     const liveBuildUrl =
       project.port != null
-        ? `${protocol}://${domain}:${project.port}`
+        ? sslWildcard
+          ? `https://${project.name}.${sslWildcard}`
+          : `${config.getBuildUrlProtocol()}://${domain}:${project.port}`
         : version.buildUrl;
 
     await prisma.$transaction(async (tx) => {
@@ -1095,8 +1190,10 @@ export const switchProjectVersion = async (
             "utf8",
           );
           const domain = config.getBuildUrlHost();
-          const protocol = config.getBuildUrlProtocol();
-          const projectUrl = `${protocol}://${domain}:${project.port}`;
+          const sslWildcard = process.env.NGINX_SSL_WILDCARD_DOMAIN;
+          const projectUrl = sslWildcard
+            ? `https://${project.name}.${sslWildcard}`
+            : `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
           return {
             message: "Preview ready (cached). Same URL; refresh to see it.",
             version: versionLabel,
@@ -1141,8 +1238,10 @@ export const switchProjectVersion = async (
     }
 
     const domain = config.getBuildUrlHost();
-    const protocol = config.getBuildUrlProtocol();
-    const projectUrl = `${protocol}://${domain}:${project.port}`;
+    const sslWildcard = process.env.NGINX_SSL_WILDCARD_DOMAIN;
+    const projectUrl = sslWildcard
+      ? `https://${project.name}.${sslWildcard}`
+      : `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
     const previewUrl = `${projectUrl}?preview=1`;
 
     return {

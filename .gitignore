@@ -28,7 +28,8 @@
 
 # Runtime preview (switch version) – recreated on demand
 /backend/_preview/
-
+/backend/nginx/sites-enabled
+/backend/nginx-configs
 # --- Tracked for deployment (do not ignore): ---
 # docker-compose.yml, Dockerfile(s), entrypoint.sh, nginx-configs/, nginx-frontend.conf,
 # DOCKER_DEPLOYMENT.md, INSTANCE_SETUP.md, .env.example
