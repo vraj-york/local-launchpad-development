@@ -68,7 +68,7 @@ const Dashboard = () => {
   return (
     <div className="mx-auto">
       <PageHeader
-        title="Welcome to LaunchPad Dashboard"
+        title="Welcome to Launch Pad Dashboard"
         description="Manage your projects, upload builds, and track progress all in one place."
       >
         <CreateProjectButton />
