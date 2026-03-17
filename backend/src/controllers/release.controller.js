@@ -4,7 +4,7 @@ import {
     getReleaseByIdService,
     listReleasesService,
     lockReleaseService,
-
+    setReleaseStatusService,
     getReleaseInfoService,
     publicLockReleaseService,
     uploadReleaseVersionService,
@@ -54,6 +54,19 @@ export const releaseController = {
         res.json({
             message: `Release ${locked ? 'locked' : 'unlocked'} successfully`,
             release
+        });
+    }),
+
+    /**
+     * Set release status: draft | active | locked
+     */
+    setStatus: asyncHandler(async (req, res) => {
+        const releaseId = parseInt(req.params.id, 10);
+        const { status } = req.body;
+        const release = await setReleaseStatusService(releaseId, status, req.user);
+        res.json({
+            message: `Release status set to ${release.status}`,
+            release,
         });
     }),
 
