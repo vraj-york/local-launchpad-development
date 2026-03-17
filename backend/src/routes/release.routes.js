@@ -161,6 +161,41 @@ router.post("/:id/lock", authenticateToken, releaseController.lock);
 
 /**
  * @swagger
+ * /releases/{id}/status:
+ *   patch:
+ *     summary: Set release status (draft | active | locked)
+ *     tags: [Releases]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [draft, active, locked]
+ *     responses:
+ *       200:
+ *         description: Release status updated
+ *       400:
+ *         description: Invalid status
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Release not found
+ */
+router.patch("/:id/status", authenticateToken, releaseController.setStatus);
+
+/**
+ * @swagger
  * /releases/{id}/public-lock:
  *   post:
  *     summary: Lock or unlock a release (Public)
