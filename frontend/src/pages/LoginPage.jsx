@@ -1,27 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
-import { googleLogin, registerUser, loginUser, figmaComplete } from "../api";
+import { useNavigate, useLocation } from "react-router-dom";
+import { googleLogin, figmaComplete } from "../api";
+import config from "../config";
 import { isTokenExpired } from "../utils/auth";
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2 } from "lucide-react";
 import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
@@ -36,29 +26,58 @@ function getFigmaState() {
   const state = params.get("state");
   return state && state.trim() ? state.trim() : null;
 }
+const HUB_API_URL = config.HUB_API_URL || import.meta.env.VITE_HUB_API_URL;
 
 const LoginPage = () => {
-  const { user, login, checkAuth } = useAuth();
+  const { user, checkAuth } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("login");
-  const [credentials, setCredentials] = useState({
-    name: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-    role: "manager",
-  });
+  const location = useLocation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [figmaState, setFigmaState] = useState(null);
   const [figmaDone, setFigmaDone] = useState(false);
   const [autoCompletingFigma, setAutoCompletingFigma] = useState(false);
+  const [handlingCallback, setHandlingCallback] = useState(false);
 
   useEffect(() => {
     setFigmaState(getFigmaState());
   }, []);
 
-  // When redirected from Figma with ?state= and user is already logged in, send stored token to complete the flow
+  // Handle callback from Hub: ?code=... after Google redirect
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const code = params.get("code");
+    if (!code || handlingCallback) return;
+
+    setHandlingCallback(true);
+    setLoading(true);
+    setError("");
+
+    exchangeHubAuthCode(code)
+      .then(({ token }) => {
+        checkAuth();
+        const state = getFigmaState();
+        const cleanUrl =
+          window.location.pathname + (state ? `?state=${state}` : "");
+        window.history.replaceState({}, "", cleanUrl);
+        if (state) {
+          figmaComplete(state, token).then((complete) => {
+            if (complete.error) setError(complete.error);
+            else setFigmaDone(true);
+          });
+        } else {
+          navigate("/dashboard");
+        }
+      })
+      .catch((err) => {
+        setError(err?.error || "Google sign-in failed");
+      })
+      .finally(() => {
+        setLoading(false);
+        setHandlingCallback(false);
+      });
+  }, [location.search]);
+
   useEffect(() => {
     const state = getFigmaState();
     if (!state) return;
@@ -84,104 +103,6 @@ const LoginPage = () => {
     }
   }, [user, figmaState, navigate]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-
-    const isLogin = activeTab === "login";
-
-    try {
-      if (isLogin) {
-        if (figmaState) {
-          const { token, user: userData } = await loginUser({
-            email: credentials.email,
-            password: credentials.password,
-          });
-          const complete = await figmaComplete(figmaState, token);
-          if (complete.error) {
-            setError(complete.error);
-          } else {
-            checkAuth();
-            setFigmaDone(true);
-          }
-        } else {
-          const result = await login({
-            email: credentials.email,
-            password: credentials.password,
-          });
-          if (result.success) {
-            navigate("/dashboard");
-          } else {
-            setError(result.error);
-          }
-        }
-      } else {
-        // Registration
-        if (credentials.password !== credentials.confirmPassword) {
-          setError("Passwords do not match");
-          setLoading(false);
-          return;
-        }
-
-        await registerUser({
-          name: credentials.name,
-          email: credentials.email,
-          password: credentials.password,
-          role: credentials.role,
-        });
-
-        // Auto-login after registration
-        const result = await login({
-          email: credentials.email,
-          password: credentials.password,
-        });
-
-        if (result.success) {
-          if (figmaState) {
-            const token = localStorage.getItem("token");
-            if (token) {
-              const complete = await figmaComplete(figmaState, token);
-              if (complete.error) {
-                setError(complete.error);
-              } else {
-                setFigmaDone(true);
-              }
-            } else {
-              setError(
-                "Login succeeded but could not complete Figma connection.",
-              );
-            }
-          } else {
-            navigate("/dashboard");
-          }
-        } else {
-          setError(
-            "Registration successful, but login failed. Please try logging in.",
-          );
-        }
-      }
-    } catch (err) {
-      setError(err.error || "An error occurred");
-    }
-
-    setLoading(false);
-  };
-
-  const handleChange = (e) => {
-    setCredentials({
-      ...credentials,
-      [e.target.name]: e.target.value,
-    });
-  };
-
-  const handleSelectChange = (value) => {
-    setCredentials({
-      ...credentials,
-      role: value,
-    });
-  };
-
   const handleGoogleSuccess = async (credentialResponse) => {
     setLoading(true);
     setError("");
@@ -205,16 +126,37 @@ const LoginPage = () => {
     }
     setLoading(false);
   };
+
   const handleGoogleFailure = () => {
     setError("Google Login Failed");
   };
 
+  const handleGoogleSignIn = async () => {
+    const apiUrl = `${HUB_API_URL}/api/auth/google`;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(apiUrl);
+      const json = await res.json();
+      const authUrl = json?.data?.url;
+      if (!authUrl) {
+        setError("Invalid response from sign-in service");
+        return;
+      }
+      window.location.href = authUrl;
+    } catch (err) {
+      setError("Could not start Google sign-in. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (figmaDone) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-        <Card className="w-full max-w-md shadow-lg">
-          <CardHeader className="space-y-1 text-center">
-            <CardTitle className="text-xl font-bold text-green-600">
+      <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-gradient-to-br from-slate-50 via-muted/30 to-indigo-50/50 p-6 md:p-10">
+        <Card className="w-full max-w-sm border-0 shadow-lg bg-card/95 backdrop-blur-sm">
+          <CardHeader className="text-center space-y-1">
+            <CardTitle className="text-xl text-green-600">
               Authentication complete
             </CardTitle>
             <CardDescription>
@@ -228,15 +170,13 @@ const LoginPage = () => {
 
   if (autoCompletingFigma) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-        <Card className="w-full max-w-md shadow-lg">
-          <CardHeader className="space-y-1 text-center">
+      <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-gradient-to-br from-slate-50 via-muted/30 to-indigo-50/50 p-6 md:p-10">
+        <Card className="w-full max-w-sm border-0 shadow-lg bg-card/95 backdrop-blur-sm">
+          <CardHeader className="text-center space-y-1">
             <div className="flex justify-center mb-4">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              <Loader2 className="size-8 animate-spin text-primary" />
             </div>
-            <CardTitle className="text-xl font-bold">
-              Connecting to Figma
-            </CardTitle>
+            <CardTitle className="text-xl">Connecting to Figma</CardTitle>
             <CardDescription>Using your existing login…</CardDescription>
           </CardHeader>
         </Card>
@@ -246,171 +186,72 @@ const LoginPage = () => {
 
   return (
     <GoogleOAuthProvider clientId={clientId}>
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-        <Card className="w-full max-w-md shadow-lg">
-          <CardHeader className="space-y-1 text-center">
-            <div className="flex justify-center mb-4">
-              <img
-                src={logo}
-                alt="Zip Sync Logo"
-                className="w-[200px] h-auto block"
-              />
-            </div>
-            <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
-            <CardDescription>
-              {figmaState
-                ? "Sign in to connect your Figma plugin."
-                : activeTab === "login"
-                  ? "Enter your credentials to access your account"
-                  : "Create a new account to get started"}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Tabs
-              value={activeTab}
-              onValueChange={setActiveTab}
-              className="w-full"
-            >
-              <TabsList className="grid w-full grid-cols-2 mb-6">
-                <TabsTrigger value="login">Login</TabsTrigger>
-                <TabsTrigger value="register">Register</TabsTrigger>
-              </TabsList>
-
-              {error && (
-                <Alert variant="destructive" className="mb-6">
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-
-              <form onSubmit={handleSubmit}>
-                <TabsContent value="login" className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="login-email">Email</Label>
-                    <Input
-                      id="login-email"
-                      name="email"
-                      type="email"
-                      placeholder="name@example.com"
-                      value={credentials.email}
-                      onChange={handleChange}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="login-password">Password</Label>
-                    <Input
-                      id="login-password"
-                      name="password"
-                      type="password"
-                      placeholder="Enter your password"
-                      value={credentials.password}
-                      onChange={handleChange}
-                      required
-                    />
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="register" className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="register-name">Full Name</Label>
-                    <Input
-                      id="register-name"
-                      name="name"
-                      type="text"
-                      placeholder="John Doe"
-                      value={credentials.name}
-                      onChange={handleChange}
-                      required={activeTab === "register"}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="register-email">Email</Label>
-                    <Input
-                      id="register-email"
-                      name="email"
-                      type="email"
-                      placeholder="name@example.com"
-                      value={credentials.email}
-                      onChange={handleChange}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="register-password">Password</Label>
-                    <Input
-                      id="register-password"
-                      name="password"
-                      type="password"
-                      placeholder="Create a password"
-                      value={credentials.password}
-                      onChange={handleChange}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="confirm-password">Confirm Password</Label>
-                    <Input
-                      id="confirm-password"
-                      name="confirmPassword"
-                      type="password"
-                      placeholder="Confirm your password"
-                      value={credentials.confirmPassword}
-                      onChange={handleChange}
-                      required={activeTab === "register"}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="role">Role</Label>
-                    <Select
-                      value={credentials.role}
-                      onValueChange={handleSelectChange}
-                    >
-                      <SelectTrigger id="role">
-                        <SelectValue placeholder="Select a role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="manager">Manager</SelectItem>
-                        <SelectItem value="admin">Admin</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </TabsContent>
-
-                <Button
-                  className="w-full mt-6"
-                  type="submit"
-                  disabled={loading}
-                >
-                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {activeTab === "login" ? "Sign In" : "Create Account"}
-                </Button>
-              </form>
-
-              <div className="relative my-4">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-white px-2 text-muted-foreground">
-                    Or continue with
-                  </span>
-                </div>
-              </div>
-              <div className="flex justify-center w-full">
-                <GoogleLogin
+      <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-gradient-to-br from-slate-50 via-muted/30 to-indigo-50/50 p-6 md:p-10">
+        <div className="flex w-full max-w-sm flex-col gap-6">
+          <a
+            href="/"
+            className="flex items-center gap-2 self-center font-medium text-foreground no-underline hover:opacity-90"
+          >
+            <img src={logo} alt="launchpad logo" className="w-36" />
+          </a>
+          <Card className="border-0 shadow-lg bg-card/95 backdrop-blur-sm">
+            <CardHeader className="text-center">
+              <CardTitle className="text-xl">Welcome back</CardTitle>
+              <CardDescription>
+                {figmaState
+                  ? "Sign in to connect your Figma plugin."
+                  : "Continue with your Google account"}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-4">
+                {error && (
+                  <Alert variant="destructive" className="rounded-lg">
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+                {/* <GoogleLogin
                   onSuccess={handleGoogleSuccess}
                   onError={handleGoogleFailure}
                   useOneTap
-                />
+                  render={(renderProps) => (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={renderProps.onClick}
+                      disabled={renderProps.disabled || loading}
+                    >
+                      {loading ? (
+                        <Loader2 className="size-5 animate-spin shrink-0" />
+                      ) : (
+                        <GoogleIcon />
+                      )}
+                      {loading ? "Signing in…" : "Continue with Google"}
+                    </Button>
+                  )}
+                /> */}
+                <Button
+                  onClick={handleGoogleSignIn}
+                  disabled={loading}
+                  className="flex items-center gap-2 w-full"
+                  variant="outline"
+                >
+                  {loading ? (
+                    <Loader2 className="size-5 animate-spin shrink-0" />
+                  ) : (
+                    <img
+                      className="h-4"
+                      src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBkPSJNMTcuNiA5LjJsLS4xLTEuOEg5djMuNGg0LjhDMTMuNiAxMiAxMyAxMyAxMiAxMy42djIuMmgzYTguOCA4LjggMCAwIDAgMi42LTYuNnoiIGZpbGw9IiM0Mjg1RjQiIGZpbGwtcnVsZT0ibm9uemVybyIvPjxwYXRoIGQ9Ik05IDE4YzIuNCAwIDQuNS0uOCA2LTIuMmwtMy0yLjJhNS40IDUuNCAwIDAgMS04LTIuOUgxVjEzYTkgOSAwIDAgMCA4IDV6IiBmaWxsPSIjMzRBODUzIiBmaWxsLXJ1bGU9Im5vbnplcm8iLz48cGF0aCBkPSJNNCAxMC43YTUuNCA1LjQgMCAwIDEgMC0zLjRWNUgxYTkgOSAwIDAgMCAwIDhsMy0yLjN6IiBmaWxsPSIjRkJCQzA1IiBmaWxsLXJ1bGU9Im5vbnplcm8iLz48cGF0aCBkPSJNOSAzLjZjMS4zIDAgMi41LjQgMy40IDEuM0wxNSAyLjNBOSA5IDAgMCAwIDEgNWwzIDIuNGE1LjQgNS40IDAgMCAxIDUtMy43eiIgZmlsbD0iI0VBNDMzNSIgZmlsbC1ydWxlPSJub256ZXJvIi8+PHBhdGggZD0iTTAgMGgxOHYxOEgweiIvPjwvZz48L3N2Zz4="
+                      alt=""
+                    />
+                  )}
+                  <div>{loading ? "Signing in…" : "Sign in with Google"}</div>
+                </Button>
               </div>
-            </Tabs>
-          </CardContent>
-          <CardFooter className="flex flex-col justify-center text-center text-sm text-gray-500">
-            <p className="font-semibold mb-2">Demo Credentials:</p>
-            <p>Admin: admin@example.com / admin123</p>
-            <p>Manager: manager@example.com / manager123</p>
-          </CardFooter>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </GoogleOAuthProvider>
   );

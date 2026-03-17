@@ -26,6 +26,9 @@ const config = {
     API_URL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
     FRONTEND_URL: import.meta.env.VITE_FRONTEND_URL || 'http://localhost:5173',
 
+    // Hub (Anhto) API URL - for Google OAuth flow (redirect + callback exchange)
+    HUB_API_URL: (import.meta.env.VITE_HUB_API_URL || 'https://api.uat-hub.allcloudworks.com').replace(/\/$/, ''),
+
     // Current environment (development/production)
     NODE_ENV: import.meta.env.VITE_MODE || 'development',
 

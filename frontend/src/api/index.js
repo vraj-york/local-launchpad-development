@@ -2,6 +2,7 @@ import axios from "axios";
 import config from "../config/index.js";
 
 const API_URL = config.API_URL;
+const HUB_API_URL = import.meta.env.VITE_HUB_API_URL;
 
 // Create axios instance with default config
 const api = axios.create({
@@ -348,7 +349,7 @@ export const updateRoadmapByProjectId = async (projectId, roadmapData) => {
   }
 };
 
-// Function to handle Google Login
+// Function to handle Google Login (local backend, ID token)
 export const googleLogin = async (token) => {
   try {
     const response = await axios.post(`${API_URL}/api/auth/google`, { token });
@@ -359,6 +360,29 @@ export const googleLogin = async (token) => {
     return { token: jwtToken, user };
   } catch (error) {
     throw error.response?.data || { error: "Google Login failed" };
+  }
+};
+
+/**
+ * Hub (Anhto) Google OAuth: exchange authorization code for token.
+ * Call after user is redirected back to frontend with ?code=...
+ */
+export const exchangeHubAuthCode = async (code) => {
+  try {
+    const response = await axios.get(
+      `${HUB_API_URL}/api/auth/callback`,
+      { params: { code } }
+    );
+    const { token, user } = response.data;
+    if (!token || !user) {
+      throw new Error("Invalid callback response");
+    }
+    localStorage.setItem("token", token);
+    localStorage.setItem("user", JSON.stringify(user));
+    return { token, user };
+  } catch (error) {
+    const data = error.response?.data;
+    throw data || { error: "Google sign-in failed" };
   }
 };
 
