@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, ReleaseStatus } from "@prisma/client";
 import path from "path";
 import fs from "fs-extra";
 import extract from "extract-zip";
@@ -469,21 +469,23 @@ export const createReleaseService = async (data, user) => {
 
   if (!hasAccess) throw new ApiError(403, "Forbidden");
 
-  const latestRelease = await prisma.release.findFirst({
-    where: { projectId },
-    orderBy: { id: "desc" },
-    select: { isLocked: true },
-  });
+  // Allow creating new releases in draft mode even when previous release is not locked
 
-  if (latestRelease && !latestRelease.isLocked) {
-    throw new ApiError(
-      400,
-      "Lock the latest release before creating a new one",
-    );
+  const releaseNameTrimmed = name && typeof name === "string" ? name.trim() : "";
+  if (!releaseNameTrimmed) {
+    throw new ApiError(400, "Release name is required");
   }
 
-  if (!name || !name.trim()) {
-    throw new ApiError(400, "Release name is required");
+  // Release name must be unique within this project (case-insensitive)
+  const existingRelease = await prisma.release.findFirst({
+    where: {
+      projectId,
+      name: { equals: releaseNameTrimmed, mode: "insensitive" },
+    },
+    select: { id: true },
+  });
+  if (existingRelease) {
+    throw new ApiError(400, "Release name already exists for this project. Choose a unique name.");
   }
 
   // Verify roadmap item if provided
@@ -505,8 +507,9 @@ export const createReleaseService = async (data, user) => {
     const release = await tx.release.create({
       data: {
         projectId,
-        name: name.trim(),
+        name: releaseNameTrimmed,
         description: description?.trim() || null,
+        status: ReleaseStatus.draft,
         createdBy: userId,
       },
       include: {
@@ -529,23 +532,106 @@ export const createReleaseService = async (data, user) => {
 };
 
 /**
- * Lock or unlock a release
+ * Set release status: draft | active | locked.
+ * At a time only one release per project is "active". When setting to active:
+ * other active releases are marked draft; locked releases are unchanged.
  */
+const RELEASE_STATUS_VALUES = Object.values(ReleaseStatus);
 
+export const setReleaseStatusService = async (releaseId, status, user) => {
+  const { id: userId, role } = user;
+  const s = status && String(status).toLowerCase();
+  if (!RELEASE_STATUS_VALUES.includes(s)) {
+    throw new ApiError(400, `status must be one of: ${RELEASE_STATUS_VALUES.join(", ")}`);
+  }
+
+  const release = await prisma.release.findUnique({
+    where: { id: releaseId },
+    select: {
+      id: true,
+      projectId: true,
+      status: true,
+      isLocked: true,
+      project: { select: { assignedManagerId: true } },
+    },
+  });
+  if (!release) throw new ApiError(404, "Release not found");
+
+  const hasPermission =
+    role === "admin" ||
+    (role === "manager" && release.project.assignedManagerId === userId);
+  if (!hasPermission) throw new ApiError(403, "Forbidden");
+
+  await prisma.$transaction(async (tx) => {
+    if (s === ReleaseStatus.locked) {
+      await tx.release.update({
+        where: { id: releaseId },
+        data: { status: ReleaseStatus.locked, isLocked: true },
+      });
+      return;
+    }
+
+    if (s === ReleaseStatus.active) {
+      // Only other active releases become draft; locked releases stay locked
+      await tx.release.updateMany({
+        where: {
+          projectId: release.projectId,
+          id: { not: releaseId },
+          status: ReleaseStatus.active,
+        },
+        data: { status: ReleaseStatus.draft, isActive: false },
+      });
+      await tx.release.update({
+        where: { id: releaseId },
+        data: { status: ReleaseStatus.active, isActive: true },
+      });
+      const latestInRelease = await tx.projectVersion.findFirst({
+        where: { releaseId, projectId: release.projectId },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      if (latestInRelease) {
+        await tx.projectVersion.updateMany({
+          where: { projectId: release.projectId },
+          data: { isActive: false },
+        });
+        await tx.projectVersion.update({
+          where: { id: latestInRelease.id },
+          data: { isActive: true },
+        });
+      }
+      return;
+    }
+
+    // draft
+    await tx.release.update({
+      where: { id: releaseId },
+      data: { status: ReleaseStatus.draft, isActive: false },
+    });
+  });
+
+  return prisma.release.findUnique({
+    where: { id: releaseId },
+    include: {
+      versions: { orderBy: { createdAt: "desc" }, take: 5 },
+    },
+  });
+};
+
+/**
+ * Lock or unlock a release (kept for backward compat). Syncs status: locked → status locked, unlocked → status draft.
+ */
 export const lockReleaseService = async (releaseId, locked, user) => {
   const { id: userId, role } = user;
 
-  // 1️⃣ Fetch target release + latest release in ONE go
   const release = await prisma.release.findUnique({
     where: { id: releaseId },
     select: {
       id: true,
       isLocked: true,
       projectId: true,
-      isActive: true,
-      project: {
-        select: { assignedManagerId: true },
-      },
+      status: true,
+      project: { select: { assignedManagerId: true } },
     },
   });
 
@@ -553,83 +639,75 @@ export const lockReleaseService = async (releaseId, locked, user) => {
     throw new ApiError(404, "Release not found");
   }
 
-  /** ---------------- Permission ---------------- */
   const hasPermission =
     role === "admin" ||
     (role === "manager" && release.project.assignedManagerId === userId);
-
   if (!hasPermission) {
     throw new ApiError(403, "Forbidden");
   }
 
-  // 2️⃣ Fetch latest release for the project
-  const latestRelease = await prisma.release.findFirst({
-    where: { projectId: release.projectId },
-    orderBy: { id: "desc" },
-    select: { id: true, isLocked: true },
-  });
-
-  /** ---------------- Locked release cannot be changed ---------------- */
   if (release.isLocked && locked === true) {
-    throw new ApiError(400, "Locked release cannot be modified");
+    throw new ApiError(400, "Release is already locked");
+  }
+  if (!release.isLocked && locked === false) {
+    throw new ApiError(400, "Release is already unlocked");
   }
 
-  /** ---------------- Unlock rules ---------------- */
-  if (locked === false) {
-    if (!release.isLocked) {
-      throw new ApiError(400, "Release is already unlocked");
-    }
-
-    if (release.id !== latestRelease.id) {
-      throw new ApiError(400, "Only the latest release can be unlocked");
-    }
-  }
-
-  /** ---------------- Lock rules ---------------- */
-  if (locked === true) {
-    // Allow locking any unlocked release (typically latest)
-    // No sequence restriction needed anymore
-    // Already locked → no-op or error
-    if (release.isLocked) {
-      throw new ApiError(400, "Release is already locked");
-    }
-
-    // Only latest release can be locked
-    if (release.id !== latestRelease.id) {
-      throw new ApiError(400, "Only the latest release can be locked");
-    }
-  }
-
-  /** ---------------- Update ---------------- */
-  return prisma.release.update({
+  const newStatus = locked ? ReleaseStatus.locked : ReleaseStatus.draft;
+  const updated = await prisma.release.update({
     where: { id: releaseId },
-    data: { isLocked: locked },
+    data: {
+      isLocked: locked,
+      status: newStatus,
+      ...(locked ? {} : { isActive: false }),
+    },
   });
+  return updated;
 };
 
 /**
- * Generates the next semantic version for a release (e.g., 1.0.1 -> 1.0.2)
+ * Parse semver string to [major, minor, patch] for comparison.
+ * @returns {[number, number, number]|null}
+ */
+function parseSemver(v) {
+  if (!v || typeof v !== "string") return null;
+  const parts = v.trim().split(".").map(Number);
+  if (parts.length < 3 || parts.some(Number.isNaN)) return null;
+  return [parts[0], parts[1] ?? 0, parts[2] ?? 0];
+}
+
+/**
+ * Returns true if version a is strictly greater than b (semver).
+ */
+function semverGt(a, b) {
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  if (!pa || !pb) return false;
+  if (pa[0] !== pb[0]) return pa[0] > pb[0];
+  if (pa[1] !== pb[1]) return pa[1] > pb[1];
+  return pa[2] > pb[2];
+}
+
+
+/**
+ * Generates the next semantic version for the same release.
+ * Uses the highest existing version for this release and bumps patch (+1).
+ * First upload to a release gets 1.0.0; each further upload to that release gets +1 (1.0.1, 1.0.2, ...).
  */
 export const autoGenerateVersion = async (releaseId) => {
-  const lastVersion = await prisma.projectVersion.findFirst({
+  const release = await prisma.release.findUnique({
+    where: { id: releaseId },
+    select: { id: true },
+  });
+  if (!release) return "1.0.0";
+
+  const versions = await prisma.projectVersion.findMany({
     where: { releaseId },
-    orderBy: { createdAt: "desc" },
     select: { version: true },
   });
-
-  if (!lastVersion) {
-    return "1.0.0";
-  }
-
-  const parts = lastVersion.version.split(".").map(Number);
-
-  // Basic Semantic Versioning: Incrementing the Patch (third digit)
-  if (parts.length === 3) {
-    parts[2] += 1;
-    return parts.join(".");
-  }
-
-  return `${lastVersion.version}.1`; // Fallback for non-standard versions
+  const base = maxSemver(versions.map((r) => r.version).filter(Boolean));
+  if (!base) return "1.0.0";
+  return semverPatchBump(base);
 };
 
 /**
@@ -650,14 +728,14 @@ export const runBuildSequence = async (buildContextPath, opts = {}) => {
   // Backend container sets NODE_ENV=production; npm omits devDeps unless we override.
   const installArgs = opts.fastInstall
     ? [
-        "install",
-        "--include=dev",
-        "--prefer-offline",
-        "--no-audit",
-        "--no-fund",
-        "--loglevel",
-        "error",
-      ]
+      "install",
+      "--include=dev",
+      "--prefer-offline",
+      "--no-audit",
+      "--no-fund",
+      "--loglevel",
+      "error",
+    ]
     : ["install", "--include=dev"];
 
   // Force devDependencies: NODE_ENV=production alone can still skip devDeps on some npm versions.
@@ -733,6 +811,12 @@ export const uploadReleaseVersionService = async (
 
   if (!release) {
     throw new ApiError(404, "Release not found");
+  }
+
+  // Upload allowed for draft and active; not for locked
+  const releaseStatus = release.status ?? (release.isLocked ? ReleaseStatus.locked : ReleaseStatus.draft);
+  if (releaseStatus === ReleaseStatus.locked) {
+    throw new ApiError(400, "Locked release cannot upload. Change status to draft or active first.");
   }
 
   const project = release.project;
@@ -890,20 +974,23 @@ export const uploadReleaseVersionService = async (
     const buildUrl = `${protocol}://${domain}:${project.port}`;
 
     /* -------------------- 12️⃣ DB Update -------------------- */
+    // Only the active release can have the uploaded version as project-active; draft releases get isActive: false.
+    const makeVersionActive = releaseStatus === ReleaseStatus.active;
 
     await prisma.$transaction(async (tx) => {
-      await tx.projectVersion.updateMany({
-        where: { projectId: project.id },
-        data: { isActive: false },
-      });
-
+      if (makeVersionActive) {
+        await tx.projectVersion.updateMany({
+          where: { projectId: project.id },
+          data: { isActive: false },
+        });
+      }
       await tx.projectVersion.create({
         data: {
           projectId: project.id,
           releaseId,
           version,
           buildUrl,
-          isActive: true,
+          isActive: makeVersionActive,
           gitTag: tag,
           zipFilePath: tag, // legacy column; same value so DB row stays consistent
           uploadedBy: userId,
@@ -962,6 +1049,7 @@ export const getReleaseInfoService = async (releaseId) => {
     project: release.project,
     version: release.versions[0]?.version || "1.0.0",
     lastUpdated: release.versions[0]?.createdAt || null,
+    status: release.status ?? (release.isLocked ? ReleaseStatus.locked : ReleaseStatus.draft),
     locked: release.isLocked || false,
     lockToken: lockToken,
   };
@@ -1000,17 +1088,25 @@ export const publicLockReleaseService = async (releaseId, locked, token) => {
     throw new ApiError(404, "Release not found");
   }
 
-  // For now, accept any token since we're generating unique tokens per request
-  // In a production environment, you might want to implement token validation
+  if (release.isLocked && locked === true) {
+    throw new ApiError(400, "Release is already locked");
+  }
+  if (!release.isLocked && locked === false) {
+    throw new ApiError(400, "Release is already unlocked");
+  }
 
-  // Update release lock status
   const updatedRelease = await prisma.release.update({
     where: { id: releaseId },
-    data: { isLocked: locked },
+    data: {
+      isLocked: locked,
+      status: locked ? ReleaseStatus.locked : ReleaseStatus.draft,
+      ...(locked ? {} : { isActive: false }),
+    },
     select: {
       id: true,
       name: true,
       isLocked: true,
+      status: true,
     },
   });
 

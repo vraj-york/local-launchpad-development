@@ -220,13 +220,33 @@ export const reloadNginx = async () => {
     if (os.platform() !== 'darwin') throw error;
   }
 };
+
+/**
+ * Regenerate nginx config for all projects that have a port.
+ * (Reserved for future use; SSL wildcard behaviour has been reverted.)
+ */
+export const regenerateAllProjectNginxConfigs = async () => {
+  // No-op: SSL wildcard reverted; configs are created on project create only.
+};
+
 export const createProjectService = async ({ userId, body }) => {
   const { name, assignedManagerId, jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken, githubUsername, githubToken } = body;
   const isLinux = os.platform() === 'linux';
   const nginxBinary = isLinux ? '/usr/sbin/nginx' : '/opt/homebrew/bin/nginx';
 
   try {
-    // 1. Validate Manager
+    // 1. Project name must be unique (case-insensitive)
+    const nameTrimmed = (name && typeof name === "string") ? name.trim() : "";
+    if (!nameTrimmed) throw new ApiError(400, "Project name is required");
+    const existingProject = await prisma.project.findFirst({
+      where: { name: { equals: nameTrimmed, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (existingProject) {
+      throw new ApiError(400, "Project name already exists. Choose a unique name.");
+    }
+
+    // 2. Validate Manager
     const managerExists = await prisma.user.findFirst({
       where: { id: Number(assignedManagerId), role: "manager" },
       select: { id: true },
@@ -589,6 +609,7 @@ export async function activateProjectVersionService({
       version: true,
       gitTag: true,
       zipFilePath: true, // legacy; fallback if gitTag empty
+      releaseId: true,
     },
   });
 
@@ -597,6 +618,24 @@ export async function activateProjectVersionService({
   }
   if (version.isActive) {
     throw new ApiError(400, "Version is already active");
+  }
+
+  // To activate a different version, the release that currently has the active version must be locked first
+  const currentActive = await prisma.projectVersion.findFirst({
+    where: { projectId, isActive: true },
+    select: { releaseId: true },
+  });
+  if (currentActive?.releaseId) {
+    const activeRelease = await prisma.release.findUnique({
+      where: { id: currentActive.releaseId },
+      select: { isLocked: true },
+    });
+    if (activeRelease && !activeRelease.isLocked) {
+      throw new ApiError(
+        400,
+        "Lock the current active release before activating another version",
+      );
+    }
   }
   const tag =
     (version.gitTag && version.gitTag.trim()) ||
@@ -648,6 +687,60 @@ export async function activateProjectVersionService({
       await fs.remove(worktreeDir).catch(() => { });
       await fs.ensureDir(worktreeDir);
       runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
+      // Fetch tag (same as switch version): prefer project's repo, then origin, so Figma/remote-only tags work
+      const fetchTagIntoLocalRepo = (gDir, t, proj) => {
+        if (proj.gitRepoPath?.trim() && proj.githubToken?.trim()) {
+          const parsed = parseGitRepoPath(proj.gitRepoPath.trim());
+          if (parsed) {
+            const { owner, repo } = parsed;
+            const token = proj.githubToken.trim();
+            const fetchUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+            try {
+              execFileSync("git", ["--git-dir", gDir, "fetch", fetchUrl, `refs/tags/${t}:refs/tags/${t}`], {
+                cwd: backendRoot,
+                encoding: "utf8",
+                timeout: 120000,
+              });
+              return true;
+            } catch {
+              try {
+                execFileSync("git", ["--git-dir", gDir, "fetch", fetchUrl, "tag", t], {
+                  cwd: backendRoot,
+                  encoding: "utf8",
+                  timeout: 120000,
+                });
+                return true;
+              } catch {
+                return false;
+              }
+            }
+          }
+        }
+        return false;
+      };
+      if (!fetchTagIntoLocalRepo(gitDir, tag, project)) {
+        try {
+          runCommand(
+            `git --git-dir="${gitDir}" fetch origin "refs/tags/${tag}:refs/tags/${tag}"`,
+            backendRoot,
+          );
+        } catch {
+          try {
+            runCommand(`git --git-dir="${gitDir}" fetch origin tag "${tag}"`, backendRoot);
+          } catch (_) { /* tag may already exist locally */ }
+        }
+      }
+      try {
+        runCommand(
+          `git --git-dir="${gitDir}" rev-parse --verify "refs/tags/${tag}"`,
+          backendRoot,
+        );
+      } catch {
+        const hint = project.gitRepoPath
+          ? "Ensure the tag exists on the project's GitHub repo and that gitRepoPath + githubToken are set."
+          : "Ensure the tag exists on the remote and that projects/.git remote \"origin\" points to the correct repo, or set the project's gitRepoPath + githubToken.";
+        throw new ApiError(400, `Tag "${tag}" not found. ${hint}`);
+      }
       runCommand(
         `git --git-dir="${gitDir}" worktree add "${worktreeDir}" "${tag}"`,
         backendRoot,
@@ -728,10 +821,9 @@ export async function activateProjectVersionService({
     await reloadNginxRelease();
 
     const domain = config.getBuildUrlHost();
-    const protocol = config.getBuildUrlProtocol();
     const liveBuildUrl =
       project.port != null
-        ? `${protocol}://${domain}:${project.port}`
+        ? `${config.getBuildUrlProtocol()}://${domain}:${project.port}`
         : version.buildUrl;
 
     await prisma.$transaction(async (tx) => {
@@ -998,7 +1090,6 @@ export async function cleanupStalePreviews(force = false) {
       }
       if (now - createdAt > PREVIEW_TTL_MS) {
         await fs.remove(dirPath).catch((e) => console.warn("[cleanupStalePreviews]", dirPath, e.message));
-        console.log("[cleanupStalePreviews] removed expired preview:", dirPath);
       }
     }
     // Remove _preview itself if now empty (optional tidy)
@@ -1030,7 +1121,7 @@ export const switchProjectVersion = async (
 ) => {
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
-    select: { id: true, name: true, projectPath: true, port: true },
+    select: { id: true, name: true, projectPath: true, port: true, gitRepoPath: true, githubToken: true },
   });
   if (!project) {
     throw new ApiError(404, "Project not found");
@@ -1069,6 +1160,7 @@ export const switchProjectVersion = async (
 
   const backendRoot = getBackendRoot();
   const projectsDir = getProjectsDir();
+
   const gitDir = path.join(projectsDir, ".git");
   if (!fs.existsSync(gitDir)) {
     throw new ApiError(
@@ -1095,8 +1187,7 @@ export const switchProjectVersion = async (
             "utf8",
           );
           const domain = config.getBuildUrlHost();
-          const protocol = config.getBuildUrlProtocol();
-          const projectUrl = `${protocol}://${domain}:${project.port}`;
+          const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
           return {
             message: "Preview ready (cached). Same URL; refresh to see it.",
             version: versionLabel,
@@ -1115,6 +1206,68 @@ export const switchProjectVersion = async (
     await fs.ensureDir(previewDir);
 
     runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
+    // Fetch tag: prefer project's repo (e.g. projects/Launchpad → binalc-web/launchpad) when set
+    const fetchFromProjectRepo = () => {
+      if (!project.gitRepoPath?.trim() || !project.githubToken?.trim()) return false;
+      const parsed = parseGitRepoPath(project.gitRepoPath.trim());
+      if (!parsed) return false;
+      const { owner, repo } = parsed;
+      const token = project.githubToken.trim();
+      const fetchUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+      const gitArgs = (refspec) => ["--git-dir", gitDir, "fetch", fetchUrl, refspec];
+      try {
+        execFileSync("git", gitArgs(`refs/tags/${tag}:refs/tags/${tag}`), {
+          cwd: backendRoot,
+          encoding: "utf8",
+          timeout: 120000,
+        });
+        return true;
+      } catch {
+        try {
+          execFileSync("git", [...gitArgs("tag"), tag], {
+            cwd: backendRoot,
+            encoding: "utf8",
+            timeout: 120000,
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    };
+    const fetchedFromProject = fetchFromProjectRepo();
+    if (!fetchedFromProject) {
+      try {
+        runCommand(
+          `git --git-dir="${gitDir}" fetch origin "refs/tags/${tag}:refs/tags/${tag}"`,
+          backendRoot,
+        );
+      } catch {
+        try {
+          runCommand(
+            `git --git-dir="${gitDir}" fetch origin tag "${tag}"`,
+            backendRoot,
+          );
+        } catch (_) {
+          // Tag may already exist locally (e.g. from ZIP upload)
+        }
+      }
+    }
+    // Ensure tag exists locally so we give a clear error instead of "invalid reference"
+    try {
+      runCommand(
+        `git --git-dir="${gitDir}" rev-parse --verify "refs/tags/${tag}"`,
+        backendRoot,
+      );
+    } catch {
+      const hint = project.gitRepoPath
+        ? "Ensure the tag exists on the project's GitHub repo and that gitRepoPath + githubToken are set for this project."
+        : "Ensure the tag exists on the remote and that projects/.git remote \"origin\" points to the correct repository, or set the project's gitRepoPath + githubToken.";
+      throw new ApiError(
+        400,
+        `Tag "${tag}" not found. ${hint}`
+      );
+    }
     runCommand(`git --git-dir="${gitDir}" worktree add "${previewRepo}" "${tag}"`, backendRoot);
 
     const sourceRoot = findProjectRoot(previewRepo);
@@ -1141,10 +1294,8 @@ export const switchProjectVersion = async (
     }
 
     const domain = config.getBuildUrlHost();
-    const protocol = config.getBuildUrlProtocol();
-    const projectUrl = `${protocol}://${domain}:${project.port}`;
+    const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
     const previewUrl = `${projectUrl}?preview=1`;
-
     return {
       message: "Temporary preview ready. Same URL; refresh the page to see live (projects/) again.",
       version: versionLabel,

@@ -19,6 +19,7 @@ model User {
   versionsUploaded     ProjectVersion[] @relation("VersionUploader")
   releasesCreated       Release[]       @relation("ReleaseCreator")
   figmaConversions     FigmaConversion[] @relation("FigmaConversionAttemptedBy")
+  image    String?  
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -45,7 +46,7 @@ model Project {
   projectPath       String?
   gitRepoPath       String?
   nginxConfigPath   String?
-  
+  projectId String?  
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -73,7 +74,7 @@ model ProjectVersion {
   projectId   Int
   releaseId   Int?     // Link to release (optional for backward compatibility)
   version     String   // e.g., "1.0.0", "1.1.0", "2.0.0"
-  zipFilePath String   // Legacy column; kept to avoid data loss. App uses gitTag only—write same value as gitTag when creating.
+  zipFilePath String?   // Legacy column; kept to avoid data loss. App uses gitTag only—write same value as gitTag when creating.
   gitTag      String   // Git tag / ref for checkout & activate (primary)
   buildUrl    String
   isActive    Boolean  @default(false) // Only one version can be active per project
@@ -92,14 +93,21 @@ model ProjectVersion {
 
 
 
+enum ReleaseStatus {
+  draft
+  active
+  locked
+}
+
 model Release {
   id          Int      @id @default(autoincrement())
   projectId   Int
   name        String
   description String?
   releaseDate DateTime?   // 🔥 ADD (key for timeline & roadmap)
-  isLocked    Boolean  @default(false)
-  isActive    Boolean  @default(false)
+  status      ReleaseStatus @default(draft)
+  isLocked    Boolean  @default(false)   // true when status === locked (kept for backward compat)
+  isActive    Boolean  @default(false)   // true when status === active (only one per project)
 
   createdBy   Int
   createdAt   DateTime @default(now())

@@ -165,6 +165,12 @@ router.post("/google", async (req, res) => {
     }
 
     const { email, name, picture } = payload;
+    // 🚫 Domain restriction
+    if (!email.endsWith("@york.ie")) {
+      return res.status(403).json({
+        error: "Access denied. Only york.ie accounts are allowed",
+      });
+    }
 
     let user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
@@ -178,8 +184,17 @@ router.post("/google", async (req, res) => {
           email,
           password: hashedPassword,
           role: (role && ["admin", "manager"].includes(role)) ? role : "manager",
+          image: picture,
         }
       });
+    } else {
+      // 🔄 keep profile updated
+      if (user.image !== picture) {
+        await prisma.user.update({
+          where: { email },
+          data: { image: picture },
+        });
+      }
     }
 
     const jwtToken = jwt.sign(
@@ -191,7 +206,6 @@ router.post("/google", async (req, res) => {
     res.json({ token: jwtToken, user });
 
   } catch (error) {
-    console.error("Google Auth Error:", error);
     res.status(400).json({ error: "Invalid Google Token" });
   }
 });

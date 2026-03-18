@@ -12,6 +12,7 @@ export const AuthProvider = ({ children }) => {
     const clearAuthStorage = () => {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
+        localStorage.removeItem('token_source');
         setUser(null);
     };
 
@@ -51,7 +52,6 @@ export const AuthProvider = ({ children }) => {
     const checkAuth = () => {
         const storedUser = localStorage.getItem('user');
         const token = localStorage.getItem('token');
-
         if (!storedUser || !token || isTokenExpired(token)) {
             clearAuthStorage();
             return;
