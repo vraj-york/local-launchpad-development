@@ -2,7 +2,11 @@ import axios from "axios";
 import config from "../config/index.js";
 
 const API_URL = config.API_URL;
-const HUB_API_URL = import.meta.env.VITE_HUB_API_URL;
+const HUB_API_URL = (
+  config.HUB_API_URL ||
+  import.meta.env.VITE_HUB_API_URL ||
+  ""
+).replace(/\/$/, "");
 
 // Create axios instance with default config
 const api = axios.create({
@@ -31,8 +35,13 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
+      const isHub = localStorage.getItem("token_source") === "hub";
+      if (isHub) {
+        return Promise.reject(error);
+      }
       localStorage.removeItem("token");
       localStorage.removeItem("user");
+      localStorage.removeItem("token_source");
       window.location.href = "/";
     }
     return Promise.reject(error);
@@ -48,6 +57,7 @@ export const loginUser = async (credentials) => {
     // Store token and user data
     localStorage.setItem("token", token);
     localStorage.setItem("user", JSON.stringify(user));
+    localStorage.setItem("token_source", "app");
 
     return { token, user };
   } catch (error) {
@@ -357,34 +367,73 @@ export const googleLogin = async (token) => {
     // Store token and user data
     localStorage.setItem("token", jwtToken);
     localStorage.setItem("user", JSON.stringify(user));
+    localStorage.setItem("token_source", "app");
     return { token: jwtToken, user };
   } catch (error) {
     throw error.response?.data || { error: "Google Login failed" };
   }
 };
 
-/**
- * Hub (Anhto) Google OAuth: exchange authorization code for token.
- * Call after user is redirected back to frontend with ?code=...
- */
-export const exchangeHubAuthCode = async (code) => {
-  try {
-    const response = await axios.get(
-      `${HUB_API_URL}/api/auth/callback`,
-      { params: { code } }
-    );
-    const { token, user } = response.data;
-    if (!token || !user) {
-      throw new Error("Invalid callback response");
+/** Parse Hub /api/auth/callback response (several possible shapes). */
+function parseHubAuthResponse(body) {
+  if (!body || typeof body !== "object") return null;
+  const d =
+    body.data != null && typeof body.data === "object" ? body.data : body;
+  const token =
+    d.token ||
+    d.accessToken ||
+    d.access_token ||
+    body.token ||
+    body.accessToken;
+  let user = d.user || d.userProfile || d.profile || body.user;
+  if (user && typeof user === "string") {
+    try {
+      user = JSON.parse(user);
+    } catch {
+      user = null;
     }
-    localStorage.setItem("token", token);
-    localStorage.setItem("user", JSON.stringify(user));
-    return { token, user };
-  } catch (error) {
-    const data = error.response?.data;
-    throw data || { error: "Google sign-in failed" };
   }
-};
+  if (!token) return null;
+  if (!user || typeof user !== "object") {
+    user = {
+      id: d.id ?? body.id ?? "user",
+      email: d.email ?? body.email ?? "",
+      name: d.name ?? d.username ?? body.name ?? "User",
+    };
+  }
+  return { token, user };
+}
+
+const hubAuthByCode = new Map();
+
+/**
+ * Exchange Hub OAuth code for token. Same code returns cached result (avoids double-call issues).
+ */
+export async function exchangeHubAuthCode(code, redirectUri) {
+  if (hubAuthByCode.has(code)) return hubAuthByCode.get(code);
+
+  const redirect_uri = redirectUri || config.HUB_OAUTH_REDIRECT_URL;
+  const promise = (async () => {
+    const { data } = await axios.get(`${HUB_API_URL}/api/auth/callback`, {
+      params: { code, redirect_uri },
+    });
+    const parsed = parseHubAuthResponse(data);
+    if (!parsed) {
+      const err = new Error(
+        data?.message || data?.error || "Unexpected response from Hub",
+      );
+      throw err;
+    }
+    localStorage.setItem("token", parsed.token);
+    localStorage.setItem("user", JSON.stringify(parsed.user));
+    localStorage.setItem("token_source", "hub");
+    return parsed;
+  })();
+
+  hubAuthByCode.set(code, promise);
+  promise.catch(() => hubAuthByCode.delete(code));
+  return promise;
+}
 
 // Active release versions
 export const activateReleaseVersions = async (projectId, versionId) => {

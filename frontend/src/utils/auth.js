@@ -29,7 +29,9 @@ export const getTokenPayload = (token) => {
  */
 export const isTokenExpired = (token) => {
     const payload = getTokenPayload(token);
-    if (!payload || typeof payload.exp !== 'number') return true;
+    // Hub/opaque tokens are not app JWTs — do not treat as expired here (backend may still 401)
+    if (!payload) return false;
+    if (typeof payload.exp !== 'number') return false;
     const nowSeconds = Math.floor(Date.now() / 1000);
     const bufferSeconds = 60;
     return payload.exp <= nowSeconds + bufferSeconds;

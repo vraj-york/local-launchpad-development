@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate, useLocation } from "react-router-dom";
-import { googleLogin, figmaComplete } from "../api";
+import { useNavigate } from "react-router-dom";
+import { figmaComplete } from "../api";
 import config from "../config";
 import { isTokenExpired } from "../utils/auth";
 import {
@@ -14,7 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2 } from "lucide-react";
-import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 import logo from "../assets/launchpad-logo-svg.svg";
 
 const clientId =
@@ -29,54 +29,16 @@ function getFigmaState() {
 const HUB_API_URL = config.HUB_API_URL || import.meta.env.VITE_HUB_API_URL;
 
 const LoginPage = () => {
-  const { user, checkAuth } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [figmaState, setFigmaState] = useState(null);
   const [figmaDone, setFigmaDone] = useState(false);
   const [autoCompletingFigma, setAutoCompletingFigma] = useState(false);
-  const [handlingCallback, setHandlingCallback] = useState(false);
-
   useEffect(() => {
     setFigmaState(getFigmaState());
   }, []);
-
-  // Handle callback from Hub: ?code=... after Google redirect
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const code = params.get("code");
-    if (!code || handlingCallback) return;
-
-    setHandlingCallback(true);
-    setLoading(true);
-    setError("");
-
-    exchangeHubAuthCode(code)
-      .then(({ token }) => {
-        checkAuth();
-        const state = getFigmaState();
-        const cleanUrl =
-          window.location.pathname + (state ? `?state=${state}` : "");
-        window.history.replaceState({}, "", cleanUrl);
-        if (state) {
-          figmaComplete(state, token).then((complete) => {
-            if (complete.error) setError(complete.error);
-            else setFigmaDone(true);
-          });
-        } else {
-          navigate("/dashboard");
-        }
-      })
-      .catch((err) => {
-        setError(err?.error || "Google sign-in failed");
-      })
-      .finally(() => {
-        setLoading(false);
-        setHandlingCallback(false);
-      });
-  }, [location.search]);
 
   useEffect(() => {
     const state = getFigmaState();
@@ -103,36 +65,15 @@ const LoginPage = () => {
     }
   }, [user, figmaState, navigate]);
 
-  const handleGoogleSuccess = async (credentialResponse) => {
-    setLoading(true);
-    setError("");
-    try {
-      const result = await googleLogin(credentialResponse.credential);
-      if (result.token && result.user) {
-        checkAuth();
-        if (figmaState) {
-          const complete = await figmaComplete(figmaState, result.token);
-          if (complete.error) {
-            setError(complete.error);
-          } else {
-            setFigmaDone(true);
-          }
-        } else {
-          navigate("/dashboard");
-        }
-      }
-    } catch (err) {
-      setError("Google Login Failed");
-    }
-    setLoading(false);
-  };
-
-  const handleGoogleFailure = () => {
-    setError("Google Login Failed");
-  };
-
   const handleGoogleSignIn = async () => {
-    const apiUrl = `${HUB_API_URL}/api/auth/google`;
+    const state = getFigmaState();
+    const figmaKey = "hub_oauth_figma_state";
+    if (state) sessionStorage.setItem(figmaKey, state);
+    else sessionStorage.removeItem(figmaKey);
+
+    const redirectUrl = config.HUB_OAUTH_REDIRECT_URL;
+    const apiUrl = `${HUB_API_URL}/api/auth/google?redirect_url=${redirectUrl}`;
+
     setLoading(true);
     setError("");
     try {
@@ -141,11 +82,13 @@ const LoginPage = () => {
       const authUrl = json?.data?.url;
       if (!authUrl) {
         setError("Invalid response from sign-in service");
+        sessionStorage.removeItem(figmaKey);
         return;
       }
       window.location.href = authUrl;
     } catch (err) {
       setError("Could not start Google sign-in. Try again.");
+      sessionStorage.removeItem(figmaKey);
     } finally {
       setLoading(false);
     }
@@ -210,27 +153,6 @@ const LoginPage = () => {
                     <AlertDescription>{error}</AlertDescription>
                   </Alert>
                 )}
-                {/* <GoogleLogin
-                  onSuccess={handleGoogleSuccess}
-                  onError={handleGoogleFailure}
-                  useOneTap
-                  render={(renderProps) => (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full"
-                      onClick={renderProps.onClick}
-                      disabled={renderProps.disabled || loading}
-                    >
-                      {loading ? (
-                        <Loader2 className="size-5 animate-spin shrink-0" />
-                      ) : (
-                        <GoogleIcon />
-                      )}
-                      {loading ? "Signing in…" : "Continue with Google"}
-                    </Button>
-                  )}
-                /> */}
                 <Button
                   onClick={handleGoogleSignIn}
                   disabled={loading}

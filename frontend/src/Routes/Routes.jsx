@@ -6,6 +6,7 @@ import {
 } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import LoginPage from "../pages/LoginPage";
+import AuthCallbackPage from "../pages/AuthCallbackPage";
 import { MainLayout } from "@/layouts/MainLayout";
 import ProjectDetails from "@/pages/ProjectDetails";
 import Dashboard from "@/pages/Dashboard";
@@ -20,6 +21,7 @@ export const Routes = () => {
 
   const publicRoutes = [
     { path: "/login", element: <LoginPage />, publicOnly: false },
+    { path: "/auth/callback", element: <AuthCallbackPage />, publicOnly: false },
     // {
     //   path: "/projects/public/:projectId",
     //   element: <PublicProjectView />,
