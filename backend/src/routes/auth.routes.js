@@ -3,10 +3,6 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
 import { OAuth2Client } from "google-auth-library";
-import {
-  CognitoIdentityProviderClient,
-  InitiateAuthCommand,
-} from "@aws-sdk/client-cognito-identity-provider";
 import crypto from "crypto";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import {
@@ -16,17 +12,6 @@ import {
 
 const router = express.Router();
 const prisma = new PrismaClient();
-
-function getCognitoConfig() {
-  const userPoolId = (process.env.AWS_COGNITO_USER_POOL_ID)?.trim();
-  console.log(`[Cognito Config] userPoolId: ${userPoolId}`);
-  const clientId = (process.env.AWS_COGNITO_APP_CLIENT_ID)?.trim();
-  console.log(`[Cognito Config] clientId: ${clientId}`);
-  const region = (process.env.AWS_COGNITO_REGION || (userPoolId && userPoolId.includes("_") ? userPoolId.split("_")[0] : null))?.trim();
-  return { userPoolId, clientId, region };
-}
-
-
 
 /**
  * @swagger
@@ -276,7 +261,6 @@ router.get("/me", authenticateToken, async (req, res) => {
  */
 router.put("/me", authenticateToken, async (req, res) => {
   try {
-    console.log
     const { name, image } = req.body || {};
     const updateData = {};
     if (typeof name === "string" && name.trim()) updateData.name = name.trim();
@@ -296,77 +280,6 @@ router.put("/me", authenticateToken, async (req, res) => {
     res.json({ user });
   } catch (error) {
     res.status(500).json({ error: error.message });
-  }
-});
-
-/**
- * @swagger
- * /auth/refresh:
- *   post:
- *     summary: Exchange Cognito refresh token (from frontend) for new Cognito tokens; same token used for launchpad and Hub
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [refreshToken]
- *             properties:
- *               refreshToken:
- *                 type: string
- *     responses:
- *       200:
- *         description:  idToken, accessToken, user – use idToken as Bearer for launchpad and Hub APIs
- */
-router.post("/refresh", async (req, res) => {
-  const refreshToken = typeof req.body?.refreshToken === "string" ? req.body.refreshToken.trim() : null;
-  if (!refreshToken) {
-    return res.status(400).json({ error: "refreshToken required" });
-  }
-
-  const { clientId, region } = getCognitoConfig();
-  console.log(`[Auth Refresh] clientId: ${clientId}, region: ${region}`);
-  if (!clientId || !region) {
-    return res.status(503).json({
-      error:
-        "Cognito not configured. Set User Pool ID and App Client ID (and COGNITO_REGION or AWS_REGION if needed).",
-    });
-  }
-
-  try {
-    const client = new CognitoIdentityProviderClient({ region });
-    const command = new InitiateAuthCommand({
-      AuthFlow: "REFRESH_TOKEN_AUTH",
-      ClientId: clientId,
-      AuthParameters: { REFRESH_TOKEN: refreshToken },
-    });
-    const authResult = await client.send(command);
-    const idToken = authResult.AuthenticationResult?.IdToken ?? null;
-    const accessToken = authResult.AuthenticationResult?.AccessToken ?? null;
-    if (!idToken) {
-      return res.status(400).json({ error: "Invalid refresh token or token expired" });
-    }
-
-    const verifier = getCognitoVerifier();
-    if (!verifier) return res.status(503).json({ error: "Cognito verifier not configured" });
-    const payload = await verifier.verify(idToken);
-    const userRecord = await findOrCreateUserFromCognitoPayload(payload, "manager");
-    if (!userRecord) {
-      const allowedDomain = process.env.AUTH_ALLOWED_DOMAIN?.trim();
-      return res.status(403).json({
-        error: allowedDomain ? `Access denied. Only @${allowedDomain} accounts are allowed` : "Invalid token claims",
-      });
-    }
-    const { password: _p, ...userWithoutPassword } = userRecord;
-    res.json({
-      idToken,
-      accessToken: accessToken || idToken,
-      user: userWithoutPassword,
-    });
-  } catch (error) {
-    const msg = error.name === "NotAuthorizedException" ? "Refresh token expired or invalid" : "Invalid refresh token";
-    res.status(400).json({ error: msg });
   }
 });
 

@@ -26,7 +26,7 @@ function getFigmaState() {
   const state = params.get("state");
   return state && state.trim() ? state.trim() : null;
 }
-const HUB_API_URL = config.HUB_API_URL || import.meta.env.VITE_HUB_API_URL;
+const HUB_API_URL = config.HUB_API_URL;
 
 const LoginPage = () => {
   const { user } = useAuth();
