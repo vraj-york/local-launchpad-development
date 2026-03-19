@@ -1,5 +1,12 @@
 import React, { createContext, useState, useEffect } from 'react';
-import { loginUser, tryProactiveRefresh, startTokenRefreshTimer, stopTokenRefreshTimer } from '../api/index';
+import {
+    loginUser,
+    tryProactiveRefresh,
+    startTokenRefreshTimer,
+    stopTokenRefreshTimer,
+    hubLogout,
+    clearAuthStorageOnly,
+} from '../api/index';
 import { googleLogout } from '@react-oauth/google';
 import { isTokenExpired } from '../utils/auth';
 
@@ -11,15 +18,7 @@ export const AuthProvider = ({ children }) => {
 
     const clearAuthStorage = () => {
         stopTokenRefreshTimer();
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        localStorage.removeItem('token_source');
-        localStorage.removeItem('cognito_access_token');
-        localStorage.removeItem('cognito_id_token');
-        localStorage.removeItem('cognito_refresh_token');
-        localStorage.removeItem('employee_data');
-        localStorage.removeItem('token_expires_in');
-        localStorage.removeItem('permissions');
+        clearAuthStorageOnly();
         setUser(null);
     };
 
@@ -66,9 +65,12 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    const logout = () => {
+    const logout = async () => {
         googleLogout();
-        clearAuthStorage();
+        stopTokenRefreshTimer();
+        await hubLogout();
+        clearAuthStorageOnly();
+        setUser(null);
     };
 
     const checkAuth = async () => {
