@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { createProject, fetchManagers } from "../api";
+import { createProject, fetchManagers, fetchExternalHubProjects } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,8 +35,9 @@ const CreateProject = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  // Form State
-  const [projectName, setProjectName] = useState("");
+  // Form State — project name + external hub id come from Form hub dropdown
+  const [externalHubProjects, setExternalHubProjects] = useState([]);
+  const [selectedHubProjectId, setSelectedHubProjectId] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
   const [managers, setManagers] = useState([]);
   const [selectedManager, setSelectedManager] = useState("");
@@ -56,6 +57,8 @@ const CreateProject = () => {
   const [validationErrors, setValidationErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [managersLoading, setManagersLoading] = useState(false);
+  const [hubProjectsLoading, setHubProjectsLoading] = useState(true);
+  const [hubProjectsError, setHubProjectsError] = useState("");
   const [showGithubGuide, setShowGithubGuide] = useState(false);
   const [showJiraGuide, setShowJiraGuide] = useState(false);
 
@@ -78,14 +81,56 @@ const CreateProject = () => {
     }
   }, [user]);
 
+  /** Form hub titles may include spaces; strip all whitespace for stored `name` (current product rule). */
+  const normalizeHubTitleForName = (title) =>
+    typeof title === "string" ? title.replace(/\s+/g, "") : "";
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadHubProjects = async () => {
+      setHubProjectsLoading(true);
+      setHubProjectsError("");
+      try {
+        const list = await fetchExternalHubProjects();
+        if (!cancelled) setExternalHubProjects(list);
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Failed to fetch Form hub projects:", err);
+          setHubProjectsError(
+            err?.error || "Could not load projects from Form hub."
+          );
+          setExternalHubProjects([]);
+        }
+      } finally {
+        if (!cancelled) setHubProjectsLoading(false);
+      }
+    };
+    loadHubProjects();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const validateForm = () => {
     const errors = {};
 
-    // Project Validation
-    if (!projectName.trim()) errors.projectName = "Project name is required";
-    if (!/^[a-zA-Z0-9_-]+$/.test(projectName)) {
-      errors.projectName =
-        "Project name can only contain letters, numbers, hyphens, and underscores";
+    // Form hub project (required)
+    if (!selectedHubProjectId) {
+      errors.hubProject = "Please select a project from Form hub";
+    } else {
+      const selected = externalHubProjects.find(
+        (p) => p.id === selectedHubProjectId
+      );
+      const nameForStore = normalizeHubTitleForName(selected?.title ?? "");
+      if (!nameForStore) {
+        errors.hubProject = "Selected project has no valid title";
+      } else if (nameForStore.length < 3) {
+        errors.hubProject =
+          "After removing spaces, the project name must be at least 3 characters";
+      } else if (!/^[a-zA-Z0-9_-]+$/.test(nameForStore)) {
+        errors.hubProject =
+          "Project title must yield only letters, numbers, hyphens, and underscores after removing spaces";
+      }
     }
     if (user?.role === "admin" && !selectedManager)
       errors.manager = "Manager is required";
@@ -171,8 +216,16 @@ const CreateProject = () => {
       //       })
       //     : [];
 
+      const selectedExternal = externalHubProjects.find(
+        (p) => p.id === selectedHubProjectId
+      );
+      const nameFromHub = normalizeHubTitleForName(
+        selectedExternal?.title ?? ""
+      );
+
       const projectData = {
-        name: projectName,
+        name: nameFromHub,
+        projectId: selectedHubProjectId,
         description: projectDescription,
         githubUsername: githubUsername,
         githubToken: githubToken,
@@ -224,35 +277,67 @@ const CreateProject = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5">
-                    <Label htmlFor="name">Project Name</Label>
+                    <Label htmlFor="hub-project">Select Project</Label>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <button
                           type="button"
                           className="inline-flex text-slate-500 hover:text-slate-700 focus:outline-none"
-                          aria-label="Project name info"
+                          aria-label="Form hub project info"
                         >
                           <Info className="h-4 w-4" />
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-[240px]">
-                        You cannot change this name later. Only letters,
-                        numbers, hyphens, and underscores are allowed.
+                      <TooltipContent side="top" className="max-w-[260px]">
+                        Choose one project from Form hub. Spaces in the title
+                        are removed for the internal project name. The hub
+                        project ID is saved with your workspace.
                       </TooltipContent>
                     </Tooltip>
                   </div>
-                  <Input
-                    id="name"
-                    placeholder="e.g. Website Redesign"
-                    value={projectName}
-                    onChange={(e) =>
-                      setProjectName(e.target.value.replace(/\s/g, ""))
-                    }
-                    className={`text-lg ${validationErrors.projectName ? "border-destructive" : ""}`}
-                  />
-                  {validationErrors.projectName && (
+                  <p className="text-xs text-muted-foreground -mt-1">
+                    Form hub — link an external project to this workspace.
+                  </p>
+                  <Select
+                    value={selectedHubProjectId || undefined}
+                    onValueChange={setSelectedHubProjectId}
+                    disabled={hubProjectsLoading}
+                  >
+                    <SelectTrigger
+                      id="hub-project"
+                      className={
+                        validationErrors.hubProject
+                          ? "border-destructive w-full text-left"
+                          : "w-full text-left"
+                      }
+                    >
+                      <SelectValue
+                        placeholder={
+                          hubProjectsLoading
+                            ? "Loading Form hub projects..."
+                            : "Select a project from Form hub"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {externalHubProjects.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.title}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {hubProjectsError && (
+                    <p className="text-sm text-destructive mt-1">{hubProjectsError}</p>
+                  )}
+                  {validationErrors.hubProject && (
                     <p className="text-sm text-destructive mt-1">
-                      {validationErrors.projectName}
+                      {validationErrors.hubProject}
+                    </p>
+                  )}
+                  {hubProjectsLoading && (
+                    <p className="text-xs text-muted-foreground">
+                      Fetching projects from Form hub...
                     </p>
                   )}
                 </div>
@@ -611,7 +696,11 @@ const CreateProject = () => {
         </Card> */}
         <Button
           type="submit"
-          disabled={loading || (user?.role === "admin" && managersLoading)}
+          disabled={
+            loading ||
+            hubProjectsLoading ||
+            (user?.role === "admin" && managersLoading)
+          }
           className="px-8"
         >
           {loading ? (
