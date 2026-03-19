@@ -2,7 +2,11 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
 import crypto from "crypto";
-import { getCognitoVerifier, findOrCreateUserFromCognitoPayload } from "../utils/cognitoAuth.js";
+import {
+  getCognitoVerifier,
+  getCognitoAccessVerifier,
+  findOrCreateUserFromCognitoPayload,
+} from "../utils/cognitoAuth.js";
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -83,15 +87,24 @@ router.post("/complete", async (req, res) => {
       if (user?.name) name = user.name;
     }
   } catch {
+    let payload = null;
     try {
-      const verifier = getCognitoVerifier();
-      if (verifier) {
-        const payload = await verifier.verify(access_token);
-        const userRecord = await findOrCreateUserFromCognitoPayload(payload, "manager");
-        if (userRecord?.name) name = userRecord.name;
-      }
+      const idVerifier = getCognitoVerifier();
+      if (idVerifier) payload = await idVerifier.verify(access_token);
     } catch {
-      // Token invalid or expired; keep generic name
+      // Not ID token; try access token
+    }
+    if (!payload) {
+      try {
+        const accessVerifier = getCognitoAccessVerifier();
+        if (accessVerifier) payload = await accessVerifier.verify(access_token);
+      } catch {
+        // Token invalid or expired; keep generic name
+      }
+    }
+    if (payload) {
+      const userRecord = await findOrCreateUserFromCognitoPayload(payload, "manager");
+      if (userRecord?.name) name = userRecord.name;
     }
   }
   pending.result = { token: access_token, user: { name, photoUrl } };
