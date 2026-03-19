@@ -1,5 +1,9 @@
 import jwt from "jsonwebtoken";
-import { getCognitoVerifier, findOrCreateUserFromCognitoPayload } from "../utils/cognitoAuth.js";
+import {
+  getCognitoVerifier,
+  getCognitoAccessVerifier,
+  findOrCreateUserFromCognitoPayload,
+} from "../utils/cognitoAuth.js";
 import { isExcludedPath } from "../utils/pathExclusion.js";
 
 /**
@@ -38,7 +42,7 @@ function sendAuthError(res, status, message) {
 /**
  * Validate Bearer token and set req.user = { id, role }.
  * - Tries app JWT (JWT_SECRET) first for backward compat.
- * - Then tries Cognito ID token: verifies with Cognito, finds/creates launchpad DB user.
+ * - Then tries Cognito ID token, then Cognito access token (frontend uses access token for Hub and launchpad).
  * - Excluded paths skip auth (login, refresh, health, etc.).
  * - Returns JSON errors with sanitized messages (never leak Cognito details).
  */
@@ -60,22 +64,44 @@ export async function authenticateToken(req, res, next) {
     req.user = { id: appDecoded.id, role: appDecoded.role };
     return next();
   } catch {
-    // Not an app JWT; try Cognito
+    // Not an app JWT; try Cognito (ID then access token)
   }
 
-  const verifier = getCognitoVerifier();
-  if (!verifier) {
+  const idVerifier = getCognitoVerifier();
+  const accessVerifier = getCognitoAccessVerifier();
+  if (!idVerifier && !accessVerifier) {
     return sendAuthError(res, 401, "Authentication failed. Please sign in again.");
   }
 
+  let payload = null;
   try {
-    const payload = await verifier.verify(token);
-    const user = await findOrCreateUserFromCognitoPayload(payload, "manager");
-    if (!user) {
-      return sendAuthError(res, 403, "Access denied.");
+    if (idVerifier) payload = await idVerifier.verify(token);
+  } catch {
+    // Not an ID token; try access token
+  }
+  if (!payload && accessVerifier) {
+    try {
+      payload = await accessVerifier.verify(token);
+    } catch {
+      // Will fall through to error handling below
     }
-    req.user = { id: user.id, role: user.role };
-    return next();
+  }
+
+  if (payload) {
+    try {
+      const user = await findOrCreateUserFromCognitoPayload(payload, "manager");
+      if (!user) return sendAuthError(res, 403, "Access denied.");
+      req.user = { id: user.id, role: user.role };
+      return next();
+    } catch {
+      return sendAuthError(res, 401, "Authentication failed. Please sign in again.");
+    }
+  }
+
+  try {
+    // Trigger verifier to get a proper error (e.g. expired) for response
+    if (idVerifier) await idVerifier.verify(token);
+    else if (accessVerifier) await accessVerifier.verify(token);
   } catch (err) {
     const name = err?.name || "";
     const message = err?.message || "";

@@ -18,7 +18,7 @@ const api = axios.create({
   },
 });
 
-// Backend/launchpad APIs: always use app token (from login, Google, or Cognito exchange)
+// Launchpad APIs: use id token (stored as "token") so backend gets email from payload; Hub uses access_token separately
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem("token");
@@ -32,9 +32,9 @@ api.interceptors.request.use(
   },
 );
 
-/** Same token is used for launchpad and Hub APIs. */
+/** Id token = launchpad (api interceptor). Access token = Hub (logout, refresh). */
 export function getCognitoAccessToken() {
-  return localStorage.getItem("token");
+  return localStorage.getItem("access_token") || localStorage.getItem("token");
 }
 
 /** Get employee data from stored user (email, employee_id, first_name, last_name, etc.). */
@@ -59,7 +59,7 @@ export function getPermissions() {
   }
 }
 
-const STORAGE_KEYS = ["token", "user", "cognito_refresh_token"];
+const STORAGE_KEYS = ["token", "access_token", "user", "cognito_refresh_token"];
 
 export function clearAuthStorageOnly() {
   STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
@@ -71,21 +71,21 @@ function clearAuthAndRedirect() {
 }
 
 /**
- * Call Hub logout to revoke refresh token. Requires Bearer token; optionally send refreshToken in body to revoke it.
- * Does not clear local storage (caller should clear after).
+ * Call Hub logout API with access token in Authorization header.
+ * Uses access_token (Hub requires access token); does not clear local storage (caller clears after).
  */
 export async function hubLogout() {
-  const token = localStorage.getItem("token");
+  const accessToken = localStorage.getItem("access_token") || localStorage.getItem("token");
   const refreshToken = localStorage.getItem("cognito_refresh_token");
-  if (!HUB_API_URL || !token) return;
+  if (!HUB_API_URL || !accessToken) return;
   try {
     await axios.post(
       `${HUB_API_URL}/api/auth/logout`,
       refreshToken ? { refreshToken } : {},
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` } }
     );
   } catch {
-    // Best-effort; caller will clear local state anyway
+    // Best-effort; caller always clears local state (e.g. even if Hub returns 401)
   }
 }
 
@@ -98,26 +98,17 @@ function getStoredEmail() {
     const raw = localStorage.getItem("user");
     const user = raw ? JSON.parse(raw) : null;
     return user?.email ?? null;
-  } catch {}
+  } catch { }
   return null;
 }
-
-const DEBUG_REFRESH = import.meta.env.DEV && import.meta.env.VITE_DEBUG_REFRESH === "true";
 
 /** Call Hub API to refresh tokens (Hub validates with Cognito; email required for SECRET_HASH). */
 export async function refreshAppToken() {
   const refreshToken = localStorage.getItem("cognito_refresh_token");
   const email = getStoredEmail();
-  if (!refreshToken || !email) {
-    if (DEBUG_REFRESH) console.log("[Refresh] Skip: no refreshToken or email");
-    return null;
-  }
-  if (!HUB_API_URL) {
-    if (DEBUG_REFRESH) console.log("[Refresh] Skip: HUB_API_URL not set");
-    return null;
-  }
+  if (!refreshToken || !email) return null;
+  if (!HUB_API_URL) return null;
   try {
-    if (DEBUG_REFRESH) console.log("[Refresh] Calling Hub", HUB_API_URL + "/api/auth/refresh");
     const { data } = await axios.post(`${HUB_API_URL}/api/auth/refresh`, {
       refreshToken,
       email,
@@ -126,16 +117,16 @@ export async function refreshAppToken() {
     const idToken = body?.idToken ?? body?.id_token;
     const accessToken = body?.accessToken ?? body?.access_token;
     const newRefreshToken = body?.refreshToken ?? body?.refresh_token;
-    const newToken = idToken ?? accessToken;
-    if (newToken) {
-      localStorage.setItem("token", newToken);
+    const launchpadToken = idToken ?? accessToken;
+    if (launchpadToken) {
+      localStorage.setItem("token", launchpadToken);
+      if (accessToken) localStorage.setItem("access_token", accessToken);
       if (newRefreshToken) localStorage.setItem("cognito_refresh_token", newRefreshToken);
       if (body?.user) localStorage.setItem("user", JSON.stringify(body.user));
-      if (DEBUG_REFRESH) console.log("[Refresh] Success: new token stored");
-      return newToken;
+      return launchpadToken;
     }
-  } catch (err) {
-    if (DEBUG_REFRESH) console.warn("[Refresh] Failed", err?.response?.status, err?.response?.data || err?.message);
+  } catch {
+    // Refresh failed; caller may redirect to login
   }
   return null;
 }
@@ -559,27 +550,20 @@ export const googleLogin = async (token) => {
 };
 
 /**
- * Parse Hub /auth/callback response format:
- * { success, data: { accessToken, refreshToken, idToken, expiresIn, permissions, employeeData: { email, employee_id, account_status, user_type, first_name, last_name } } }
+ * Parse Hub /auth/callback response. We store both: idToken for launchpad (has email), accessToken for Hub.
+ * Format: { success, data: { accessToken, refreshToken, idToken?, expiresIn, permissions, employeeData } }
  */
 function parseHubAuthResponse(body) {
   if (!body || typeof body !== "object") return null;
   const d =
     body.data != null && typeof body.data === "object" ? body.data : body;
+  const idToken = d.idToken ?? d.id_token ?? body.idToken ?? body.id_token;
   const accessToken =
     d.accessToken ?? d.access_token ?? body.accessToken ?? body.access_token;
-  const idToken = d.idToken ?? d.id_token ?? body.idToken ?? body.id_token;
   const refreshToken =
     d.refreshToken ?? d.refresh_token ?? body.refreshToken ?? body.refresh_token;
-  const token =
-    idToken ??
-    accessToken ??
-    d.token ??
-    d.accessToken ??
-    d.access_token ??
-    body.token ??
-    body.accessToken;
-  if (!token) return null;
+  const launchpadToken = idToken ?? accessToken ?? d.token ?? body.token;
+  if (!launchpadToken) return null;
 
   const emp = d.employeeData && typeof d.employeeData === "object" ? d.employeeData : null;
   const nameFromEmp =
@@ -628,9 +612,9 @@ function parseHubAuthResponse(body) {
     };
   }
   return {
-    token,
-    idToken: idToken || token,
-    accessToken: accessToken || token,
+    token: launchpadToken,
+    idToken: idToken || launchpadToken,
+    accessToken: accessToken || launchpadToken,
     refreshToken: refreshToken || null,
     expiresIn: d.expiresIn ?? body.expiresIn,
     permissions: d.permissions ?? body.permissions ?? [],
@@ -642,8 +626,7 @@ function parseHubAuthResponse(body) {
 const hubAuthByCode = new Map();
 
 /**
- * Exchange Hub OAuth code for Cognito tokens. Same token is used for launchpad APIs and Hub APIs.
- * Backend verifies Cognito credentials and links to launchpad DB user on each request.
+ * Exchange Hub OAuth code for Cognito tokens. Store id token for launchpad (email in payload), access token for Hub.
  */
 export async function exchangeHubAuthCode(code, redirectUri) {
   if (hubAuthByCode.has(code)) return hubAuthByCode.get(code);
@@ -660,8 +643,9 @@ export async function exchangeHubAuthCode(code, redirectUri) {
       );
       throw err;
     }
-    const token = parsed.idToken || parsed.token;
-    if (!token) throw new Error("No token in callback response");
+    const idToken = parsed.idToken || parsed.token;
+    const accessToken = parsed.accessToken || parsed.token;
+    if (!idToken && !accessToken) throw new Error("No token in callback response");
     const nameFromCallback =
       parsed.user?.name ??
       [parsed.employeeData?.first_name, parsed.employeeData?.last_name].filter(Boolean).join(" ").trim();
@@ -675,6 +659,9 @@ export async function exchangeHubAuthCode(code, redirectUri) {
       employee_data: parsed.employeeData ?? undefined,
       permissions: Array.isArray(parsed.permissions) ? parsed.permissions : undefined,
     };
+    localStorage.setItem("token", idToken || accessToken);
+    if (accessToken) localStorage.setItem("access_token", accessToken);
+    localStorage.setItem("cognito_refresh_token", parsed.refreshToken || "");
     try {
       const meRes = await api.get("/api/auth/me");
       if (meRes.data?.user) {
@@ -690,10 +677,8 @@ export async function exchangeHubAuthCode(code, redirectUri) {
     } catch {
       // Token valid; DB user will be linked on first protected request
     }
-    localStorage.setItem("token", token);
-    localStorage.setItem("cognito_refresh_token", parsed.refreshToken || "");
     localStorage.setItem("user", JSON.stringify(user));
-    return { token, user, employeeData: parsed.employeeData };
+    return { token: idToken || accessToken, user, employeeData: parsed.employeeData };
   })();
 
   hubAuthByCode.set(code, promise);

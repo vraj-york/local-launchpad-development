@@ -11,12 +11,18 @@ dns.setDefaultResultOrder("verbatim");
 const prisma = new PrismaClient();
 
 let cognitoIdVerifier = null;
+let cognitoAccessVerifier = null;
 let jwksCache = null;
 
 function getCognitoEnv() {
   const userPoolId = (process.env.AWS_COGNITO_USER_POOL_ID)?.trim();
   const clientId = (process.env.AWS_COGNITO_APP_CLIENT_ID)?.trim();
   return { userPoolId, clientId };
+}
+
+function getJwksCache() {
+  if (!jwksCache) jwksCache = new SimpleJwksCache({ fetcher: new IPv4Fetcher() });
+  return jwksCache;
 }
 
 /**
@@ -27,13 +33,28 @@ export function getCognitoVerifier() {
   const { userPoolId, clientId } = getCognitoEnv();
   if (!userPoolId || !clientId) return null;
   if (!cognitoIdVerifier) {
-    jwksCache = new SimpleJwksCache({ fetcher: new IPv4Fetcher() });
     cognitoIdVerifier = CognitoJwtVerifier.create(
       { userPoolId, tokenUse: "id", clientId },
-      { jwksCache }
+      { jwksCache: getJwksCache() }
     );
   }
   return cognitoIdVerifier;
+}
+
+/**
+ * Get Cognito access token verifier. Frontend uses access token for Hub and launchpad;
+ * launchpad accepts both ID and access tokens.
+ */
+export function getCognitoAccessVerifier() {
+  const { userPoolId, clientId } = getCognitoEnv();
+  if (!userPoolId || !clientId) return null;
+  if (!cognitoAccessVerifier) {
+    cognitoAccessVerifier = CognitoJwtVerifier.create(
+      { userPoolId, tokenUse: "access", clientId },
+      { jwksCache: getJwksCache() }
+    );
+  }
+  return cognitoAccessVerifier;
 }
 
 /**
@@ -55,13 +76,34 @@ export async function warmupJwksCache() {
 }
 
 /**
- * From verified Cognito id token payload: find or create launchpad DB user, then save/update
- * the user row so our system has the latest data. Other APIs (e.g. /auth/me) will read
- * updated user from the same table.
- * Returns null if domain restricted or no email.
+ * Extract email from Cognito payload. DB uses email (not username); Hub/Cognito may send
+ * email in different claims. Prefer explicit email claims; use username/preferred_username
+ * only when they look like an email (contain @).
+ */
+function getEmailFromPayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const candidates = [
+    payload.email,
+    payload["cognito:username"],
+    payload["custom:email"],
+    payload.username,
+    payload.preferred_username,
+  ].filter(Boolean);
+  for (const v of candidates) {
+    const s = typeof v === "string" ? v.trim() : "";
+    if (!s) continue;
+    if (s.includes("@")) return s;
+  }
+  return null;
+}
+
+/**
+ * From verified Cognito token payload (ID or access): find or create launchpad DB user.
+ * Email is taken from payload (email, cognito:username, username when it looks like email, etc.);
+ * DB field is email, not username. Returns null if domain restricted or no email found.
  */
 export async function findOrCreateUserFromCognitoPayload(payload, role = "manager") {
-  const email = payload.email || payload["cognito:username"];
+  const email = getEmailFromPayload(payload);
   if (!email) return null;
   const allowedDomain = process.env.AUTH_ALLOWED_DOMAIN?.trim();
   if (allowedDomain && !email.endsWith(allowedDomain)) return null;

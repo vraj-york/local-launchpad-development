@@ -68,9 +68,12 @@ export const AuthProvider = ({ children }) => {
     const logout = async () => {
         googleLogout();
         stopTokenRefreshTimer();
-        await hubLogout();
-        clearAuthStorageOnly();
-        setUser(null);
+        try {
+            await hubLogout();
+        } finally {
+            clearAuthStorageOnly();
+            setUser(null);
+        }
     };
 
     const checkAuth = async () => {

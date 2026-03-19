@@ -228,7 +228,6 @@ router.post("/google", async (req, res) => {
  */
 router.get("/me", authenticateToken, async (req, res) => {
   try {
-    console.log(`[Auth Me] userId: ${req.user.id}`);
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
       select: { id: true, name: true, email: true, role: true, image: true },
