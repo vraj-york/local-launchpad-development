@@ -2,6 +2,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
 import crypto from "crypto";
+import { getCognitoVerifier, findOrCreateUserFromCognitoPayload } from "../utils/cognitoAuth.js";
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -82,7 +83,16 @@ router.post("/complete", async (req, res) => {
       if (user?.name) name = user.name;
     }
   } catch {
-    // Token invalid or expired; still store with generic name
+    try {
+      const verifier = getCognitoVerifier();
+      if (verifier) {
+        const payload = await verifier.verify(access_token);
+        const userRecord = await findOrCreateUserFromCognitoPayload(payload, "manager");
+        if (userRecord?.name) name = userRecord.name;
+      }
+    } catch {
+      // Token invalid or expired; keep generic name
+    }
   }
   pending.result = { token: access_token, user: { name, photoUrl } };
   res.json({ ok: true, message: "You can close this window and return to Figma." });

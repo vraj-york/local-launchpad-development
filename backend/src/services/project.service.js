@@ -926,38 +926,6 @@ export async function listProjectVersionsService({ projectId, user }) {
     },
   });
 }
-/*   PROJECT INFO (HEADER)*/
-export async function getProjectInfoService(projectId) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: {
-      id: true,
-      name: true,
-    },
-  });
-
-  if (!project) {
-    throw new ApiError(404, "Project not found");
-  }
-
-  const activeVersion = await prisma.projectVersion.findFirst({
-    where: {
-      projectId,
-      isActive: true,
-    },
-    select: {
-      version: true,
-      createdAt: true,
-    },
-  });
-
-  return {
-    id: project.id,
-    name: project.name,
-    version: activeVersion?.version ?? "1.0.0",
-    lastUpdated: activeVersion?.createdAt ?? null,
-  };
-}
 
 
 export const updateProjectDetailsService = async ({ projectId, userId, body }) => {

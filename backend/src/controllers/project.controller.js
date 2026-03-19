@@ -2,7 +2,7 @@
 import {
     createProjectService, listProjectsService, setReleaseStatusService,
     getProjectLiveUrlService,
-    listProjectVersionsService, getProjectByIdService, getProjectInfoService,
+    listProjectVersionsService, getProjectByIdService,
     getJiraTicketsService,
     activateProjectVersionService,
     updateProjectDetailsService,
@@ -115,12 +115,6 @@ export const projectController = {
         });
 
         res.json(versions);
-    }),
-
-    info: asyncHandler(async (req, res) => {
-        const projectId = Number(req.params.id);
-        const data = await getProjectInfoService(projectId);
-        res.json(data);
     }),
 
     getJiraTickets: asyncHandler(async (req, res) => {

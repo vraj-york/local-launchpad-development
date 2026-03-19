@@ -1380,10 +1380,6 @@ router.get("/:id/git-diff", authenticateToken, async (req, res) => {
   }
 });
 
-router.get(
-  "/:id/info",
-  projectController.info
-);
 // API endpoint to generate Jira tickets from git diff summary
 router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) => {
   const projectId = parseInt(req.params.id, 10);

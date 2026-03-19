@@ -16,7 +16,7 @@ const api = axios.create({
   },
 });
 
-// Add request interceptor to include auth token
+// Backend/launchpad APIs: always use app token (from login, Google, or Cognito exchange)
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem("token");
@@ -30,20 +30,115 @@ api.interceptors.request.use(
   },
 );
 
-// Add response interceptor to handle auth errors
+/** Same token is used for launchpad and Hub APIs. */
+export function getCognitoAccessToken() {
+  return localStorage.getItem("token") || localStorage.getItem("cognito_access_token");
+}
+
+/** Get employee data from /auth/callback format (email, employee_id, first_name, last_name, account_status, user_type). */
+export function getEmployeeData() {
+  try {
+    const raw = localStorage.getItem("employee_data");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Get permissions array from callback (stored as JSON). */
+export function getPermissions() {
+  try {
+    const raw = localStorage.getItem("permissions");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function clearAuthAndRedirect() {
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  localStorage.removeItem("token_source");
+  localStorage.removeItem("cognito_access_token");
+  localStorage.removeItem("cognito_id_token");
+  localStorage.removeItem("cognito_refresh_token");
+  localStorage.removeItem("employee_data");
+  localStorage.removeItem("token_expires_in");
+  localStorage.removeItem("permissions");
+  window.location.href = "/";
+}
+
+/** Call backend to exchange Cognito refresh token for new Cognito tokens (same token for launchpad + Hub). */
+export async function refreshAppToken() {
+  const refreshToken = localStorage.getItem("cognito_refresh_token");
+  if (!refreshToken) return null;
+  const { data } = await axios.post(`${API_URL}/api/auth/refresh`, {
+    refreshToken,
+  });
+  const newToken = data?.idToken || data?.accessToken;
+  if (newToken) {
+    localStorage.setItem("token", newToken);
+    if (data.idToken) localStorage.setItem("cognito_id_token", data.idToken);
+    if (data.accessToken) localStorage.setItem("cognito_access_token", data.accessToken);
+    if (data.user) localStorage.setItem("user", JSON.stringify(data.user));
+    return newToken;
+  }
+  return null;
+}
+
+// On 401: try refresh (frontend sends refresh token to backend), then retry; else logout
+let isRefreshing = false;
+let refreshSubscribers = [];
+
+function subscribeTokenRefresh(cb) {
+  refreshSubscribers.push(cb);
+}
+
+function onRefreshed(token) {
+  refreshSubscribers.forEach((cb) => cb(token));
+  refreshSubscribers = [];
+}
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      const isHub = localStorage.getItem("token_source") === "hub";
-      if (isHub) {
-        return Promise.reject(error);
-      }
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      localStorage.removeItem("token_source");
-      window.location.href = "/";
+  async (error) => {
+    const originalRequest = error.config;
+    if (error.response?.status !== 401) return Promise.reject(error);
+    if (!originalRequest) return Promise.reject(error);
+    // Don't retry refresh endpoint to avoid loop
+    if (originalRequest.url?.includes("/api/auth/refresh")) {
+      clearAuthAndRedirect();
+      return Promise.reject(error);
     }
+
+    const refreshToken = localStorage.getItem("cognito_refresh_token");
+    if (!refreshToken) {
+      clearAuthAndRedirect();
+      return Promise.reject(error);
+    }
+
+    if (isRefreshing) {
+      return new Promise((resolve) => {
+        subscribeTokenRefresh((newToken) => {
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+          resolve(api(originalRequest));
+        });
+      });
+    }
+
+    isRefreshing = true;
+    try {
+      const newToken = await refreshAppToken();
+      if (newToken) {
+        onRefreshed(newToken);
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        return api(originalRequest);
+      }
+    } catch {
+      // refresh failed
+    }
+    isRefreshing = false;
+    clearAuthAndRedirect();
     return Promise.reject(error);
   },
 );
@@ -374,18 +469,43 @@ export const googleLogin = async (token) => {
   }
 };
 
-/** Parse Hub /api/auth/callback response (several possible shapes). */
+/**
+ * Parse Hub /auth/callback response format:
+ * { success, data: { accessToken, refreshToken, idToken, expiresIn, permissions, employeeData: { email, employee_id, account_status, user_type, first_name, last_name } } }
+ */
 function parseHubAuthResponse(body) {
   if (!body || typeof body !== "object") return null;
   const d =
     body.data != null && typeof body.data === "object" ? body.data : body;
+  const accessToken =
+    d.accessToken ?? d.access_token ?? body.accessToken ?? body.access_token;
+  const idToken = d.idToken ?? d.id_token ?? body.idToken ?? body.id_token;
+  const refreshToken =
+    d.refreshToken ?? d.refresh_token ?? body.refreshToken ?? body.refresh_token;
   const token =
-    d.token ||
-    d.accessToken ||
-    d.access_token ||
-    body.token ||
+    idToken ??
+    accessToken ??
+    d.token ??
+    d.accessToken ??
+    d.access_token ??
+    body.token ??
     body.accessToken;
-  let user = d.user || d.userProfile || d.profile || body.user;
+  if (!token) return null;
+
+  const emp = d.employeeData && typeof d.employeeData === "object" ? d.employeeData : null;
+  const nameFromEmp =
+    emp?.first_name != null || emp?.last_name != null
+      ? [emp.first_name, emp.last_name].filter(Boolean).join(" ").trim()
+      : null;
+  const imageFromEmp =
+    emp?.profile_pic ??
+    emp?.image ??
+    d.picture ??
+    d.image ??
+    body.picture ??
+    body.image;
+  let user =
+    d.user || d.userProfile || d.profile || body.user;
   if (user && typeof user === "string") {
     try {
       user = JSON.parse(user);
@@ -393,21 +513,48 @@ function parseHubAuthResponse(body) {
       user = null;
     }
   }
-  if (!token) return null;
   if (!user || typeof user !== "object") {
     user = {
-      id: d.id ?? body.id ?? "user",
-      email: d.email ?? body.email ?? "",
-      name: d.name ?? d.username ?? body.name ?? "User",
+      id: emp?.employee_id ?? d.id ?? body.id ?? "user",
+      email: emp?.email ?? d.email ?? body.email ?? "",
+      name: nameFromEmp ?? d.name ?? d.username ?? body.name ?? "User",
+      image: imageFromEmp ?? user?.image,
+      employee_id: emp?.employee_id,
+      first_name: emp?.first_name,
+      last_name: emp?.last_name,
+      account_status: emp?.account_status,
+      user_type: emp?.user_type,
+    };
+  } else if (emp) {
+    user = {
+      ...user,
+      image: imageFromEmp ?? user.image,
+      employee_id: emp.employee_id ?? user.employee_id,
+      first_name: emp.first_name ?? user.first_name,
+      last_name: emp.last_name ?? user.last_name,
+      account_status: emp.account_status ?? user.account_status,
+      user_type: emp.user_type ?? user.user_type,
+      name: nameFromEmp || user.name,
+      email: emp.email ?? user.email,
     };
   }
-  return { token, user };
+  return {
+    token,
+    idToken: idToken || token,
+    accessToken: accessToken || token,
+    refreshToken: refreshToken || null,
+    expiresIn: d.expiresIn ?? body.expiresIn,
+    permissions: d.permissions ?? body.permissions ?? [],
+    employeeData: emp || null,
+    user,
+  };
 }
 
 const hubAuthByCode = new Map();
 
 /**
- * Exchange Hub OAuth code for token. Same code returns cached result (avoids double-call issues).
+ * Exchange Hub OAuth code for Cognito tokens. Same token is used for launchpad APIs and Hub APIs.
+ * Backend verifies Cognito credentials and links to launchpad DB user on each request.
  */
 export async function exchangeHubAuthCode(code, redirectUri) {
   if (hubAuthByCode.has(code)) return hubAuthByCode.get(code);
@@ -424,10 +571,58 @@ export async function exchangeHubAuthCode(code, redirectUri) {
       );
       throw err;
     }
-    localStorage.setItem("token", parsed.token);
-    localStorage.setItem("user", JSON.stringify(parsed.user));
-    localStorage.setItem("token_source", "hub");
-    return parsed;
+    const token = parsed.idToken || parsed.token;
+    if (!token) throw new Error("No token in callback response");
+    localStorage.setItem("token", token);
+    if (parsed.accessToken)
+      localStorage.setItem("cognito_access_token", parsed.accessToken);
+    if (parsed.idToken) localStorage.setItem("cognito_id_token", parsed.idToken);
+    if (parsed.refreshToken)
+      localStorage.setItem("cognito_refresh_token", parsed.refreshToken);
+    if (parsed.employeeData) {
+      localStorage.setItem("employee_data", JSON.stringify(parsed.employeeData));
+    }
+    if (parsed.expiresIn != null) {
+      localStorage.setItem("token_expires_in", String(parsed.expiresIn));
+    }
+    if (Array.isArray(parsed.permissions)) {
+      localStorage.setItem("permissions", JSON.stringify(parsed.permissions));
+    }
+    const nameFromCallback =
+      parsed.user?.name ??
+      [parsed.employeeData?.first_name, parsed.employeeData?.last_name].filter(Boolean).join(" ").trim();
+    const imageFromCallback =
+      parsed.user?.image ??
+      parsed.employeeData?.profile_pic ??
+      parsed.employeeData?.image ??
+      parsed.employeeData?.picture ??
+      parsed.employeeData?.photo ??
+      parsed.employeeData?.photo_url ??
+      parsed.employeeData?.avatar;
+    let user = {
+      ...parsed.user,
+      email: parsed.user?.email ?? parsed.employeeData?.email,
+      name: nameFromCallback || parsed.user?.name,
+      image: imageFromCallback ?? parsed.user?.image,
+    };
+    try {
+      const meRes = await api.get("/api/auth/me");
+      if (meRes.data?.user) {
+        user = { ...user, ...meRes.data.user };
+      }
+      const syncPayload = {};
+      if (nameFromCallback) syncPayload.name = nameFromCallback;
+      if (imageFromCallback) syncPayload.image = imageFromCallback;
+      if (Object.keys(syncPayload).length > 0) {
+        const syncRes = await api.put("/api/auth/me", syncPayload);
+        if (syncRes.data?.user) user = { ...user, ...syncRes.data.user };
+      }
+    } catch {
+      // Token valid; DB user will be linked on first protected request
+    }
+    localStorage.setItem("user", JSON.stringify(user));
+    localStorage.setItem("token_source", "cognito");
+    return { token, user, cognitoAccessToken: parsed.accessToken || token, employeeData: parsed.employeeData };
   })();
 
   hubAuthByCode.set(code, promise);
