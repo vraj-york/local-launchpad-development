@@ -9,7 +9,6 @@ import ApiError from "../utils/apiError.js";
 import config from "../config/index.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
-// import { uploadFileToS3Multipart, uploadDirectoryToS3 } from "../utils/uploadFiletoS3.js";
 import { promisify } from "util";
 import os from "os";
 import { execa } from "execa";
@@ -540,8 +539,8 @@ const RELEASE_STATUS_VALUES = Object.values(ReleaseStatus);
 
 export const setReleaseStatusService = async (releaseId, status, user) => {
   const { id: userId, role } = user;
-  const s = status && String(status).toLowerCase();
-  if (!RELEASE_STATUS_VALUES.includes(s)) {
+  const releaseStatus = status && String(status).toLowerCase();
+  if (!RELEASE_STATUS_VALUES.includes(releaseStatus)) {
     throw new ApiError(400, `status must be one of: ${RELEASE_STATUS_VALUES.join(", ")}`);
   }
 
@@ -563,7 +562,7 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
   if (!hasPermission) throw new ApiError(403, "Forbidden");
 
   await prisma.$transaction(async (tx) => {
-    if (s === ReleaseStatus.locked) {
+    if (releaseStatus === ReleaseStatus.locked) {
       await tx.release.update({
         where: { id: releaseId },
         data: { status: ReleaseStatus.locked, isLocked: true },
@@ -571,7 +570,7 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
       return;
     }
 
-    if (s === ReleaseStatus.active) {
+    if (releaseStatus === ReleaseStatus.active) {
       // Only other active releases become draft; locked releases stay locked
       await tx.release.updateMany({
         where: {
@@ -674,18 +673,6 @@ function parseSemver(v) {
   const parts = v.trim().split(".").map(Number);
   if (parts.length < 3 || parts.some(Number.isNaN)) return null;
   return [parts[0], parts[1] ?? 0, parts[2] ?? 0];
-}
-
-/**
- * Returns true if version a is strictly greater than b (semver).
- */
-function semverGt(a, b) {
-  const pa = parseSemver(a);
-  const pb = parseSemver(b);
-  if (!pa || !pb) return false;
-  if (pa[0] !== pb[0]) return pa[0] > pb[0];
-  if (pa[1] !== pb[1]) return pa[1] > pb[1];
-  return pa[2] > pb[2];
 }
 
 

@@ -13,6 +13,12 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         localStorage.removeItem('token_source');
+        localStorage.removeItem('cognito_access_token');
+        localStorage.removeItem('cognito_id_token');
+        localStorage.removeItem('cognito_refresh_token');
+        localStorage.removeItem('employee_data');
+        localStorage.removeItem('token_expires_in');
+        localStorage.removeItem('permissions');
         setUser(null);
     };
 

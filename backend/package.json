@@ -19,8 +19,10 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.1011.0",
     "@aws-sdk/lib-storage": "^3.987.0",
     "@prisma/client": "^6.15.0",
+    "aws-jwt-verify": "^5.1.1",
     "axios": "^1.13.5",
     "bcryptjs": "^3.0.2",
     "child_process": "^1.0.2",
