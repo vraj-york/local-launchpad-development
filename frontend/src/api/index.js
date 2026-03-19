@@ -1,12 +1,14 @@
 import axios from "axios";
 import config from "../config/index.js";
+import { isTokenExpiringSoon } from "../utils/auth.js";
 
 const API_URL = config.API_URL;
-const HUB_API_URL = (
-  config.HUB_API_URL ||
-  import.meta.env.VITE_HUB_API_URL ||
-  ""
-).replace(/\/$/, "");
+
+/** Refresh token proactively this many seconds before access token expires. */
+const PROACTIVE_REFRESH_BUFFER_SEC = 5 * 60; // 5 minutes
+/** How often to check if we should refresh (ms). */
+const REFRESH_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
+const HUB_API_URL = (config.HUB_API_URL || "").replace(/\/$/, "");
 
 // Create axios instance with default config
 const api = axios.create({
@@ -68,22 +70,104 @@ function clearAuthAndRedirect() {
   window.location.href = "/";
 }
 
-/** Call backend to exchange Cognito refresh token for new Cognito tokens (same token for launchpad + Hub). */
+/**
+ * Call Hub's refresh API to get new tokens. Hub requires refreshToken + email (for Cognito SECRET_HASH).
+ * POST HUB_API_URL/api/auth/refresh with { refreshToken, email }.
+ */
+function getStoredEmail() {
+  try {
+    const user = localStorage.getItem("user");
+    if (user) {
+      const parsed = JSON.parse(user);
+      if (parsed?.email) return parsed.email;
+    }
+    const emp = localStorage.getItem("employee_data");
+    if (emp) {
+      const parsed = JSON.parse(emp);
+      if (parsed?.email) return parsed.email;
+    }
+  } catch { }
+  return null;
+}
+
+const DEBUG_REFRESH = import.meta.env.DEV && import.meta.env.VITE_DEBUG_REFRESH === "true";
+
+/** Call Hub API to refresh tokens (Hub validates with Cognito; email required for SECRET_HASH). */
 export async function refreshAppToken() {
   const refreshToken = localStorage.getItem("cognito_refresh_token");
-  if (!refreshToken) return null;
-  const { data } = await axios.post(`${API_URL}/api/auth/refresh`, {
-    refreshToken,
-  });
-  const newToken = data?.idToken || data?.accessToken;
-  if (newToken) {
-    localStorage.setItem("token", newToken);
-    if (data.idToken) localStorage.setItem("cognito_id_token", data.idToken);
-    if (data.accessToken) localStorage.setItem("cognito_access_token", data.accessToken);
-    if (data.user) localStorage.setItem("user", JSON.stringify(data.user));
-    return newToken;
+  const email = getStoredEmail();
+  if (!refreshToken || !email) {
+    if (DEBUG_REFRESH) console.log("[Refresh] Skip: no refreshToken or email");
+    return null;
+  }
+  if (!HUB_API_URL) {
+    if (DEBUG_REFRESH) console.log("[Refresh] Skip: HUB_API_URL not set");
+    return null;
+  }
+  try {
+    if (DEBUG_REFRESH) console.log("[Refresh] Calling Hub", HUB_API_URL + "/api/auth/refresh");
+    const { data } = await axios.post(`${HUB_API_URL}/api/auth/refresh`, {
+      refreshToken,
+      email,
+    });
+    const body = data?.data ?? data;
+    const idToken = body?.idToken ?? body?.id_token;
+    const accessToken = body?.accessToken ?? body?.access_token;
+    const newRefreshToken = body?.refreshToken ?? body?.refresh_token;
+    const newToken = idToken ?? accessToken;
+    if (newToken) {
+      localStorage.setItem("token", newToken);
+      if (idToken) localStorage.setItem("cognito_id_token", idToken);
+      if (accessToken) localStorage.setItem("cognito_access_token", accessToken);
+      if (newRefreshToken) localStorage.setItem("cognito_refresh_token", newRefreshToken);
+      if (body?.user) localStorage.setItem("user", JSON.stringify(body.user));
+      if (DEBUG_REFRESH) console.log("[Refresh] Success: new token stored");
+      return newToken;
+    }
+  } catch (err) {
+    if (DEBUG_REFRESH) console.warn("[Refresh] Failed", err?.response?.status, err?.response?.data || err?.message);
   }
   return null;
+}
+
+/**
+ * If we have a refresh token and the access token is missing or expiring soon, refresh in the background.
+ * Returns true if a new token was stored, false otherwise.
+ */
+export async function tryProactiveRefresh() {
+  const refreshToken = localStorage.getItem("cognito_refresh_token");
+  if (!refreshToken) return false;
+  const token = localStorage.getItem("token");
+  if (token && !isTokenExpiringSoon(token, PROACTIVE_REFRESH_BUFFER_SEC)) return false;
+  const newToken = await refreshAppToken();
+  return !!newToken;
+}
+
+let refreshCheckTimerId = null;
+
+/**
+ * Start a timer that checks every REFRESH_CHECK_INTERVAL_MS and refreshes the token
+ * when it will expire within PROACTIVE_REFRESH_BUFFER_SEC. Call on login.
+ * Stops automatically when there is no refresh token (e.g. after logout).
+ */
+export function startTokenRefreshTimer() {
+  if (refreshCheckTimerId != null) clearInterval(refreshCheckTimerId);
+  refreshCheckTimerId = setInterval(async () => {
+    if (!localStorage.getItem("cognito_refresh_token")) {
+      clearInterval(refreshCheckTimerId);
+      refreshCheckTimerId = null;
+      return;
+    }
+    await tryProactiveRefresh();
+  }, REFRESH_CHECK_INTERVAL_MS);
+}
+
+/** Stop the proactive refresh timer (e.g. on logout). */
+export function stopTokenRefreshTimer() {
+  if (refreshCheckTimerId != null) {
+    clearInterval(refreshCheckTimerId);
+    refreshCheckTimerId = null;
+  }
 }
 
 // On 401: try refresh (frontend sends refresh token to backend), then retry; else logout
@@ -593,12 +677,7 @@ export async function exchangeHubAuthCode(code, redirectUri) {
       [parsed.employeeData?.first_name, parsed.employeeData?.last_name].filter(Boolean).join(" ").trim();
     const imageFromCallback =
       parsed.user?.image ??
-      parsed.employeeData?.profile_pic ??
-      parsed.employeeData?.image ??
-      parsed.employeeData?.picture ??
-      parsed.employeeData?.photo ??
-      parsed.employeeData?.photo_url ??
-      parsed.employeeData?.avatar;
+      parsed.employeeData?.profile_pic
     let user = {
       ...parsed.user,
       email: parsed.user?.email ?? parsed.employeeData?.email,

@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect } from 'react';
-import { loginUser } from '../api/index';
+import { loginUser, tryProactiveRefresh, startTokenRefreshTimer, stopTokenRefreshTimer } from '../api/index';
 import { googleLogout } from '@react-oauth/google';
 import { isTokenExpired } from '../utils/auth';
 
@@ -10,6 +10,7 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     const clearAuthStorage = () => {
+        stopTokenRefreshTimer();
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         localStorage.removeItem('token_source');
@@ -23,21 +24,36 @@ export const AuthProvider = ({ children }) => {
     };
 
     useEffect(() => {
-        const storedUser = localStorage.getItem('user');
-        const token = localStorage.getItem('token');
+        let cancelled = false;
+        (async () => {
+            const storedUser = localStorage.getItem('user');
+            const token = localStorage.getItem('token');
 
-        if (storedUser && token) {
-            if (isTokenExpired(token)) {
-                clearAuthStorage();
-            } else {
-                try {
-                    setUser(JSON.parse(storedUser));
-                } catch (error) {
-                    clearAuthStorage();
+            if (storedUser && token) {
+                if (isTokenExpired(token)) {
+                    const refreshed = await tryProactiveRefresh();
+                    if (cancelled) return;
+                    if (refreshed) {
+                        try {
+                            const u = localStorage.getItem('user');
+                            if (u) setUser(JSON.parse(u));
+                        } catch {
+                            clearAuthStorage();
+                        }
+                    } else {
+                        clearAuthStorage();
+                    }
+                } else {
+                    try {
+                        setUser(JSON.parse(storedUser));
+                    } catch (error) {
+                        clearAuthStorage();
+                    }
                 }
             }
-        }
-        setLoading(false);
+            if (!cancelled) setLoading(false);
+        })();
+        return () => { cancelled = true; };
     }, []);
 
     const login = async (credentials) => {
@@ -55,11 +71,25 @@ export const AuthProvider = ({ children }) => {
         clearAuthStorage();
     };
 
-    const checkAuth = () => {
+    const checkAuth = async () => {
         const storedUser = localStorage.getItem('user');
         const token = localStorage.getItem('token');
-        if (!storedUser || !token || isTokenExpired(token)) {
+        if (!storedUser || !token) {
             clearAuthStorage();
+            return;
+        }
+        if (isTokenExpired(token)) {
+            const refreshed = await tryProactiveRefresh();
+            if (refreshed) {
+                try {
+                    const u = localStorage.getItem('user');
+                    if (u) setUser(JSON.parse(u));
+                } catch {
+                    clearAuthStorage();
+                }
+            } else {
+                clearAuthStorage();
+            }
             return;
         }
         try {
@@ -68,6 +98,13 @@ export const AuthProvider = ({ children }) => {
             clearAuthStorage();
         }
     };
+
+    useEffect(() => {
+        if (user && localStorage.getItem('cognito_refresh_token')) {
+            startTokenRefreshTimer();
+        }
+        return () => stopTokenRefreshTimer();
+    }, [user]);
 
     return (
         <AuthContext.Provider value={{ user, loading, login, logout, checkAuth }}>
