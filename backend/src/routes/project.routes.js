@@ -630,62 +630,6 @@ function aggregateWebhookResponses(parallelResults) {
   return result;
 }
 
-function findProjectRoot(dir) {
-  // Files/folders to ignore when searching for project root
-  const ignoreList = [
-    '.git',
-    '.gitignore',
-    '.gitattributes',
-    '.npmignore',
-    'README.md',
-    'LICENSE',
-    '.DS_Store',
-    'Thumbs.db',
-    'desktop.ini',
-    'node_modules',
-    'build',
-    'dist'
-  ];
-
-  // Check if current directory has package.json
-  const packageJsonPath = path.join(dir, 'package.json');
-  if (fs.existsSync(packageJsonPath)) {
-    return dir;
-  }
-
-  // Search in subdirectories, excluding ignored items
-  const items = fs.readdirSync(dir);
-  const directories = items.filter(item => {
-    const itemPath = path.join(dir, item);
-    const isDirectory = fs.statSync(itemPath).isDirectory();
-    const shouldIgnore = ignoreList.includes(item);
-
-    return isDirectory && !shouldIgnore;
-  });
-
-  // If there's only one directory, check if it contains the project
-  if (directories.length === 1) {
-    const subDir = path.join(dir, directories[0]);
-    const subPackageJson = path.join(subDir, 'package.json');
-
-    if (fs.existsSync(subPackageJson)) {
-      return subDir;
-    }
-
-    // Recursively search deeper
-    return findProjectRoot(subDir);
-  }
-
-  // If multiple directories, search each one
-  for (const subDir of directories) {
-    const subDirPath = path.join(dir, subDir);
-    const found = findProjectRoot(subDirPath);
-    if (found) return found;
-  }
-
-  return dir;
-}
-
 // File locking mechanism
 async function withProjectLock(projectName, operation) {
   if (projectLocks.has(projectName)) {

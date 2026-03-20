@@ -8,7 +8,7 @@ import {
   ensureBranchFrom,
   getBranchSha,
   updateRef,
-  createTag,
+  createTagIdempotent,
   createBranch,
 } from "./github.service.js";
 import config from "../config/index.js";
@@ -94,6 +94,7 @@ export async function performMergeToLaunchpad(agentId, agentData) {
   if (!conversion) {
     throw new Error("Agent not found or not linked to a project");
   }
+
   if (conversion.projectVersionId != null) {
     return { merged: true };
   }
@@ -158,10 +159,20 @@ export async function performMergeToLaunchpad(agentId, agentData) {
     }
   }
   const tagName = `rel-${releaseId}-${versionNumber}`;
-  const tagResult = await createTag(owner, repo, tagName, headSha, token);
+
+  const tagResult = await createTagIdempotent(owner, repo, tagName, headSha, token);
   if (!tagResult.ok) {
     throw new Error(tagResult.message || "Failed to create tag");
   }
+
+  /** Same tag may exist on GitHub from a prior failed run; reuse DB row if present. */
+  const existingVersion = await prisma.projectVersion.findFirst({
+    where: {
+      projectId: conversion.projectId,
+      gitTag: tagName,
+    },
+    select: { id: true },
+  });
 
   const canDeploy =
     project.projectPath?.trim() &&
@@ -169,71 +180,28 @@ export async function performMergeToLaunchpad(agentId, agentData) {
     Number(project.port) > 0;
 
   let newVersion;
-  const backendRoot = getBackendRoot();
-  const tempRoot = path.join(
-    backendRoot,
-    "_tmp_builds",
-    `cursor_merge_${conversion.projectId}_${Date.now()}`,
-  );
-  console.log('tempRoot:', tempRoot);
-  console.log('canDeploy:', canDeploy);
+  /** True only when clone + build + copy + DB succeeded (single attempt; no retry loop). */
+  let deployedToPort = false;
+  const githubTagUrl = `https://github.com/${owner}/${repo}/releases/tag/${tagName}`;
 
-  if (canDeploy) {
-    await fs.ensureDir(tempRoot);
-    const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
-    console.log('cloneUrl:', cloneUrl);
-    try {
-      // Clone into tempRoot (empty dir)
-      gitExec(["clone", cloneUrl, "."], tempRoot);
-      // Fetch tag ref then checkout (clone default branch may not include tag yet)
-      try {
-        gitExec(
-          ["fetch", "origin", `refs/tags/${tagName}:refs/tags/${tagName}`],
-          tempRoot,
-        );
-      } catch {
-        gitExec(["fetch", "origin", "tag", tagName], tempRoot);
-      }
-      gitExec(["checkout", tagName], tempRoot);
-
-      const sourceRoot = findProjectRoot(tempRoot);
-      const buildOutputPath = await runBuildSequence(sourceRoot);
-console.log('buildOutputPath:', buildOutputPath);
-      const projectRoot = path.join(backendRoot, project.projectPath);
-      await fs.ensureDir(path.dirname(projectRoot));
-      await fs.emptyDir(projectRoot);
-      await fs.copy(buildOutputPath, projectRoot);
-
-      await reloadNginx();
-
-      const domain = config.getBuildUrlHost();
-      const buildUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
-
-      newVersion = await prisma.$transaction(async (tx) => {
-        await tx.projectVersion.updateMany({
-          where: { projectId: conversion.projectId },
-          data: { isActive: false },
-        });
-        return tx.projectVersion.create({
-          data: {
-            projectId: conversion.projectId,
-            releaseId: conversion.releaseId,
-            version: versionNumber,
-            gitTag: tagName,
-            zipFilePath: tagName,
-            buildUrl,
-            isActive: true,
-            uploadedBy: conversion.attemptedById,
-          },
-        });
+  /**
+   * Persist version when deploy did not run or failed: `buildUrl` is GitHub tag URL if no port,
+   * otherwise same domain:port as a successful build.
+   */
+  const persistFallbackVersion = async (buildUrl) => {
+    if (existingVersion) {
+      return prisma.projectVersion.update({
+        where: { id: existingVersion.id },
+        data: {
+          version: versionNumber,
+          zipFilePath: tagName,
+          buildUrl,
+          releaseId: conversion.releaseId,
+          uploadedBy: conversion.attemptedById,
+        },
       });
-    } finally {
-      await fs.remove(tempRoot).catch(() => {});
     }
-  } else {
-    // No projectPath/port: keep GitHub-only record (no deploy)
-    const buildUrl = `https://github.com/${owner}/${repo}/releases/tag/${tagName}`;
-    newVersion = await prisma.projectVersion.create({
+    return prisma.projectVersion.create({
       data: {
         projectId: conversion.projectId,
         releaseId: conversion.releaseId,
@@ -245,6 +213,95 @@ console.log('buildOutputPath:', buildOutputPath);
         uploadedBy: conversion.attemptedById,
       },
     });
+  };
+
+  const backendRoot = getBackendRoot();
+  const tempRoot = path.join(
+    backendRoot,
+    "_tmp_builds",
+    `cursor_merge_${conversion.projectId}_${Date.now()}`,
+  );
+
+  if (canDeploy) {
+    /** Same as successful path: protocol + domain + port for this project’s preview URL. */
+    const liveSiteUrl = `${config.getBuildUrlProtocol()}://${config.getBuildUrlHost()}:${project.port}`;
+
+    await fs.ensureDir(tempRoot);
+    const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+    let deployAttemptFailed = false;
+    try {
+      try {
+        gitExec(["clone", cloneUrl, "."], tempRoot);
+
+        try {
+          gitExec(
+            ["fetch", "origin", `refs/tags/${tagName}:refs/tags/${tagName}`],
+            tempRoot,
+          );
+        } catch {
+          gitExec(["fetch", "origin", "tag", tagName], tempRoot);
+        }
+        gitExec(["checkout", tagName], tempRoot);
+
+        const sourceRoot = findProjectRoot(tempRoot);
+        const buildOutputPath = await runBuildSequence(sourceRoot);
+
+        const projectRoot = path.join(backendRoot, project.projectPath);
+        await fs.ensureDir(path.dirname(projectRoot));
+        await fs.emptyDir(projectRoot);
+        await fs.copy(buildOutputPath, projectRoot);
+
+        await reloadNginx();
+
+        const buildUrl = liveSiteUrl;
+
+        newVersion = await prisma.$transaction(async (tx) => {
+          await tx.projectVersion.updateMany({
+            where: { projectId: conversion.projectId },
+            data: { isActive: false },
+          });
+          if (existingVersion) {
+            return tx.projectVersion.update({
+              where: { id: existingVersion.id },
+              data: {
+                version: versionNumber,
+                zipFilePath: tagName,
+                buildUrl,
+                isActive: true,
+                releaseId: conversion.releaseId,
+                uploadedBy: conversion.attemptedById,
+              },
+            });
+          }
+          return tx.projectVersion.create({
+            data: {
+              projectId: conversion.projectId,
+              releaseId: conversion.releaseId,
+              version: versionNumber,
+              gitTag: tagName,
+              zipFilePath: tagName,
+              buildUrl,
+              isActive: true,
+              uploadedBy: conversion.attemptedById,
+            },
+          });
+        });
+        deployedToPort = true;
+      } catch (err) {
+        deployAttemptFailed = true;
+        console.warn(
+          "[cursor] merge deploy/build failed (one attempt); persisting fallback:",
+          err?.message || err,
+        );
+      }
+    } finally {
+      await fs.remove(tempRoot).catch(() => {});
+    }
+    if (deployAttemptFailed) {
+      newVersion = await persistFallbackVersion(liveSiteUrl);
+    }
+  } else {
+    newVersion = await persistFallbackVersion(githubTagUrl);
   }
 
   await prisma.figmaConversion.update({
@@ -262,7 +319,7 @@ console.log('buildOutputPath:', buildOutputPath);
     version: versionNumber,
     tag: tagName,
     prUrl: agentData.target?.prUrl || agentData.source?.prUrl,
-    deployed: canDeploy,
+    deployed: deployedToPort,
   };
 }
 
@@ -279,7 +336,7 @@ export function startAgentPolling(agentId) {
 
   const poll = async () => {
     try {
-      const { status, data } = await cursorRequest({
+      const { data } = await cursorRequest({
         method: "GET",
         path: `/v0/agents/${encodeURIComponent(id)}`,
       });
@@ -305,7 +362,7 @@ export function startAgentPolling(agentId) {
 
       timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
     } catch (err) {
-      console.error("[cursor] agent poll error:", err.message);
+      console.error("[cursor] agent poll error:", err?.message || err);
       timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
     }
   };

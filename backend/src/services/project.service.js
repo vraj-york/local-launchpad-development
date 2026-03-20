@@ -21,6 +21,7 @@ import {
   reloadNginx as reloadNginxRelease,
   createGithubRepo,
   addGithubCollaborator,
+  findProjectRoot,
 } from "./release.service.js";
 import { parseGitRepoPath } from "./github.service.js";
 
@@ -52,21 +53,21 @@ function runCommand(command, cwd, options = {}) {
   });
 }
 
-/** Find directory containing package.json (for worktree build) */
-function findProjectRoot(dir) {
-  const pkgPath = path.join(dir, "package.json");
-  if (fs.existsSync(pkgPath)) return dir;
+/**
+ * Remove a local tag in the projects bare/cached repo before fetching from GitHub.
+ * Fixes: ! [rejected] tag -> tag (would clobber existing tag) when local tag points at a
+ * different commit than remote (e.g. after Cursor merge / tag moves). Remote is source of truth.
+ */
+function deleteLocalGitTag(gitDir, tag) {
+  if (!gitDir || !tag) return;
   try {
-    const items = fs.readdirSync(dir);
-    for (const name of items) {
-      if (["node_modules", "build", "dist", ".git"].includes(name)) continue;
-      const sub = path.join(dir, name);
-      if (!fs.statSync(sub).isDirectory()) continue;
-      const found = findProjectRoot(sub);
-      if (found) return found;
-    }
-  } catch (_) { }
-  return dir;
+    execFileSync("git", ["--git-dir", gitDir, "tag", "-d", tag], {
+      stdio: "ignore",
+      timeout: 30000,
+    });
+  } catch {
+    // Tag may not exist locally — safe to ignore
+  }
 }
 
 /**
@@ -687,6 +688,7 @@ export async function activateProjectVersionService({
       await fs.remove(worktreeDir).catch(() => { });
       await fs.ensureDir(worktreeDir);
       runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
+      deleteLocalGitTag(gitDir, tag);
       // Fetch tag (same as switch version): prefer project's repo, then origin, so Figma/remote-only tags work
       const fetchTagIntoLocalRepo = (gDir, t, proj) => {
         if (proj.gitRepoPath?.trim() && proj.githubToken?.trim()) {
@@ -1174,6 +1176,7 @@ export const switchProjectVersion = async (
     await fs.ensureDir(previewDir);
 
     runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
+    deleteLocalGitTag(gitDir, tag);
     // Fetch tag: prefer project's repo (e.g. projects/Launchpad → binalc-web/launchpad) when set
     const fetchFromProjectRepo = () => {
       if (!project.gitRepoPath?.trim() || !project.githubToken?.trim()) return false;
