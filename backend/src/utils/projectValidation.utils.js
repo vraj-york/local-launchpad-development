@@ -1,3 +1,23 @@
+import ApiError from "./apiError.js";
+
+/**
+ * Same rules as createProjectService: folder + GitHub repo name from display name
+ * (lowercase, spaces → hyphens). Matches projects/<slug> on disk.
+ */
+export function projectRepoSlugFromDisplayName(name) {
+  if (!name || typeof name !== "string") {
+    throw new ApiError(400, "Invalid project name: must be a non-empty string");
+  }
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new ApiError(400, "Invalid project name: must be a non-empty string");
+  }
+  const slug = trimmed.toLowerCase().replace(/\s+/g, "-");
+  if (slug.length > 100) {
+    throw new ApiError(400, "Project name too long. Maximum 100 characters allowed.");
+  }
+  return slug;
+}
 
 export function validateProjectName(name) {
     if (!name || typeof name !== "string") {
