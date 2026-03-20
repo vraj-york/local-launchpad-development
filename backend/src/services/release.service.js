@@ -403,10 +403,7 @@ export const listReleasesService = async (projectId, user) => {
   if (!hasAccess) throw new ApiError(403, "Forbidden");
 
   return prisma.release.findMany({
-    where: {
-      projectId,
-      status: { in: [ReleaseStatus.active, ReleaseStatus.locked] },
-    },
+    where: { projectId },
     include: {
       creator: {
         select: { id: true, name: true, email: true },
