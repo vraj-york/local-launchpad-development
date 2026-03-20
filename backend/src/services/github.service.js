@@ -176,3 +176,66 @@ export async function createTag(owner, repo, tagName, sha, token) {
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, message: data?.message };
 }
+
+/**
+ * Resolve a tag ref to its target commit SHA (lightweight or annotated tag object).
+ * @returns {Promise<string | null>}
+ */
+export async function getTagCommitSha(owner, repo, tagName, token) {
+  const refUrl = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/tags/${encodeURIComponent(tagName)}`;
+  const res = await fetch(refUrl, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+    },
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => ({}));
+  const obj = data?.object;
+  if (!obj?.sha) return null;
+  if (obj.type === "commit") return obj.sha;
+  if (obj.type === "tag") {
+    const tagUrl = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/tags/${encodeURIComponent(obj.sha)}`;
+    const tagRes = await fetch(tagUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
+    if (!tagRes.ok) return null;
+    const tagData = await tagRes.json().catch(() => ({}));
+    return tagData?.object?.sha || null;
+  }
+  return null;
+}
+
+/**
+ * Create a lightweight tag, or if it already exists: succeed if it points at the same commit,
+ * otherwise force-move the tag to sha (recover from partial runs / retries).
+ */
+export async function createTagIdempotent(owner, repo, tagName, sha, token) {
+  const first = await createTag(owner, repo, tagName, sha, token);
+  if (first.ok) return { ok: true };
+
+  const msg = (first.message || "").toLowerCase();
+  const duplicate =
+    first.status === 422 ||
+    msg.includes("already exists") ||
+    msg.includes("reference already exists");
+
+  if (!duplicate) return first;
+
+  const existing = await getTagCommitSha(owner, repo, tagName, token);
+  if (existing && existing.toLowerCase() === sha.toLowerCase()) {
+    return { ok: true };
+  }
+
+  const moved = await updateRef(owner, repo, `tags/${tagName}`, sha, true, token);
+  if (moved.ok) return { ok: true };
+  return {
+    ok: false,
+    status: moved.status,
+    message: moved.message || first.message || "Failed to create or move tag",
+  };
+}

@@ -61,6 +61,7 @@ function sanitizeCommand(command) {
 export function findProjectRoot(dir) {
   const ignoreList = [
     ".git",
+    ".cursor", // Cursor IDE rules/config — never the npm app root (avoids wrong root e.g. .cursor/rules)
     ".gitignore",
     ".gitattributes",
     ".npmignore",
@@ -665,36 +666,28 @@ export const lockReleaseService = async (releaseId, locked, user) => {
 };
 
 /**
- * Parse semver string to [major, minor, patch] for comparison.
- * @returns {[number, number, number]|null}
- */
-function parseSemver(v) {
-  if (!v || typeof v !== "string") return null;
-  const parts = v.trim().split(".").map(Number);
-  if (parts.length < 3 || parts.some(Number.isNaN)) return null;
-  return [parts[0], parts[1] ?? 0, parts[2] ?? 0];
-}
-
-
-/**
- * Generates the next semantic version for the same release.
- * Uses the highest existing version for this release and bumps patch (+1).
- * First upload to a release gets 1.0.0; each further upload to that release gets +1 (1.0.1, 1.0.2, ...).
+ * Generates the next semantic version for a release (e.g., 1.0.1 -> 1.0.2).
+ * Bumps patch on the most recently created version for this release.
  */
 export const autoGenerateVersion = async (releaseId) => {
-  const release = await prisma.release.findUnique({
-    where: { id: releaseId },
-    select: { id: true },
-  });
-  if (!release) return "1.0.0";
-
-  const versions = await prisma.projectVersion.findMany({
+  const lastVersion = await prisma.projectVersion.findFirst({
     where: { releaseId },
+    orderBy: { createdAt: "desc" },
     select: { version: true },
   });
-  const base = maxSemver(versions.map((r) => r.version).filter(Boolean));
-  if (!base) return "1.0.0";
-  return semverPatchBump(base);
+
+  if (!lastVersion) {
+    return "1.0.0";
+  }
+
+  const parts = lastVersion.version.split(".").map(Number);
+
+  if (parts.length === 3) {
+    parts[2] += 1;
+    return parts.join(".");
+  }
+
+  return `${lastVersion.version}.1`;
 };
 
 /**
@@ -705,65 +698,370 @@ export const autoGenerateVersion = async (releaseId) => {
  * @param {string} buildContextPath
  * @param {{ fastInstall?: boolean }} opts - fastInstall uses offline-preferring install (preview/switch only)
  */
+/** Next 15+ may use Turbopack for `next build`; nested apps under backend/_preview or _tmp_builds pick up backend/package-lock.json and mis-detect workspace root. `next build --webpack` avoids that. */
+function shouldUseNextWebpackBuild(pkg) {
+  const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  if (!deps.next) return false;
+  const m = String(deps.next).match(/(\d+)/);
+  const major = m ? parseInt(m[1], 10) : 0;
+  return major >= 15;
+}
+
+function isNextProject(pkg) {
+  const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  return Boolean(deps.next);
+}
+
+/** True if next.config source already requests static HTML export. */
+function configFileHasStaticExport(content) {
+  return /\boutput\s*:\s*['"]export['"]/.test(String(content || ""));
+}
+
+/**
+ * Heuristic injection for next.config.ts / .mts when we cannot use an import wrapper.
+ * Matches common create-next-app shapes; returns null if we cannot safely patch.
+ */
+function tryInjectStaticExportIntoNextConfigTsLike(content) {
+  if (configFileHasStaticExport(content)) return content;
+
+  const inject =
+    "\n  output: 'export',\n  images: { unoptimized: true }," +
+    "\n  outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),";
+
+  const patterns = [
+    /(const\s+nextConfig\s*:\s*NextConfig\s*=\s*\{)/,
+    /(const\s+nextConfig\s*=\s*\{)/,
+    /(export\s+default\s*\{)/,
+  ];
+
+  for (const re of patterns) {
+    if (!re.test(content)) continue;
+    let next = content.replace(re, `$1${inject}`);
+    if (next === content) continue;
+    if (
+      !/import\s+(?:\*\s+as\s+)?path\s+from\s+['"](node:)?path['"]/.test(next)
+    ) {
+      next = `import path from "path";\n${next}`;
+    }
+    if (!/import\s+{\s*fileURLToPath\s*}\s+from\s+['"]url['"]/.test(next)) {
+      next = `import { fileURLToPath } from "url";\n${next}`;
+    }
+    return next;
+  }
+  return null;
+}
+
+/**
+ * Launchpad preview copies static files (like Vite dist/). Next needs `out/` from static export.
+ * We temporarily merge `output: 'export'` into next.config (mjs/js/cjs/ts) and restore after build.
+ */
+async function nextConfigJsLooksEsm(absBuild, pkg) {
+  if (pkg.type === "module") return true;
+  const p = path.join(absBuild, "next.config.js");
+  if (!(await fs.pathExists(p))) return false;
+  const head = (await fs.readFile(p, "utf8")).slice(0, 1200);
+  return /^\s*import\s/m.test(head) || /^\s*export\s/m.test(head);
+}
+
+function buildNextConfigEsmWrapper(relBackupImportPath) {
+  return (
+    `/** @generated Launchpad preview — merges output: 'export' (restored after build). */\n` +
+    `import path from 'path';\n` +
+    `import { fileURLToPath } from 'url';\n` +
+    `import userConfig from '${relBackupImportPath}';\n` +
+    `const __lpRoot = path.dirname(fileURLToPath(import.meta.url));\n` +
+    `async function mergeConfig(phase, ...args) {\n` +
+    `  let base;\n` +
+    `  if (typeof userConfig === 'function') {\n` +
+    `    base = await userConfig(phase, ...args);\n` +
+    `  } else {\n` +
+    `    base = userConfig;\n` +
+    `  }\n` +
+    `  if (!base || typeof base !== 'object') {\n` +
+    `    return {\n` +
+    `      output: 'export',\n` +
+    `      outputFileTracingRoot: __lpRoot,\n` +
+    `      images: { unoptimized: true },\n` +
+    `    };\n` +
+    `  }\n` +
+    `  return {\n` +
+    `    ...base,\n` +
+    `    output: 'export',\n` +
+    `    outputFileTracingRoot: __lpRoot,\n` +
+    `    images: {\n` +
+    `      ...(base.images || {}),\n` +
+    `      unoptimized: true,\n` +
+    `    },\n` +
+    `  };\n` +
+    `}\n` +
+    `export default mergeConfig;\n`
+  );
+}
+
+function buildNextConfigCjsWrapper(relBackupRequirePath) {
+  return (
+    `/** @generated Launchpad preview — merges output: 'export' (restored after build). */\n` +
+    `const path = require('path');\n` +
+    `module.exports = async function mergeConfig(phase, ...args) {\n` +
+    `  const __lpRoot = path.dirname(__filename);\n` +
+    `  const user = require('${relBackupRequirePath}');\n` +
+    `  const base = typeof user === 'function' ? await user(phase, ...args) : user;\n` +
+    `  if (!base || typeof base !== 'object') {\n` +
+    `    return {\n` +
+    `      output: 'export',\n` +
+    `      outputFileTracingRoot: __lpRoot,\n` +
+    `      images: { unoptimized: true },\n` +
+    `    };\n` +
+    `  }\n` +
+    `  return {\n` +
+    `    ...base,\n` +
+    `    output: 'export',\n` +
+    `    outputFileTracingRoot: __lpRoot,\n` +
+    `    images: {\n` +
+    `      ...(base.images || {}),\n` +
+    `      unoptimized: true,\n` +
+    `    },\n` +
+    `  };\n` +
+    `};\n`
+  );
+}
+
+/**
+ * @returns {Promise<null | (() => Promise<void>)>}
+ */
+async function prepareNextStaticExportForPreview(absBuild, pkg) {
+  if (!isNextProject(pkg)) return null;
+
+  const candidates = [
+    "next.config.mjs",
+    "next.config.js",
+    "next.config.ts",
+    "next.config.mts",
+    "next.config.cjs",
+  ];
+  let foundPath = null;
+  for (const c of candidates) {
+    const p = path.join(absBuild, c);
+    if (await fs.pathExists(p)) {
+      foundPath = p;
+      break;
+    }
+  }
+
+  if (!foundPath) {
+    const minimalPath = path.join(absBuild, "next.config.mjs");
+    await fs.writeFile(
+      minimalPath,
+      `/** Temporary Launchpad preview config (removed after build). */\n` +
+        `import path from 'path';\n` +
+        `import { fileURLToPath } from 'url';\n` +
+        `const __lpRoot = path.dirname(fileURLToPath(import.meta.url));\n` +
+        `export default { output: 'export', images: { unoptimized: true }, outputFileTracingRoot: __lpRoot };\n`,
+      "utf8",
+    );
+    let restored = false;
+    return async () => {
+      if (restored) return;
+      restored = true;
+      await fs.remove(minimalPath).catch(() => {});
+    };
+  }
+
+  const content = await fs.readFile(foundPath, "utf8");
+  if (configFileHasStaticExport(content)) {
+    return null;
+  }
+
+  const ext = path.extname(foundPath);
+  const baseName = path.basename(foundPath);
+  const backupName = `next.config.launchpad-original${ext}`;
+  const backupPath = path.join(absBuild, backupName);
+
+  if (ext === ".ts" || ext === ".mts" || ext === ".cts") {
+    const patched = tryInjectStaticExportIntoNextConfigTsLike(content);
+    if (!patched) {
+      console.warn(
+        `[runBuildSequence] ${baseName} has no output: 'export' and could not be auto-patched. ` +
+          `Use a const nextConfig = { ... } or export default { ... } shape, or add output: 'export' manually.`,
+      );
+      return null;
+    }
+    await fs.remove(backupPath).catch(() => {});
+    await fs.copy(foundPath, backupPath);
+    await fs.writeFile(foundPath, patched, "utf8");
+    console.log(
+      `[runBuildSequence] Next.js: merged output: 'export' into ${baseName} for static preview (original backed up as ${backupName}).`,
+    );
+    let restored = false;
+    return async () => {
+      if (restored) return;
+      restored = true;
+      try {
+        await fs.move(backupPath, foundPath, { overwrite: true });
+      } catch (e) {
+        console.warn(
+          `[runBuildSequence] Failed to restore Next config from ${backupName}:`,
+          e?.message || e,
+        );
+      }
+    };
+  }
+
+  await fs.remove(backupPath).catch(() => {});
+  await fs.copy(foundPath, backupPath);
+
+  const relBackup = `./${backupName}`;
+  let wrapper;
+  if (ext === ".mjs") {
+    wrapper = buildNextConfigEsmWrapper(relBackup);
+  } else if (ext === ".cjs") {
+    wrapper = buildNextConfigCjsWrapper(relBackup);
+  } else if (ext === ".js") {
+    const esm = await nextConfigJsLooksEsm(absBuild, pkg);
+    wrapper = esm ? buildNextConfigEsmWrapper(relBackup) : buildNextConfigCjsWrapper(relBackup);
+  } else {
+    await fs.remove(backupPath).catch(() => {});
+    return null;
+  }
+
+  await fs.writeFile(foundPath, wrapper, "utf8");
+  console.log(
+    `[runBuildSequence] Next.js: merged output: 'export' into ${baseName} for static preview (original backed up as ${backupName}).`,
+  );
+
+  let restored = false;
+  return async () => {
+    if (restored) return;
+    restored = true;
+    try {
+      await fs.move(backupPath, foundPath, { overwrite: true });
+    } catch (e) {
+      console.warn(
+        `[runBuildSequence] Failed to restore Next config from ${backupName}:`,
+        e?.message || e,
+      );
+    }
+  };
+}
+
+/**
+ * Resolve the folder to copy for static preview / deploy.
+ * - Vite → dist/
+ * - CRA → build/
+ * - Next.js static export → out/ (requires `output: "export"` in next.config so `next build` emits static HTML)
+ * - Default `next build` only creates .next/ (server/runtime bundle), not a static site — we cannot serve that like dist/.
+ */
+async function resolveStaticSiteOutputDir(absBuild, pkg) {
+  const distDir = path.join(absBuild, "dist");
+  const buildDir = path.join(absBuild, "build");
+  const outDir = path.join(absBuild, "out");
+  const dotNextDir = path.join(absBuild, ".next");
+
+  if (await fs.pathExists(distDir)) return distDir;
+  if (await fs.pathExists(buildDir)) return buildDir;
+  if (await fs.pathExists(outDir)) return outDir;
+
+  if (isNextProject(pkg) && (await fs.pathExists(dotNextDir))) {
+    throw new Error(
+      "Next.js build produced `.next/` but no static export folder. " +
+        "Default `next build` writes the app under `.next/` (not `dist/`). " +
+        "For Launchpad preview we copy static files like a Vite `dist/`. " +
+        "Add `output: 'export'` to `next.config.js` or `next.config.mjs` so `next build` also generates `out/`, then rebuild. " +
+        "See: https://nextjs.org/docs/app/building-your-application/deploying/static-exports",
+    );
+  }
+
+  throw new Error(
+    "Build output folder not found. Expected one of: dist/ (Vite), build/ (CRA), or out/ (Next.js static export).",
+  );
+}
+
 export const runBuildSequence = async (buildContextPath, opts = {}) => {
-  const pkgPath = path.join(buildContextPath, "package.json");
+  const absBuild = path.resolve(buildContextPath);
+  const pkgPath = path.join(absBuild, "package.json");
   if (!(await fs.pathExists(pkgPath))) {
     throw new Error(`package.json missing at ${buildContextPath}`);
   }
 
-  // Always include devDependencies so build tools (vite, webpack, etc.) are installed.
-  // Backend container sets NODE_ENV=production; npm omits devDeps unless we override.
-  const installArgs = opts.fastInstall
-    ? [
-      "install",
-      "--include=dev",
-      "--prefer-offline",
-      "--no-audit",
-      "--no-fund",
-      "--loglevel",
-      "error",
-    ]
-    : ["install", "--include=dev"];
-
-  // Force devDependencies: NODE_ENV=production alone can still skip devDeps on some npm versions.
-  const installEnv = {
-    ...process.env,
-    NODE_ENV: "development",
-    NPM_CONFIG_PRODUCTION: "false",
-  };
-  await execa("npm", installArgs, {
-    cwd: buildContextPath,
-    stdio: "inherit",
-    env: installEnv,
-  });
-
-  // Ensure node_modules/.bin is on PATH when script is "vite build" (shell looks up vite).
-  // Must match installEnv: container has NODE_ENV=production; npm can omit .bin from script
-  // PATH when production, so vite/webpack stay "not found" (exit 127) even after install.
-  const binPath = path.join(buildContextPath, "node_modules", ".bin");
-  const pathSep = process.platform === "win32" ? ";" : ":";
-  const buildEnv = {
-    ...process.env,
-    NODE_ENV: "development",
-    NPM_CONFIG_PRODUCTION: "false",
-    PATH: `${binPath}${pathSep}${process.env.PATH || ""}`,
-  };
-  await execa("npm", ["run", "build"], {
-    cwd: buildContextPath,
-    stdio: "inherit",
-    env: buildEnv,
-  });
-
-  // return actual build output folder
-  if (await fs.pathExists(path.join(buildContextPath, "dist"))) {
-    return path.join(buildContextPath, "dist");
+  let pkg;
+  try {
+    pkg = JSON.parse(await fs.readFile(pkgPath, "utf8"));
+  } catch {
+    pkg = {};
   }
 
-  if (await fs.pathExists(path.join(buildContextPath, "build"))) {
-    return path.join(buildContextPath, "build");
-  }
+  const restoreNextConfig = await prepareNextStaticExportForPreview(absBuild, pkg);
 
-  throw new Error("Build output folder not found (dist/build)");
+  try {
+    // Always include devDependencies so build tools (vite, webpack, etc.) are installed.
+    // Backend container sets NODE_ENV=production; npm omits devDeps unless we override.
+    const installArgs = opts.fastInstall
+      ? [
+        "install",
+        "--include=dev",
+        "--prefer-offline",
+        "--no-audit",
+        "--no-fund",
+        "--loglevel",
+        "error",
+      ]
+      : ["install", "--include=dev"];
+
+    // Force devDependencies: NODE_ENV=production alone can still skip devDeps on some npm versions.
+    const installEnv = {
+      ...process.env,
+      NODE_ENV: "development",
+      NPM_CONFIG_PRODUCTION: "false",
+    };
+    await execa("npm", installArgs, {
+      cwd: absBuild,
+      stdio: "inherit",
+      env: installEnv,
+    });
+
+    // Ensure node_modules/.bin is on PATH when script is "vite build" (shell looks up vite).
+    // Must match installEnv: container has NODE_ENV=production; npm can omit .bin from script
+    // PATH when production, so vite/webpack stay "not found" (exit 127) even after install.
+    const binPath = path.join(absBuild, "node_modules", ".bin");
+    const pathSep = process.platform === "win32" ? ";" : ":";
+    // Production build: matches `next build` / Vite production expectations; avoids Next.js
+    // "non-standard NODE_ENV" warning and duplicate React issues when NODE_ENV was "development".
+    const buildEnv = {
+      ...process.env,
+      NODE_ENV: "production",
+      NPM_CONFIG_PRODUCTION: "false",
+      PATH: `${binPath}${pathSep}${process.env.PATH || ""}`,
+    };
+
+    const useNextWebpack = shouldUseNextWebpackBuild(pkg);
+    const npmBuildCmd = useNextWebpack
+      ? ["run", "build", "--", "--webpack"]
+      : ["run", "build"];
+    if (useNextWebpack) {
+      console.log(
+        "[runBuildSequence] Next.js detected: using `next build --webpack` so the app folder is the build root (avoids parent lockfile / Turbopack workspace confusion).",
+      );
+    }
+
+    await execa("npm", npmBuildCmd, {
+      cwd: absBuild,
+      stdio: "inherit",
+      env: buildEnv,
+    });
+
+    return resolveStaticSiteOutputDir(absBuild, pkg);
+  } finally {
+    if (restoreNextConfig) {
+      try {
+        await restoreNextConfig();
+      } catch (e) {
+        console.warn(
+          "[runBuildSequence] Failed to restore Next.js config after preview build:",
+          e?.message || e,
+        );
+      }
+    }
+  }
 };
 
 export const reloadNginx = async () => {
