@@ -66,10 +66,13 @@ export const ClientLink = () => {
     ? activeRelease?.id
     : null;
 
+  const activeReleaseLocked =
+    String(activeRelease?.status ?? "").toLowerCase() === "locked";
+
   const handleLock = useCallback(() => {
-    if (!selectedReleaseId || activeRelease?.isLocked) return;
+    if (!selectedReleaseId || activeReleaseLocked) return;
     setLockConfirmOpen(true);
-  }, [selectedReleaseId, activeRelease?.isLocked]);
+  }, [selectedReleaseId, activeReleaseLocked]);
 
   const handleLockConfirm = useCallback(async () => {
     if (!selectedReleaseId) return;
@@ -157,7 +160,7 @@ export const ClientLink = () => {
   const iframeSrc =
     toProxyUrl(previewBuildUrl ?? rawBuildUrl) ?? activeBuildUrl;
 
-  const isLocked = activeRelease?.isLocked ?? false;
+  const isLocked = activeReleaseLocked;
 
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-slate-50 w-full overflow-hidden">
