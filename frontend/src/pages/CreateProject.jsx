@@ -33,6 +33,8 @@ import { toast } from "sonner";
 
 const CreateProject = () => {
   const { user } = useAuth();
+
+  console.log("User:", user);
   const navigate = useNavigate();
 
   // Form State — project name + external hub id come from Form hub dropdown
@@ -81,10 +83,6 @@ const CreateProject = () => {
     }
   }, [user]);
 
-  /** Form hub titles may include spaces; strip all whitespace for stored `name` (current product rule). */
-  const normalizeHubTitleForName = (title) =>
-    typeof title === "string" ? title.replace(/\s+/g, "") : "";
-
   useEffect(() => {
     let cancelled = false;
     const loadHubProjects = async () => {
@@ -92,12 +90,13 @@ const CreateProject = () => {
       setHubProjectsError("");
       try {
         const list = await fetchExternalHubProjects();
+        console.log("External hub projects:", list);
         if (!cancelled) setExternalHubProjects(list);
       } catch (err) {
         if (!cancelled) {
           console.error("Failed to fetch Form hub projects:", err);
           setHubProjectsError(
-            err?.error || "Could not load projects from Form hub."
+            err?.error || "Could not load projects from Form hub.",
           );
           setExternalHubProjects([]);
         }
@@ -119,17 +118,14 @@ const CreateProject = () => {
       errors.hubProject = "Please select a project from hub";
     } else {
       const selected = externalHubProjects.find(
-        (p) => p.id === selectedHubProjectId
+        (p) => p.id === selectedHubProjectId,
       );
-      const nameForStore = normalizeHubTitleForName(selected?.title ?? "");
-      if (!nameForStore) {
+      const projectName = selected?.title ?? "";
+      const trimmed = projectName.trim();
+      if (!trimmed) {
         errors.hubProject = "Selected project has no valid title";
-      } else if (nameForStore.length < 3) {
-        errors.hubProject =
-          "project name must be at least 3 characters";
-      } else if (!/^[a-zA-Z0-9_-]+$/.test(nameForStore)) {
-        errors.hubProject =
-          "Project title must yield only letters, numbers, hyphens, and underscores after removing spaces";
+      } else if (trimmed.length < 3 || trimmed.length > 100) {
+        errors.hubProject = "Project name must be between 3 and 100 characters";
       }
     }
     if (user?.role === "admin" && !selectedManager)
@@ -217,11 +213,9 @@ const CreateProject = () => {
       //     : [];
 
       const selectedExternal = externalHubProjects.find(
-        (p) => p.id === selectedHubProjectId
+        (p) => p.id === selectedHubProjectId,
       );
-      const projectName = normalizeHubTitleForName(
-        selectedExternal?.title ?? ""
-      );
+      const projectName = selectedExternal?.title ?? "";
 
       const projectData = {
         name: projectName,
@@ -328,7 +322,9 @@ const CreateProject = () => {
                     </SelectContent>
                   </Select>
                   {hubProjectsError && (
-                    <p className="text-sm text-destructive mt-1">{hubProjectsError}</p>
+                    <p className="text-sm text-destructive mt-1">
+                      {hubProjectsError}
+                    </p>
                   )}
                   {validationErrors.hubProject && (
                     <p className="text-sm text-destructive mt-1">
