@@ -116,7 +116,7 @@ const CreateProject = () => {
 
     // Form hub project (required)
     if (!selectedHubProjectId) {
-      errors.hubProject = "Please select a project from Form hub";
+      errors.hubProject = "Please select a project from hub";
     } else {
       const selected = externalHubProjects.find(
         (p) => p.id === selectedHubProjectId
@@ -219,12 +219,12 @@ const CreateProject = () => {
       const selectedExternal = externalHubProjects.find(
         (p) => p.id === selectedHubProjectId
       );
-      const nameFromHub = normalizeHubTitleForName(
+      const projectName = normalizeHubTitleForName(
         selectedExternal?.title ?? ""
       );
 
       const projectData = {
-        name: nameFromHub,
+        name: projectName,
         projectId: selectedHubProjectId,
         description: projectDescription,
         githubUsername: githubUsername,

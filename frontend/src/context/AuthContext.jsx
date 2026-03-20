@@ -1,6 +1,5 @@
 import React, { createContext, useState, useEffect } from 'react';
 import {
-    // loginUser,
     tryProactiveRefresh,
     startTokenRefreshTimer,
     stopTokenRefreshTimer,
@@ -54,15 +53,6 @@ export const AuthProvider = ({ children }) => {
         return () => { cancelled = true; };
     }, []);
 
-    // const login = async (credentials) => {
-    //     try {
-    //         const { user: userData, token } = await loginUser(credentials);
-    //         setUser(userData);
-    //         return { success: true };
-    //     } catch (error) {
-    //         return { success: false, error: error.error || 'Login failed' };
-    //     }
-    // };
 
     const logout = async () => {
         stopTokenRefreshTimer();

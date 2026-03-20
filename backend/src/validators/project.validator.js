@@ -78,13 +78,6 @@ export const createProjectValidation = [
         .isLength({ min: 3, max: 100 })
         .withMessage("Name must be between 3 and 100 characters"),
 
-    /** External Form hub project UUID (optional but expected when creating from hub) */
-    body("projectId")
-        .optional({ values: "null" })
-        .trim()
-        .notEmpty()
-        .withMessage("Hub project id must be a non-empty string when provided"),
-
     body("assignedManagerId")
         .isInt()
         .withMessage("Assigned manager ID must be an integer"),
