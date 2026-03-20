@@ -105,28 +105,56 @@ export const createProjectValidation = [
 
     // ...roadmapValidators("roadmaps.*"),
 ];
+/** Partial update: only send fields to change. Empty string clears optional text fields. */
 export const updateProjectValidation = [
     param("projectId")
         .isInt()
         .withMessage("Invalid project id"),
 
+    body("description")
+        .optional()
+        .custom((value) => {
+            if (value === undefined) return true;
+            if (value === null) return true;
+            return typeof value === "string" && value.length <= 10000;
+        })
+        .withMessage("Description must be a string (max 10000 characters) or null"),
+
     body("jiraUsername")
+        .optional({ checkFalsy: true })
+        .trim()
         .isEmail()
-        .withMessage("A valid Jira account email(access key) is required for authentication"),
+        .withMessage("Jira username must be a valid email"),
 
     body("jiraBaseUrl")
-        .isURL()
-        .withMessage("Jira Base URL must be a valid URL (e.g., https://company.atlassian.net)"),
+        .optional({ checkFalsy: true })
+        .trim()
+        .isURL({ require_protocol: true })
+        .withMessage("Jira base URL must be a valid URL (e.g. https://company.atlassian.net)"),
 
     body("jiraProjectKey")
+        .optional({ checkFalsy: true })
         .trim()
-        .notEmpty()
-        .withMessage("Jira Project Key is required (e.g., PROJ)"),
+        .isLength({ min: 1, max: 32 })
+        .withMessage("Jira project key must be 1–32 characters"),
 
     body("jiraApiToken")
+        .optional({ checkFalsy: true })
         .trim()
-        .notEmpty()
-        .withMessage("Jira API Token is required"),
+        .isLength({ min: 1, max: 2048 })
+        .withMessage("Jira API token is invalid"),
+
+    body("githubUsername")
+        .optional({ checkFalsy: true })
+        .trim()
+        .isLength({ min: 1, max: 200 })
+        .withMessage("GitHub username must be 1–200 characters"),
+
+    body("githubToken")
+        .optional({ checkFalsy: true })
+        .trim()
+        .isLength({ min: 1, max: 2048 })
+        .withMessage("GitHub token must be 1–2048 characters"),
 
 ];
 export const updateRoadmapsArrayValidation = [
