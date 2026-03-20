@@ -1,5 +1,5 @@
 import express from "express";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, ReleaseStatus } from "@prisma/client";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import { cursorRequest, performMergeToLaunchpad, startAgentPolling } from "../services/cursor.service.js";
 
@@ -53,10 +53,15 @@ router.post("/agents", authenticateToken, requireCursorKey, async (req, res) => 
   }
   const release = await prisma.release.findFirst({
     where: { id: releaseId, projectId },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!release) {
     return res.status(404).json({ error: "Release not found or does not belong to this project" });
+  }
+  if (release.status === ReleaseStatus.locked) {
+    return res.status(400).json({
+      error: "Locked release cannot be modified until status changes.",
+    });
   }
 
   try {
