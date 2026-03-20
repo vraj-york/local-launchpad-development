@@ -592,10 +592,10 @@ export const getProjectByIdService = async (projectId, user = null) => {
 };
 
 /**
- * Activate a project version: checkout version tag, build, copy dist/build into
- * projects/{projectPath} (same as upload release), reload nginx, then set isActive in DB.
+ * Checkout tag, build, copy build output into projects/{projectPath}, reload nginx, update version buildUrl.
+ * Does not change isActive (caller handles DB flags). Used by activate-version API and after release status → active.
  */
-export async function activateProjectVersionService({
+export async function deployVersionArtifactsToProjectFolder({
   projectId,
   versionId,
   user,
@@ -606,33 +606,17 @@ export async function activateProjectVersionService({
     where: { id: versionId, projectId },
     select: {
       id: true,
-      isActive: true,
       buildUrl: true,
       version: true,
       gitTag: true,
       zipFilePath: true,
-      releaseId: true,
     },
   });
 
   if (!version) {
     throw new ApiError(404, "Version not found");
   }
-  if (version.isActive) {
-    throw new ApiError(400, "Version is already active");
-  }
 
-  // Live version must belong to the project’s active release (DB is aligned on status change via syncProjectActiveVersionForProject).
-  const activeRelease = await prisma.release.findFirst({
-    where: { projectId, status: ReleaseStatus.active },
-    select: { id: true },
-  });
-  if (!version.releaseId || !activeRelease || version.releaseId !== activeRelease.id) {
-    throw new ApiError(
-      400,
-      "Set a release to active first; only versions on that release can go live.",
-    );
-  }
   const tag =
     (version.gitTag && version.gitTag.trim()) ||
     (version.zipFilePath && version.zipFilePath.trim());
@@ -664,7 +648,7 @@ export async function activateProjectVersionService({
   const worktreeDir = path.join(
     backendRoot,
     "_tmp_builds",
-    `activate_${projectId}_${Date.now()}`,
+    `deploy_${projectId}_${Date.now()}`,
   );
 
   const lock = await prisma.project.updateMany({
@@ -684,7 +668,6 @@ export async function activateProjectVersionService({
       await fs.ensureDir(worktreeDir);
       runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
       deleteLocalGitTag(gitDir, tag);
-      // Fetch tag (same as switch version): prefer project's repo, then origin, so Figma/remote-only tags work
       const fetchTagIntoLocalRepo = (gDir, t, proj) => {
         if (proj.gitRepoPath?.trim() && proj.githubToken?.trim()) {
           const parsed = parseGitRepoPath(proj.gitRepoPath.trim());
@@ -744,12 +727,10 @@ export async function activateProjectVersionService({
       );
       const sourceRoot = findProjectRoot(worktreeDir);
       buildOutputPath = await runBuildSequence(sourceRoot);
-      // Do NOT remove worktree yet — buildOutputPath is inside worktreeDir;
-      // copy to projectRoot first, then detach worktree below.
     } else if (project.githubToken?.trim() && project.gitRepoPath?.trim()) {
       const parsed = parseGitRepoPath(project.gitRepoPath);
       if (!parsed) {
-        throw new ApiError(400, "Invalid gitRepoPath; cannot clone for activate");
+        throw new ApiError(400, "Invalid gitRepoPath; cannot clone for deploy");
       }
       const { owner, repo } = parsed;
       const token = project.githubToken.trim();
@@ -784,7 +765,6 @@ export async function activateProjectVersionService({
         });
         const sourceRoot = findProjectRoot(worktreeDir);
         buildOutputPath = await runBuildSequence(sourceRoot);
-        // Do not remove worktreeDir here — same as worktree path; copy uses buildOutputPath inside it.
       } catch (e) {
         await fs.remove(worktreeDir).catch(() => { });
         throw e;
@@ -796,12 +776,10 @@ export async function activateProjectVersionService({
       );
     }
 
-    // Copy deploy files while build output still exists (it lives under worktreeDir).
     await fs.ensureDir(path.dirname(projectRoot));
     await fs.emptyDir(projectRoot);
     await fs.copy(buildOutputPath, projectRoot);
 
-    // Now safe to remove worktree / clone dir — buildOutputPath was inside it.
     if (fs.existsSync(gitDir) && fs.existsSync(worktreeDir)) {
       try {
         runCommand(
@@ -823,22 +801,12 @@ export async function activateProjectVersionService({
         ? `${config.getBuildUrlProtocol()}://${domain}:${project.port}`
         : version.buildUrl;
 
-    await prisma.$transaction(async (tx) => {
-      await tx.projectVersion.updateMany({
-        where: { projectId },
-        data: { isActive: false },
-      });
-      await tx.projectVersion.update({
-        where: { id: versionId },
-        data: {
-          isActive: true,
-          buildUrl: liveBuildUrl,
-        },
-      });
+    await prisma.projectVersion.update({
+      where: { id: versionId },
+      data: { buildUrl: liveBuildUrl },
     });
 
     return {
-      message: "Version activated; projects folder updated from tag",
       version: version.version,
       buildUrl: liveBuildUrl,
       tag,
@@ -850,6 +818,89 @@ export async function activateProjectVersionService({
       data: { isUploading: false },
     });
   }
+}
+
+/**
+ * Deploy whatever version is currently marked isActive for the project (e.g. after release status → active sync).
+ */
+export async function deployActiveVersionToProjectFolder({ projectId, user }) {
+  const row = await prisma.projectVersion.findFirst({
+    where: { projectId, isActive: true },
+    select: { id: true },
+  });
+  if (!row) return null;
+  return deployVersionArtifactsToProjectFolder({
+    projectId,
+    versionId: row.id,
+    user,
+  });
+}
+
+/**
+ * Activate a project version: checkout version tag, build, copy dist/build into
+ * projects/{projectPath} (same as upload release), reload nginx, then set isActive in DB.
+ */
+export async function activateProjectVersionService({
+  projectId,
+  versionId,
+  user,
+}) {
+  await assertProjectAccess(projectId, user);
+
+  const version = await prisma.projectVersion.findFirst({
+    where: { id: versionId, projectId },
+    select: {
+      id: true,
+      isActive: true,
+      buildUrl: true,
+      version: true,
+      gitTag: true,
+      zipFilePath: true,
+      releaseId: true,
+    },
+  });
+
+  if (!version) {
+    throw new ApiError(404, "Version not found");
+  }
+  if (version.isActive) {
+    throw new ApiError(400, "Version is already active");
+  }
+
+  const activeRelease = await prisma.release.findFirst({
+    where: { projectId, status: ReleaseStatus.active },
+    select: { id: true },
+  });
+  if (!version.releaseId || !activeRelease || version.releaseId !== activeRelease.id) {
+    throw new ApiError(
+      400,
+      "Set a release to active first; only versions on that release can go live.",
+    );
+  }
+
+  const deployed = await deployVersionArtifactsToProjectFolder({
+    projectId,
+    versionId,
+    user,
+  });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.projectVersion.updateMany({
+      where: { projectId },
+      data: { isActive: false },
+    });
+    await tx.projectVersion.update({
+      where: { id: versionId },
+      data: { isActive: true },
+    });
+  });
+
+  return {
+    message: "Version activated; projects folder updated from tag",
+    version: deployed.version,
+    buildUrl: deployed.buildUrl,
+    tag: deployed.tag,
+  };
 }
 
 /**
