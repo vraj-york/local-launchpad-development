@@ -9,3 +9,5 @@ Project UI Rules:
 5. Maintain proper spacing, alignment, and typography.
 6. Ensure responsive design.
 7. Prefer reusable and modular React components.
+8. Use our app theme colors only
+9. Act as you have 15+ years of experiences in UI/UX

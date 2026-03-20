@@ -69,6 +69,14 @@ export const ClientLink = () => {
   const activeReleaseLocked =
     String(activeRelease?.status ?? "").toLowerCase() === "locked";
 
+  const hasAnyVersions = releases.some(
+    (r) => Array.isArray(r.versions) && r.versions.length > 0,
+  );
+  const hasActiveVersion = releases.some((r) =>
+    (r.versions || []).some((v) => v.isActive),
+  );
+  const showLockAndFeedback = hasActiveVersion && selectedReleaseId != null;
+
   const handleLock = useCallback(() => {
     if (!selectedReleaseId || activeReleaseLocked) return;
     setLockConfirmOpen(true);
@@ -169,25 +177,28 @@ export const ClientLink = () => {
         id="feedback-capture-wrapper"
         className="flex flex-col flex-1 w-full min-h-0"
       >
-        <header className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 bg-accent border-b border-slate-200/60 shadow-sm">
-          <div className="flex items-center justify-between gap-3 flex-1 min-w-0">
+        <header className="shrink-0 flex items-center gap-3 px-4 py-2 bg-accent border-b border-slate-200/60 shadow-sm">
+          <div className="flex flex-1 items-center justify-between gap-3 min-w-0">
             {publicProject?.name && (
               <h1 className="text-md font-semibold text-slate-800 truncate max-w-[200px] sm:max-w-[280px] shrink-0">
                 {publicProject.name}
               </h1>
             )}
-            <SelectClientLinkVersion
-              release={releases}
-              projectId={projectId}
-              onActivated={loadProject}
-              isPublic={true}
-              onSwitched={({ buildUrl }) => setPreviewBuildUrl(buildUrl)}
-              compact
-              darkTrigger
-              selectLabel="Choose Version :"
-            />
+            <div className="flex min-w-0 flex-1 justify-center px-2">
+              <SelectClientLinkVersion
+                release={releases}
+                projectId={projectId}
+                onActivated={loadProject}
+                isPublic={true}
+                onSwitched={({ buildUrl }) => setPreviewBuildUrl(buildUrl)}
+                compact
+                darkTrigger
+                selectLabel="Choose Version :"
+              />
+            </div>
 
-            {selectedReleaseId != null &&
+            <div className="shrink-0">
+            {showLockAndFeedback &&
               (isLocked ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -196,7 +207,7 @@ export const ClientLink = () => {
                         type="button"
                         variant="secondary"
                         disabled
-                        className="shrink-0 h-8 px-3 rounded-md font-bold text-sm bg-red-500 text-white border-0 shadow-sm opacity-70 cursor-not-allowed"
+                        className="h-8 shrink-0 whitespace-nowrap px-3 rounded-md font-bold text-sm bg-red-500 text-white border-0 shadow-sm opacity-70 cursor-not-allowed w-auto"
                       >
                         <span className="flex items-center gap-2">
                           <Lock className="size-4" />
@@ -219,7 +230,7 @@ export const ClientLink = () => {
                   variant="secondary"
                   disabled={locking}
                   onClick={handleLock}
-                  className="shrink-0 h-8 px-3 rounded-md font-bold text-sm bg-green-600 hover:bg-green-700 text-white border-0 shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
+                  className="h-8 shrink-0 whitespace-nowrap px-3 rounded-md font-bold text-sm bg-green-600 hover:bg-green-700 text-white border-0 shadow-sm disabled:opacity-70 disabled:cursor-not-allowed w-auto"
                 >
                   {locking ? (
                     <span className="flex items-center gap-2">
@@ -234,9 +245,35 @@ export const ClientLink = () => {
                   )}
                 </Button>
               ))}
+            </div>
           </div>
         </header>
-        <div id="feedback-capture-area" className="flex-1 min-h-0 mt-0">
+        <div id="feedback-capture-area" className="flex-1 min-h-0 mt-0 relative">
+          {!hasActiveVersion && !previewBuildUrl && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center p-6 bg-gradient-to-b from-slate-50/95 via-white/90 to-violet-50/40 backdrop-blur-[2px]">
+              <div className="max-w-lg w-full rounded-2xl border border-slate-200/80 bg-white/90 shadow-lg shadow-primary/30 p-8 text-center">
+                <h2 className="text-lg font-semibold text-primary mb-2">
+                  No active release
+                </h2>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  {hasAnyVersions ? (
+                    <>
+                      All latest releases are currently locked, so there is no active version. If you would like to view a locked release, please select it from {" "}
+                      <span className="font-bold text-slate-800">
+                        Choose version
+                      </span>{" "}
+                      dropdown above.
+                    </>
+                  ) : (
+                    <>
+                      This project has no versions yet. Add a version from the
+                      project dashboard, then return to this link.
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
           {iframeSrc ? (
             <iframe
               key={iframeSrc}
@@ -246,22 +283,22 @@ export const ClientLink = () => {
               height="100%"
               className="block w-full h-full border-0"
               allow="display-capture"
-              // sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-              // style={{ minHeight: "calc(100vh - 2.5rem)" }}
               style={{ height: "100vh" }}
               title="Build Preview"
             />
           ) : null}
         </div>
       </div>
-      <EmbeddedFeedbackWidget
-        projectId={projectId}
-        captureTarget="#feedback-capture-wrapper"
-        onSuccess={() => toast.success("Feedback submitted successfully")}
-        onError={(err) =>
-          toast.error(err?.message ?? "Failed to submit feedback")
-        }
-      />
+      {hasActiveVersion && (
+        <EmbeddedFeedbackWidget
+          projectId={projectId}
+          captureTarget="#feedback-capture-wrapper"
+          onSuccess={() => toast.success("Feedback submitted successfully")}
+          onError={(err) =>
+            toast.error(err?.message ?? "Failed to submit feedback")
+          }
+        />
+      )}
       <Dialog open={lockConfirmOpen} onOpenChange={setLockConfirmOpen}>
         <DialogContent showCloseButton={false} className="sm:max-w-md">
           <DialogHeader>

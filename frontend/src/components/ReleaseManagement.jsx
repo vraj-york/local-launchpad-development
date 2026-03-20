@@ -1146,7 +1146,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 {statusConfirm?.toStatus === "active" &&
                   !blockActivateUntilOtherLocked && (
                     <p className="rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2 text-slate-700">
-                      This will become the active release for this project.
+                      This will be the active release for the project. It may take some time to activate, as it also updates the client link.
                     </p>
                   )}
               </div>

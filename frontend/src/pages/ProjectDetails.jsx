@@ -1,17 +1,16 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from "../components/ui/tabs";
-import { ArrowLeft, GitCommit, FileDiff, ExternalLink } from "lucide-react";
-import DiffModal from "../components/DiffModal";
+// import {
+//   Tabs,
+//   TabsList,
+//   TabsTrigger,
+//   TabsContent,
+// } from "../components/ui/tabs";
+import { ArrowLeft, ExternalLink, PencilLine } from "lucide-react";
+import EditProjectDialog from "@/components/EditProjectDialog";
 import {
   fetchProjectById,
-  //   updateProject,
   //   deleteRoadmap,
   //   deleteRoadmapItem,
   //   updateRoadmapByProjectId,
@@ -35,6 +34,7 @@ const ProjectDetails = () => {
   // const [loading, setLoading] = useState(false);
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("releases");
+  const [editProjectOpen, setEditProjectOpen] = useState(false);
 
   // Helper to refresh project data
   // const refreshProject = async () => {
@@ -61,7 +61,17 @@ const ProjectDetails = () => {
     };
 
     loadProject();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seed from location.state; refresh by projectId only
   }, [projectId]);
+
+  const refreshProject = async () => {
+    try {
+      const data = await fetchProjectById(projectId);
+      setProject(data);
+    } catch (error) {
+      console.error("Failed to refresh project:", error);
+    }
+  };
 
   // useEffect(() => {
   //     const loadRoadmap = async () => {
@@ -153,35 +163,32 @@ const ProjectDetails = () => {
 
         <PageHeader title={projectName} description={projectDescription}>
           <div className="flex gap-2">
-          <Button
-            disabled={!activeVersionUrl}
-            onClick={() => window.open(clientUrl, "_blank")}
-            variant="outline"
-            size="sm"
-            className="h-8 px-2 lg:px-3"
-          >
-            <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
-            Client Link
-          </Button>
-            {/* <Button
+            <Button
+              disabled={!activeVersionUrl}
+              onClick={() => window.open(clientUrl, "_blank")}
               variant="outline"
-              className="gap-2"
-              onClick={() => setIsDiffModalOpen(true)}
             >
-              <GitCommit className="w-4 h-4" />
-              View Diff
+              <ExternalLink className="w-3.5 h-3.5" />
+              Client Link
             </Button>
             <Button
-              variant="default" // Changed to default for emphasis or keep outline? Plan said "View Changes" button
-              className="gap-2 text-white"
-              onClick={() => navigate(`/projects/${projectId}/diff`)}
+              variant="outline"
+              className="border-slate-200 bg-white/80 hover:bg-slate-50"
+              onClick={() => setEditProjectOpen(true)}
             >
-              <FileDiff className="w-4 h-4" />
-              View Changes
-            </Button> */}
+              <PencilLine className="w-3.5 h-3.5" />
+              Edit project
+            </Button>
           </div>
         </PageHeader>
       </div>
+
+      <EditProjectDialog
+        open={editProjectOpen}
+        onOpenChange={setEditProjectOpen}
+        project={project}
+        onSaved={refreshProject}
+      />
 
       {/* Tabs Section */}
       {/* <Tabs
@@ -265,14 +272,6 @@ const ProjectDetails = () => {
       </Tabs> */}
 
       <ReleaseManagement projectId={projectId} projectName={projectName} />
-
-      {/* Diff Modal */}
-      <DiffModal
-        isOpen={isDiffModalOpen}
-        onClose={() => setIsDiffModalOpen(false)}
-        projectId={projectId}
-        projectName={projectName}
-      />
     </div>
   );
 };
