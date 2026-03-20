@@ -752,3 +752,15 @@ export const fetchExternalHubProjects = async () => {
     );
   }
 };
+
+/** Set release lifecycle status: draft | active | locked */
+export const updateReleaseStatus = async (releaseId, status) => {
+  try {
+    const response = await api.patch(`/api/releases/${releaseId}/status`, {
+      status,
+    });
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to update release status" };
+  }
+};

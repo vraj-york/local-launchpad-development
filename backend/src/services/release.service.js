@@ -620,13 +620,6 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
     });
   }
 
-  if (release.status === ReleaseStatus.locked && releaseStatus !== ReleaseStatus.draft) {
-    throw new ApiError(
-      400,
-      "Locked release cannot be modified until status changes.",
-    );
-  }
-
   await prisma.$transaction(async (tx) => {
     if (releaseStatus === ReleaseStatus.locked) {
       await tx.release.update({

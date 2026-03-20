@@ -85,6 +85,9 @@ export function SelectClientLinkVersion({
     (r) => Array.isArray(r.versions) && r.versions.length > 0,
   );
 
+  const isReleaseLocked = (r) =>
+    String(r?.status ?? "").toLowerCase() === "locked";
+
   if (!hasAnyVersions) return null;
 
   const triggerClassName = cn(
@@ -142,11 +145,11 @@ export function SelectClientLinkVersion({
               <SelectGroup key={release.id}>
                 <div className={cn("flex items-center gap-2")}>
                   <SelectLabel
-                    className={`${release.isLocked ? "text-red-500" : "text-green-500"}`}
+                    className={`${isReleaseLocked(release) ? "text-red-500" : "text-green-500"}`}
                   >
                     {release.name}
                   </SelectLabel>{" "}
-                  {release.isLocked ? (
+                  {isReleaseLocked(release) ? (
                     <Lock className="w-4 h-4 text-red-500" />
                   ) : (
                     <Unlock className="w-4 h-4 text-green-500" />
