@@ -33,8 +33,6 @@ import { toast } from "sonner";
 
 const CreateProject = () => {
   const { user } = useAuth();
-
-  console.log("User:", user);
   const navigate = useNavigate();
 
   // Form State — project name + external hub id come from Form hub dropdown
@@ -90,13 +88,12 @@ const CreateProject = () => {
       setHubProjectsError("");
       try {
         const list = await fetchExternalHubProjects();
-        console.log("External hub projects:", list);
         if (!cancelled) setExternalHubProjects(list);
       } catch (err) {
         if (!cancelled) {
           console.error("Failed to fetch Form hub projects:", err);
           setHubProjectsError(
-            err?.error || "Could not load projects from Form hub.",
+            err?.error || "Could not load projects from Form hub."
           );
           setExternalHubProjects([]);
         }
@@ -235,10 +232,7 @@ const CreateProject = () => {
       } else if (user?.role === "manager") {
         projectData.assignedManagerId = user.id;
       }
-
-      console.log("Submitting Project Data:", projectData);
       const response = await createProject(projectData);
-      console.log("Project  response:", response);
       toast.success("Project created successfully");
 
       // Navigate to the new project or dashboard
