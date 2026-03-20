@@ -7,10 +7,10 @@ import { Button } from "../components/ui/button";
 //   TabsTrigger,
 //   TabsContent,
 // } from "../components/ui/tabs";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ArrowLeft, ExternalLink, PencilLine } from "lucide-react";
+import EditProjectDialog from "@/components/EditProjectDialog";
 import {
   fetchProjectById,
-  //   updateProject,
   //   deleteRoadmap,
   //   deleteRoadmapItem,
   //   updateRoadmapByProjectId,
@@ -34,6 +34,7 @@ const ProjectDetails = () => {
   // const [loading, setLoading] = useState(false);
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("releases");
+  const [editProjectOpen, setEditProjectOpen] = useState(false);
 
   // Helper to refresh project data
   // const refreshProject = async () => {
@@ -60,7 +61,17 @@ const ProjectDetails = () => {
     };
 
     loadProject();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seed from location.state; refresh by projectId only
   }, [projectId]);
+
+  const refreshProject = async () => {
+    try {
+      const data = await fetchProjectById(projectId);
+      setProject(data);
+    } catch (error) {
+      console.error("Failed to refresh project:", error);
+    }
+  };
 
   // useEffect(() => {
   //     const loadRoadmap = async () => {
@@ -156,16 +167,28 @@ const ProjectDetails = () => {
               disabled={!activeVersionUrl}
               onClick={() => window.open(clientUrl, "_blank")}
               variant="outline"
-              size="sm"
-              className="h-8 px-2 lg:px-3"
             >
-              <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+              <ExternalLink className="w-3.5 h-3.5" />
               Client Link
             </Button>
-            <Button>Edit Project Details</Button>
+            <Button
+              variant="outline"
+              className="border-slate-200 bg-white/80 hover:bg-slate-50"
+              onClick={() => setEditProjectOpen(true)}
+            >
+              <PencilLine className="w-3.5 h-3.5" />
+              Edit project
+            </Button>
           </div>
         </PageHeader>
       </div>
+
+      <EditProjectDialog
+        open={editProjectOpen}
+        onOpenChange={setEditProjectOpen}
+        project={project}
+        onSaved={refreshProject}
+      />
 
       {/* Tabs Section */}
       {/* <Tabs

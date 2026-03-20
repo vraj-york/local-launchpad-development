@@ -21,7 +21,11 @@ export const Routes = () => {
 
   const publicRoutes = [
     { path: "/login", element: <LoginPage />, publicOnly: false },
-    { path: "/auth/callback", element: <AuthCallbackPage />, publicOnly: false },
+    {
+      path: "/auth/callback",
+      element: <AuthCallbackPage />,
+      publicOnly: false,
+    },
     // {
     //   path: "/projects/public/:projectId",
     //   element: <PublicProjectView />,
