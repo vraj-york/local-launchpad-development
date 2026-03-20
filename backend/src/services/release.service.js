@@ -386,7 +386,8 @@ function runCommand(command, cwd, options = {}) {
 // --- Service Functions ---
 
 /**
- * List releases for a project
+ * List releases for a project — all statuses (draft, active, locked).
+ * Do not filter to active+locked only; drafts must appear for create/edit flows.
  */
 export const listReleasesService = async (projectId, user) => {
   const { id: userId, role } = user;
@@ -562,9 +563,9 @@ export async function syncProjectActiveVersionForProject(tx, projectId) {
 
 /**
  * Set release status: draft | active | locked.
- * — Only one release per project may be active; activating another requires the current active release to be locked first.
+ * — Only one release per project may be active; setting a release to active demotes any other active release in the project to draft (locked releases are unchanged).
  * — Locked releases cannot be edited until status changes (unlock via draft); activating a locked release is not allowed.
- * — Only the active release may hold the project-active version (isActive on ProjectVersion).
+ * — After activation, sync sets the newly active release’s latest version as the project-active build.
  */
 const RELEASE_STATUS_VALUES = Object.values(ReleaseStatus);
 
@@ -641,20 +642,18 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
     }
 
     if (releaseStatus === ReleaseStatus.active) {
-      const otherActive = await tx.release.findFirst({
+      await tx.release.updateMany({
         where: {
           projectId: release.projectId,
           id: { not: releaseId },
           status: ReleaseStatus.active,
         },
-        select: { id: true },
+        data: {
+          status: ReleaseStatus.draft,
+          isActive: false,
+          isLocked: false,
+        },
       });
-      if (otherActive) {
-        throw new ApiError(
-          400,
-          "Lock current active release before activating another.",
-        );
-      }
 
       await tx.release.update({
         where: { id: releaseId },
@@ -679,6 +678,14 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
     });
     await syncProjectActiveVersionForProject(tx, release.projectId);
   });
+
+  if (releaseStatus === ReleaseStatus.active) {
+    const { deployActiveVersionToProjectFolder } = await import("./project.service.js");
+    await deployActiveVersionToProjectFolder({
+      projectId: release.projectId,
+      user,
+    });
+  }
 
   return prisma.release.findUnique({
     where: { id: releaseId },
