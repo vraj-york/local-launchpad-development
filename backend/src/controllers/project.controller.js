@@ -61,17 +61,15 @@ export const projectController = {
 
         res.status(201).json(project);
     }),
-    update: async (req, res) => {
-
-
+    update: asyncHandler(async (req, res) => {
         const project = await updateProjectDetailsService({
             projectId: Number(req.params.projectId),
-            userId: req.user.id, body: req.body,
+            user: req.user,
+            body: req.body,
         });
 
         res.json(project);
-    }
-    ,
+    }),
     activateVersion: asyncHandler(async (req, res) => {
         const projectId = Number(req.params.id);
         const versionId = Number(req.params.versionId);

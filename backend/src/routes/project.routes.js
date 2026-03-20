@@ -1485,10 +1485,16 @@ router.get("/jira/test-connection", authenticateToken, async (req, res) => {
  *         application/json:
  *           schema:
  *             type: object
+ *             description: Send only fields to change. Omit keys you do not want to update.
  *             properties:
  *               description:
  *                 type: string
- *                 example: Updated project description
+ *                 nullable: true
+ *                 maxLength: 10000
+ *               jiraUsername:
+ *                 type: string
+ *                 format: email
+ 
 
  *     responses:
  *       200:

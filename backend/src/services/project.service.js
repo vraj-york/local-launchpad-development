@@ -961,16 +961,19 @@ export async function listProjectVersionsService({ projectId, user }) {
 }
 
 
-export const updateProjectDetailsService = async ({ projectId, userId, body }) => {
-  const {
-    description,
-    jiraUsername, // Added to fix the auth issue
-    jiraBaseUrl,
-    jiraProjectKey,
-    jiraApiToken,
-  } = body;
+const PROJECT_UPDATE_KEYS = [
+  "description",
+  "jiraUsername",
+  "jiraBaseUrl",
+  "jiraProjectKey",
+  "jiraApiToken",
+  "githubUsername",
+  "githubToken",
+];
 
-  // 1. Check if project exists and user has permission
+export const updateProjectDetailsService = async ({ projectId, user, body }) => {
+  await assertProjectAccess(projectId, user);
+
   const existingProject = await prisma.project.findUnique({
     where: { id: Number(projectId) },
   });
@@ -979,27 +982,46 @@ export const updateProjectDetailsService = async ({ projectId, userId, body }) =
     throw new ApiError(404, "Project not found");
   }
 
+  const data = {};
+  for (const key of PROJECT_UPDATE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) {
+      const raw = body[key];
+      if (raw === null || raw === "") {
+        data[key] = null;
+      } else if (typeof raw === "string") {
+        const t = raw.trim();
+        data[key] = t === "" ? null : t;
+      } else {
+        data[key] = raw;
+      }
+    }
+  }
+
+  if (Object.keys(data).length === 0) {
+    throw new ApiError(400, "No updatable fields provided");
+  }
 
 
-  const jEmail = jiraUsername || existingProject.jiraUsername;
-  const jBase = jiraBaseUrl || existingProject.jiraBaseUrl;
-  const jKey = jiraProjectKey || existingProject.jiraProjectKey;
-  const jToken = jiraApiToken || existingProject.jiraApiToken;
+  const jEmail =
+    data.jiraUsername !== undefined ? data.jiraUsername : existingProject.jiraUsername;
+  const jBase = data.jiraBaseUrl !== undefined ? data.jiraBaseUrl : existingProject.jiraBaseUrl;
+  const jKey = data.jiraProjectKey !== undefined ? data.jiraProjectKey : existingProject.jiraProjectKey;
+  const jToken = data.jiraApiToken !== undefined ? data.jiraApiToken : existingProject.jiraApiToken;
 
   if (jEmail && jBase && jKey && jToken) {
     await validateJiraConnection(jBase, jKey, jEmail, jToken);
   }
 
-  // 3. Update the database
-  return await prisma.project.update({
+  const ghUser =
+    data.githubUsername !== undefined ? data.githubUsername : existingProject.githubUsername;
+  const ghTok = data.githubToken !== undefined ? data.githubToken : existingProject.githubToken;
+  if (ghUser && ghTok) {
+    await validateGithubConnection(ghUser, ghTok);
+  }
+
+  return prisma.project.update({
     where: { id: Number(projectId) },
-    data: {
-      description,
-      jiraUsername,
-      jiraBaseUrl,
-      jiraProjectKey,
-      jiraApiToken,
-    },
+    data,
   });
 };
 export const getJiraTicketsService = async (projectId, user) => {
