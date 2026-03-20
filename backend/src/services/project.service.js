@@ -25,6 +25,7 @@ import {
   setReleaseStatusService as applyReleaseStatus,
 } from "./release.service.js";
 import { parseGitRepoPath } from "./github.service.js";
+import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
 
 const PREVIEW_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 const PREVIEW_META_FILE = ".preview-meta.json";
@@ -260,7 +261,7 @@ export const createProjectService = async ({ userId, body }) => {
     ]);
     // 2. Paths: projects and nginx-configs live under backend (backend/projects, backend/nginx-configs)
     const backendRoot = getBackendRoot();
-    const projectName = name.toLowerCase().replace(/\s+/g, '-');
+    const projectName = projectRepoSlugFromDisplayName(nameTrimmed);
     const configFileName = `${projectName}.conf`;
     const relativeProjectPath = path.join("projects", projectName);
     const absoluteProjectPath = path.join(getProjectsDir(), projectName);

@@ -8,6 +8,7 @@ import fetch from "node-fetch";
 import ApiError from "../utils/apiError.js";
 import config from "../config/index.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
+import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
 import { promisify } from "util";
 import os from "os";
@@ -30,30 +31,10 @@ const MAX_CALLS_PER_WINDOW = 10;
 
 // --- Helper Functions (Private) ---
 
-function validateProjectName(name) {
-  if (!name || typeof name !== "string") {
-    throw new ApiError("Invalid project name: must be a non-empty string");
-  }
-  if (!/^[a-zA-Z0-9-_]+$/.test(name)) {
-    throw new ApiError(
-      "Project name contains invalid characters. Only alphanumeric, hyphens, and underscores allowed.",
-    );
-  }
-  if (name.length > 100) {
-    throw new ApiError(
-      "Project name too long. Maximum 100 characters allowed.",
-    );
-  }
-  if (name.length < 1) {
-    throw new ApiError("Project name too short. Minimum 1 character required.");
-  }
-  return name;
-}
-
 function sanitizeCommand(command) {
   const dangerousChars = /[;&|`$(){}[\]\\]/g;
   if (dangerousChars.test(command)) {
-    throw new ApiError("Command contains potentially dangerous characters");
+    throw new ApiError(400, "Command contains potentially dangerous characters");
   }
   return command;
 }
@@ -1246,7 +1227,7 @@ export const uploadReleaseVersionService = async (
     const tag = `proj-${project.id}-rel-${releaseId}-v${version}`;
 
     const githubCreds = getProjectGitHubCredentials(project);
-    const validatedProjectName = validateProjectName(project.name);
+    const validatedProjectName = projectRepoSlugFromDisplayName(project.name);
 
     const gitWorkingDir = sourceRoot;
     const permanentGitDir = path.join(projectFolder, ".git");
@@ -1309,13 +1290,9 @@ export const uploadReleaseVersionService = async (
       console.log("Tag already exists");
     }
 
-    try {
-      runCommand("git push origin main", gitWorkingDir);
-      runCommand(`git push origin ${tag}`, gitWorkingDir);
-    } catch {
-      runCommand("git push origin main --force", gitWorkingDir);
-      runCommand(`git push origin ${tag} --force`, gitWorkingDir);
-    }
+    /* Push: always force — upload is source of truth; no pull/merge step. */
+    runCommand("git push origin main --force", gitWorkingDir);
+    runCommand(`git push origin ${tag} --force`, gitWorkingDir);
 
     fs.moveSync(localGitDir, permanentGitDir, { overwrite: true });
 
