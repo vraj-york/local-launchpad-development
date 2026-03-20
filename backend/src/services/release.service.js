@@ -532,9 +532,39 @@ export const createReleaseService = async (data, user) => {
 };
 
 /**
+ * Single place that enforces: at most one project version is live (isActive), and only when its
+ * release has status `active` — the latest version in that release wins. Call from release status / lock transitions only
+ * (not after manual activate-version or upload; those set isActive deliberately).
+ */
+export async function syncProjectActiveVersionForProject(tx, projectId) {
+  const activeRelease = await tx.release.findFirst({
+    where: { projectId, status: ReleaseStatus.active },
+    select: { id: true },
+  });
+  await tx.projectVersion.updateMany({
+    where: { projectId },
+    data: { isActive: false },
+  });
+  if (activeRelease) {
+    const latest = await tx.projectVersion.findFirst({
+      where: { projectId, releaseId: activeRelease.id },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (latest) {
+      await tx.projectVersion.update({
+        where: { id: latest.id },
+        data: { isActive: true },
+      });
+    }
+  }
+}
+
+/**
  * Set release status: draft | active | locked.
- * At a time only one release per project is "active". When setting to active:
- * other active releases are marked draft; locked releases are unchanged.
+ * — Only one release per project may be active; activating another requires the current active release to be locked first.
+ * — Locked releases cannot be edited until status changes (unlock via draft); activating a locked release is not allowed.
+ * — Only the active release may hold the project-active version (isActive on ProjectVersion).
  */
 const RELEASE_STATUS_VALUES = Object.values(ReleaseStatus);
 
@@ -562,52 +592,92 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
     (role === "manager" && release.project.assignedManagerId === userId);
   if (!hasPermission) throw new ApiError(403, "Forbidden");
 
+  if (releaseStatus === ReleaseStatus.active && release.status === ReleaseStatus.active) {
+    return prisma.release.findUnique({
+      where: { id: releaseId },
+      include: {
+        versions: { orderBy: { createdAt: "desc" }, take: 5 },
+      },
+    });
+  }
+
+  if (releaseStatus === ReleaseStatus.draft && release.status === ReleaseStatus.draft) {
+    return prisma.release.findUnique({
+      where: { id: releaseId },
+      include: {
+        versions: { orderBy: { createdAt: "desc" }, take: 5 },
+      },
+    });
+  }
+
+  if (releaseStatus === ReleaseStatus.locked && release.status === ReleaseStatus.locked) {
+    return prisma.release.findUnique({
+      where: { id: releaseId },
+      include: {
+        versions: { orderBy: { createdAt: "desc" }, take: 5 },
+      },
+    });
+  }
+
+  if (release.status === ReleaseStatus.locked && releaseStatus !== ReleaseStatus.draft) {
+    throw new ApiError(
+      400,
+      "Locked release cannot be modified until status changes.",
+    );
+  }
+
   await prisma.$transaction(async (tx) => {
     if (releaseStatus === ReleaseStatus.locked) {
       await tx.release.update({
         where: { id: releaseId },
-        data: { status: ReleaseStatus.locked, isLocked: true },
+        data: {
+          status: ReleaseStatus.locked,
+          isLocked: true,
+          isActive: false,
+        },
       });
+      await syncProjectActiveVersionForProject(tx, release.projectId);
       return;
     }
 
     if (releaseStatus === ReleaseStatus.active) {
-      // Only other active releases become draft; locked releases stay locked
-      await tx.release.updateMany({
+      const otherActive = await tx.release.findFirst({
         where: {
           projectId: release.projectId,
           id: { not: releaseId },
           status: ReleaseStatus.active,
         },
-        data: { status: ReleaseStatus.draft, isActive: false },
-      });
-      await tx.release.update({
-        where: { id: releaseId },
-        data: { status: ReleaseStatus.active, isActive: true },
-      });
-      const latestInRelease = await tx.projectVersion.findFirst({
-        where: { releaseId, projectId: release.projectId },
-        orderBy: { createdAt: "desc" },
         select: { id: true },
       });
-      if (latestInRelease) {
-        await tx.projectVersion.updateMany({
-          where: { projectId: release.projectId },
-          data: { isActive: false },
-        });
-        await tx.projectVersion.update({
-          where: { id: latestInRelease.id },
-          data: { isActive: true },
-        });
+      if (otherActive) {
+        throw new ApiError(
+          400,
+          "Lock current active release before activating another.",
+        );
       }
+
+      await tx.release.update({
+        where: { id: releaseId },
+        data: {
+          status: ReleaseStatus.active,
+          isActive: true,
+          isLocked: false,
+        },
+      });
+      await syncProjectActiveVersionForProject(tx, release.projectId);
       return;
     }
 
     // draft
     await tx.release.update({
       where: { id: releaseId },
-      data: { status: ReleaseStatus.draft, isActive: false },
+      data: {
+        status: ReleaseStatus.draft,
+        isActive: false,
+        isLocked: false,
+      },
     });
+    await syncProjectActiveVersionForProject(tx, release.projectId);
   });
 
   return prisma.release.findUnique({
@@ -654,13 +724,17 @@ export const lockReleaseService = async (releaseId, locked, user) => {
   }
 
   const newStatus = locked ? ReleaseStatus.locked : ReleaseStatus.draft;
-  const updated = await prisma.release.update({
-    where: { id: releaseId },
-    data: {
-      isLocked: locked,
-      status: newStatus,
-      ...(locked ? {} : { isActive: false }),
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.release.update({
+      where: { id: releaseId },
+      data: {
+        isLocked: locked,
+        status: newStatus,
+        isActive: false,
+      },
+    });
+    await syncProjectActiveVersionForProject(tx, release.projectId);
+    return row;
   });
   return updated;
 };
@@ -1101,7 +1175,7 @@ export const uploadReleaseVersionService = async (
   // Upload allowed for draft and active; not for locked
   const releaseStatus = release.status ?? (release.isLocked ? ReleaseStatus.locked : ReleaseStatus.draft);
   if (releaseStatus === ReleaseStatus.locked) {
-    throw new ApiError(400, "Locked release cannot upload. Change status to draft or active first.");
+    throw new ApiError(400, "Locked release cannot be modified until status changes.");
   }
 
   const project = release.project;
@@ -1380,19 +1454,24 @@ export const publicLockReleaseService = async (releaseId, locked, token) => {
     throw new ApiError(400, "Release is already unlocked");
   }
 
-  const updatedRelease = await prisma.release.update({
-    where: { id: releaseId },
-    data: {
-      isLocked: locked,
-      status: locked ? ReleaseStatus.locked : ReleaseStatus.draft,
-      ...(locked ? {} : { isActive: false }),
-    },
-    select: {
-      id: true,
-      name: true,
-      isLocked: true,
-      status: true,
-    },
+  const updatedRelease = await prisma.$transaction(async (tx) => {
+    const row = await tx.release.update({
+      where: { id: releaseId },
+      data: {
+        isLocked: locked,
+        status: locked ? ReleaseStatus.locked : ReleaseStatus.draft,
+        isActive: false,
+      },
+      select: {
+        id: true,
+        name: true,
+        isLocked: true,
+        status: true,
+        projectId: true,
+      },
+    });
+    await syncProjectActiveVersionForProject(tx, row.projectId);
+    return row;
   });
 
   return {

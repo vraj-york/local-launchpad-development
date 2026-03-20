@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, ReleaseStatus } from "@prisma/client";
 
 const prisma = new PrismaClient();
 import ApiError from "../utils/apiError.js";
@@ -22,6 +22,7 @@ import {
   createGithubRepo,
   addGithubCollaborator,
   findProjectRoot,
+  setReleaseStatusService as applyReleaseStatus,
 } from "./release.service.js";
 import { parseGitRepoPath } from "./github.service.js";
 
@@ -609,7 +610,7 @@ export async function activateProjectVersionService({
       buildUrl: true,
       version: true,
       gitTag: true,
-      zipFilePath: true, // legacy; fallback if gitTag empty
+      zipFilePath: true,
       releaseId: true,
     },
   });
@@ -621,22 +622,16 @@ export async function activateProjectVersionService({
     throw new ApiError(400, "Version is already active");
   }
 
-  // To activate a different version, the release that currently has the active version must be locked first
-  const currentActive = await prisma.projectVersion.findFirst({
-    where: { projectId, isActive: true },
-    select: { releaseId: true },
+  // Live version must belong to the project’s active release (DB is aligned on status change via syncProjectActiveVersionForProject).
+  const activeRelease = await prisma.release.findFirst({
+    where: { projectId, status: ReleaseStatus.active },
+    select: { id: true },
   });
-  if (currentActive?.releaseId) {
-    const activeRelease = await prisma.release.findUnique({
-      where: { id: currentActive.releaseId },
-      select: { isLocked: true },
-    });
-    if (activeRelease && !activeRelease.isLocked) {
-      throw new ApiError(
-        400,
-        "Lock the current active release before activating another version",
-      );
-    }
+  if (!version.releaseId || !activeRelease || version.releaseId !== activeRelease.id) {
+    throw new ApiError(
+      400,
+      "Set a release to active first; only versions on that release can go live.",
+    );
   }
   const tag =
     (version.gitTag && version.gitTag.trim()) ||
@@ -858,36 +853,21 @@ export async function activateProjectVersionService({
 }
 
 /**
- * Set release active status
+ * Activate a release (POST /projects/:id/releases/:releaseId/activate).
+ * Delegates to release.service status rules (single active release, lock-before-switch, etc.).
  */
 export async function setReleaseStatusService({ projectId, releaseId, user }) {
-  // 1️⃣ Access check
   await assertProjectAccess(projectId, user);
 
-  await prisma.$transaction(async (tx) => {
-    // 2️⃣ Update active status
-    const release = await prisma.release.findFirst({
-      where: { id: releaseId, projectId },
-    });
-
-    if (!release) {
-      throw new ApiError(404, "Release not found");
-    }
-
-    if (release.isActive) {
-      throw new ApiError(400, "Release is already active");
-    }
-
-    await tx.release.updateMany({
-      where: { projectId },
-      data: { isActive: false },
-    });
-
-    await tx.release.update({
-      where: { id: releaseId },
-      data: { isActive: true },
-    });
+  const release = await prisma.release.findFirst({
+    where: { id: releaseId, projectId },
+    select: { id: true },
   });
+  if (!release) {
+    throw new ApiError(404, "Release not found");
+  }
+
+  await applyReleaseStatus(releaseId, ReleaseStatus.active, user);
 }
 /*GET LIVE URL - reflects projects/ folder (updated on upload release and on activate version from tag) */
 export async function getProjectLiveUrlService({ projectId, user }) {
