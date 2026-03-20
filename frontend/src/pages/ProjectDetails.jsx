@@ -1,14 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from "../components/ui/tabs";
-import { ArrowLeft, GitCommit, FileDiff, ExternalLink } from "lucide-react";
-import DiffModal from "../components/DiffModal";
+// import {
+//   Tabs,
+//   TabsList,
+//   TabsTrigger,
+//   TabsContent,
+// } from "../components/ui/tabs";
+import { ArrowLeft, ExternalLink } from "lucide-react";
 import {
   fetchProjectById,
   //   updateProject,
@@ -153,32 +152,17 @@ const ProjectDetails = () => {
 
         <PageHeader title={projectName} description={projectDescription}>
           <div className="flex gap-2">
-          <Button
-            disabled={!activeVersionUrl}
-            onClick={() => window.open(clientUrl, "_blank")}
-            variant="outline"
-            size="sm"
-            className="h-8 px-2 lg:px-3"
-          >
-            <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
-            Client Link
-          </Button>
-            {/* <Button
-              variant="outline"
-              className="gap-2"
-              onClick={() => setIsDiffModalOpen(true)}
-            >
-              <GitCommit className="w-4 h-4" />
-              View Diff
-            </Button>
             <Button
-              variant="default" // Changed to default for emphasis or keep outline? Plan said "View Changes" button
-              className="gap-2 text-white"
-              onClick={() => navigate(`/projects/${projectId}/diff`)}
+              disabled={!activeVersionUrl}
+              onClick={() => window.open(clientUrl, "_blank")}
+              variant="outline"
+              size="sm"
+              className="h-8 px-2 lg:px-3"
             >
-              <FileDiff className="w-4 h-4" />
-              View Changes
-            </Button> */}
+              <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+              Client Link
+            </Button>
+            <Button>Edit Project Details</Button>
           </div>
         </PageHeader>
       </div>
@@ -265,14 +249,6 @@ const ProjectDetails = () => {
       </Tabs> */}
 
       <ReleaseManagement projectId={projectId} projectName={projectName} />
-
-      {/* Diff Modal */}
-      <DiffModal
-        isOpen={isDiffModalOpen}
-        onClose={() => setIsDiffModalOpen(false)}
-        projectId={projectId}
-        projectName={projectName}
-      />
     </div>
   );
 };
