@@ -126,7 +126,7 @@ const CreateProject = () => {
         errors.hubProject = "Selected project has no valid title";
       } else if (nameForStore.length < 3) {
         errors.hubProject =
-          "After removing spaces, the project name must be at least 3 characters";
+          "project name must be at least 3 characters";
       } else if (!/^[a-zA-Z0-9_-]+$/.test(nameForStore)) {
         errors.hubProject =
           "Project title must yield only letters, numbers, hyphens, and underscores after removing spaces";
