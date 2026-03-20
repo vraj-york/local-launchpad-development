@@ -728,3 +728,27 @@ export const getProjectDataPublically = async (projectId) => {
     );
   }
 };
+
+
+// fetch project list form hub
+export const fetchExternalHubProjects = async () => {
+  if (!HUB_API_URL) {
+    throw new Error("Hub API URL is not configured");
+  }
+
+  try {
+    const token = localStorage.getItem("access_token");
+
+    const res = await axios.get(`${HUB_API_URL}/api/projects/external/list`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+    return res.data?.data || [];
+  } catch (err) {
+    throw new Error(
+      err?.response?.data?.message ||
+        err?.message ||
+        "Failed to fetch projects",
+    );
+  }
+};

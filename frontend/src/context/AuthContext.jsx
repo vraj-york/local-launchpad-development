@@ -1,13 +1,11 @@
 import React, { createContext, useState, useEffect } from 'react';
 import {
-    loginUser,
     tryProactiveRefresh,
     startTokenRefreshTimer,
     stopTokenRefreshTimer,
     hubLogout,
     clearAuthStorageOnly,
 } from '../api/index';
-import { googleLogout } from '@react-oauth/google';
 import { isTokenExpired } from '../utils/auth';
 
 export const AuthContext = createContext();
@@ -55,18 +53,8 @@ export const AuthProvider = ({ children }) => {
         return () => { cancelled = true; };
     }, []);
 
-    const login = async (credentials) => {
-        try {
-            const { user: userData, token } = await loginUser(credentials);
-            setUser(userData);
-            return { success: true };
-        } catch (error) {
-            return { success: false, error: error.error || 'Login failed' };
-        }
-    };
 
     const logout = async () => {
-        googleLogout();
         stopTokenRefreshTimer();
         try {
             await hubLogout();
@@ -112,7 +100,7 @@ export const AuthProvider = ({ children }) => {
     }, [user]);
 
     return (
-        <AuthContext.Provider value={{ user, loading, login, logout, checkAuth }}>
+        <AuthContext.Provider value={{ user, loading,logout, checkAuth }}>
             {children}
         </AuthContext.Provider>
     );
