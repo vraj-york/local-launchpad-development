@@ -9,6 +9,9 @@ const PROACTIVE_REFRESH_BUFFER_SEC = 5 * 60; // 5 minutes
 /** How often to check if we should refresh (ms). */
 const REFRESH_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
 const HUB_API_URL = (config.HUB_API_URL || "").replace(/\/$/, "");
+const HUB_PROFILE_PIC_BASE = (
+  config.HUB_PROFILE_PIC_API_URL || HUB_API_URL
+).replace(/\/$/, "");
 
 // Create axios instance with default config
 const api = axios.create({
@@ -729,6 +732,30 @@ export const getProjectDataPublically = async (projectId) => {
   }
 };
 
+/**
+ * GET signed profile picture URL: GET …/get-profile-pic/:email
+ * Same shape as curl: literal email in path (e.g. jay@york.ie), header x-api-key only.
+ * Uses HUB_PROFILE_PIC_BASE (VITE_HUB_PROFILE_PIC_API_URL or VITE_HUB_API_URL).
+ */
+export async function fetchHubProfilePicSignedUrl(email) {
+  if (!HUB_PROFILE_PIC_BASE) return null;
+  const trimmed = typeof email === "string" ? email.trim() : "";
+  if (!trimmed) return null;
+  const endpoint = `${HUB_PROFILE_PIC_BASE}/api/external/interview/get-profile-pic/${trimmed}`;
+  const picKey = config.HUB_PROFILE_PIC_API_KEY;
+  const headers = picKey ? { "x-api-key": picKey } : {};
+  try {
+    const { data } = await axios.get(endpoint, {
+      headers,
+      validateStatus: (s) => s === 200,
+    });
+    const raw = data?.url ?? data?.data?.url;
+    if (raw == null || typeof raw !== "string" || !raw.trim()) return null;
+    return raw.trim();
+  } catch {
+    return null;
+  }
+}
 
 // fetch project list form hub
 export const fetchExternalHubProjects = async () => {

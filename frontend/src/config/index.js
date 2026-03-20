@@ -37,6 +37,15 @@ const config = {
     `${(import.meta.env.VITE_FRONTEND_URL || "http://localhost:5173").trim().replace(/\/$/, "")}/auth/callback`
   ).replace(/\/$/, ""),
 
+  /**
+   * Base URL for GET …/get-profile-pic/:email only.
+   * When unset, uses HUB_API_URL. Set to e.g. https://api.hub.york.ie if OAuth stays on another host.
+   */
+  HUB_PROFILE_PIC_API_URL: import.meta.env.VITE_HUB_PROFILE_PIC_API_URL,
+
+  /** Sent as x-api-key on Hub GET …/get-profile-pic/:email (returns { url }) */
+  HUB_PROFILE_PIC_API_KEY: import.meta.env.VITE_HUB_PROFILE_PIC_API_KEY,
+
   // Current environment (development/production)
   NODE_ENV: import.meta.env.VITE_MODE || "development",
 
