@@ -121,14 +121,14 @@ export const projectController = {
         res.json(tickets);
     }),
     getProjectPublicDetail: asyncHandler(async (req, res) => {
-        const projectId = (req.params.projectId);
-        const project = await getProjectByIdService(Number(projectId));
-
+        const project = await getProjectByIdService(null, null, {
+            publicView: true,
+            slug: req.params.slug,
+        });
         if (!project) {
             res.status(404);
             throw new ApiError(404, 'Project not found');
         }
-
         res.json(project);
     })
     ,

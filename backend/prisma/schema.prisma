@@ -28,6 +28,8 @@ model User {
 model Project {
   id                Int      @id @default(autoincrement())
   name              String
+  /// Optional URL-safe slug (derived from project name in app). Nullable so `prisma db push` works on DBs with existing rows.
+  slug              String?  @unique
   description       String?
   createdById       Int
   assignedManagerId Int
@@ -97,6 +99,7 @@ enum ReleaseStatus {
   draft
   active
   locked
+  skip
 }
 
 model Release {
@@ -105,9 +108,9 @@ model Release {
   name        String
   description String?
   releaseDate DateTime?   // 🔥 ADD (key for timeline & roadmap)
+  plannedReleaseDate DateTime?
   status      ReleaseStatus @default(draft)
-  isLocked    Boolean  @default(false)   // true when status === locked (kept for backward compat)
-  isActive    Boolean  @default(false)   // true when status === active (only one per project)
+  isMvp       Boolean  @default(false)
 
   createdBy   Int
   createdAt   DateTime @default(now())

@@ -1,6 +1,12 @@
 import express from "express";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import { releaseController } from "../controllers/release.controller.js";
+import {
+    createReleaseValidation,
+    updateReleaseValidation,
+    setReleaseStatusValidation,
+} from "../validators/release.validator.js";
+import { validate } from "../validators/validate.middleware.js";
 import multer from "multer";
 import path from "path";
 import dotenv from "dotenv";
@@ -48,8 +54,9 @@ const router = express.Router();
  *                     type: integer
  *                   name:
  *                     type: string
- *                   isLocked:
- *                     type: boolean
+ *                   status:
+ *                     type: string
+ *                     enum: [draft, active, locked, skip]
  *                   versions:
  *                     type: array
  *       403:
@@ -98,7 +105,13 @@ router.get("/project/:projectId", authenticateToken, releaseController.list);
  *       404:
  *         description: Project or Roadmap Item not found
  */
-router.post("/", authenticateToken, releaseController.create);
+router.post(
+    "/",
+    authenticateToken,
+    createReleaseValidation,
+    validate,
+    releaseController.create,
+);
 
 /**
  * @swagger
@@ -121,6 +134,23 @@ router.post("/", authenticateToken, releaseController.create);
  *         description: Release not found
  */
 router.get("/:id", authenticateToken, releaseController.getById);
+
+/**
+ * @swagger
+ * /releases/{id}:
+ *   patch:
+ *     summary: Update release fields (not status)
+ *     tags: [Releases]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.patch(
+    "/:id",
+    authenticateToken,
+    updateReleaseValidation,
+    validate,
+    releaseController.update,
+);
 
 // Lock/Unlock
 
@@ -163,7 +193,7 @@ router.post("/:id/lock", authenticateToken, releaseController.lock);
  * @swagger
  * /releases/{id}/status:
  *   patch:
- *     summary: Set release status (draft | active | locked)
+ *     summary: Set release status (draft | active | locked | skip)
  *     tags: [Releases]
  *     security:
  *       - bearerAuth: []
@@ -181,7 +211,7 @@ router.post("/:id/lock", authenticateToken, releaseController.lock);
  *             properties:
  *               status:
  *                 type: string
- *                 enum: [draft, active, locked]
+ *                 enum: [draft, active, locked, skip]
  *     responses:
  *       200:
  *         description: Release status updated
@@ -192,7 +222,13 @@ router.post("/:id/lock", authenticateToken, releaseController.lock);
  *       404:
  *         description: Release not found
  */
-router.patch("/:id/status", authenticateToken, releaseController.setStatus);
+router.patch(
+    "/:id/status",
+    authenticateToken,
+    setReleaseStatusValidation,
+    validate,
+    releaseController.setStatus,
+);
 
 /**
  * @swagger
@@ -266,46 +302,5 @@ router.post(
     releaseController.upload
 );
 
-
-/**
- * @swagger
- * /releases/preview/{versionId}:
- *   get:
- *     summary: Preview a release version
- *     description: >
- *       Redirects to the public build URL (S3/CloudFront) for a given release version.
- *       Used to preview deployed HTML builds.
- *     tags:
- *       - Releases
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: versionId
- *         required: true
- *         schema:
- *           type: integer
- *           example: 14
- *         description: Project version ID to preview
- *     responses:
- *       302:
- *         description: Redirect to build preview URL
- *         headers:
- *           Location:
- *             schema:
- *               type: string
- *               example: https://bucket.s3-website.ap-south-1.amazonaws.com/projects/12/release/15/1.0.0/index.html
- *       400:
- *         description: Build not available
- *       403:
- *         description: Forbidden
- *       404:
- *         description: Version not found
- */
-router.get(
-    "/preview/:versionId",
-    authenticateToken,
-    releaseController.previewVersion
-);
 
 export default router;

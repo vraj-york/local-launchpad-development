@@ -8,7 +8,10 @@ import fetch from "node-fetch";
 import ApiError from "../utils/apiError.js";
 import config from "../config/index.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
-import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
+import {
+  projectRepoSlugFromDisplayName,
+  toDate,
+} from "../utils/projectValidation.utils.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
 import { promisify } from "util";
 import os from "os";
@@ -437,7 +440,14 @@ export const getReleaseByIdService = async (releaseId) => {
  * Create a new release
  */
 export const createReleaseService = async (data, user) => {
-  const { projectId, name, description, roadmapItemId } = data;
+  const {
+    projectId,
+    name,
+    description,
+    roadmapItemId,
+    isMvp,
+    plannedReleaseDate,
+  } = data;
   const { id: userId, role } = user;
 
   // Check access
@@ -485,6 +495,11 @@ export const createReleaseService = async (data, user) => {
     }
   }
 
+  const plannedDate =
+    plannedReleaseDate != null && plannedReleaseDate !== ""
+      ? toDate(plannedReleaseDate, "plannedReleaseDate")
+      : null;
+
   return prisma.$transaction(async (tx) => {
     const release = await tx.release.create({
       data: {
@@ -492,6 +507,8 @@ export const createReleaseService = async (data, user) => {
         name: releaseNameTrimmed,
         description: description?.trim() || null,
         status: ReleaseStatus.draft,
+        isMvp: Boolean(isMvp),
+        plannedReleaseDate: plannedDate,
         createdBy: userId,
       },
       include: {
@@ -543,9 +560,9 @@ export async function syncProjectActiveVersionForProject(tx, projectId) {
 }
 
 /**
- * Set release status: draft | active | locked.
+ * Set release status: draft | active | locked | skip.
  * — Only one release per project may be active; setting a release to active demotes any other active release in the project to draft (locked releases are unchanged).
- * — Locked releases cannot be edited until status changes (unlock via draft); activating a locked release is not allowed.
+ * — A locked release cannot change status via this endpoint (idempotent `locked` is a no-op; unlock via lock API first).
  * — After activation, sync sets the newly active release’s latest version as the project-active build.
  */
 const RELEASE_STATUS_VALUES = Object.values(ReleaseStatus);
@@ -563,7 +580,6 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
       id: true,
       projectId: true,
       status: true,
-      isLocked: true,
       project: { select: { assignedManagerId: true } },
     },
   });
@@ -573,6 +589,25 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
     role === "admin" ||
     (role === "manager" && release.project.assignedManagerId === userId);
   if (!hasPermission) throw new ApiError(403, "Forbidden");
+
+  const isLockedState = release.status === ReleaseStatus.locked;
+
+  // Locked releases: no status changes via this endpoint (must unlock via lock API first).
+  if (isLockedState && releaseStatus !== ReleaseStatus.locked) {
+    throw new ApiError(
+      400,
+      "A locked release cannot change status. Unlock the release first.",
+    );
+  }
+
+  if (isLockedState && releaseStatus === ReleaseStatus.locked) {
+    return prisma.release.findUnique({
+      where: { id: releaseId },
+      include: {
+        versions: { orderBy: { createdAt: "desc" }, take: 5 },
+      },
+    });
+  }
 
   if (releaseStatus === ReleaseStatus.active && release.status === ReleaseStatus.active) {
     return prisma.release.findUnique({
@@ -592,7 +627,7 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
     });
   }
 
-  if (releaseStatus === ReleaseStatus.locked && release.status === ReleaseStatus.locked) {
+  if (releaseStatus === ReleaseStatus.skip && release.status === ReleaseStatus.skip) {
     return prisma.release.findUnique({
       where: { id: releaseId },
       include: {
@@ -607,8 +642,6 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
         where: { id: releaseId },
         data: {
           status: ReleaseStatus.locked,
-          isLocked: true,
-          isActive: false,
         },
       });
       await syncProjectActiveVersionForProject(tx, release.projectId);
@@ -624,8 +657,6 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
         },
         data: {
           status: ReleaseStatus.draft,
-          isActive: false,
-          isLocked: false,
         },
       });
 
@@ -633,8 +664,27 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
         where: { id: releaseId },
         data: {
           status: ReleaseStatus.active,
-          isActive: true,
-          isLocked: false,
+        },
+      });
+      await syncProjectActiveVersionForProject(tx, release.projectId);
+      return;
+    }
+
+    if (releaseStatus === ReleaseStatus.skip) {
+      await tx.release.updateMany({
+        where: {
+          projectId: release.projectId,
+          id: { not: releaseId },
+          status: ReleaseStatus.active,
+        },
+        data: {
+          status: ReleaseStatus.draft,
+        },
+      });
+      await tx.release.update({
+        where: { id: releaseId },
+        data: {
+          status: ReleaseStatus.skip,
         },
       });
       await syncProjectActiveVersionForProject(tx, release.projectId);
@@ -646,8 +696,6 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
       where: { id: releaseId },
       data: {
         status: ReleaseStatus.draft,
-        isActive: false,
-        isLocked: false,
       },
     });
     await syncProjectActiveVersionForProject(tx, release.projectId);
@@ -679,7 +727,6 @@ export const lockReleaseService = async (releaseId, locked, user) => {
     where: { id: releaseId },
     select: {
       id: true,
-      isLocked: true,
       projectId: true,
       status: true,
       project: { select: { assignedManagerId: true } },
@@ -697,10 +744,10 @@ export const lockReleaseService = async (releaseId, locked, user) => {
     throw new ApiError(403, "Forbidden");
   }
 
-  if (release.isLocked && locked === true) {
+  if (release.status === ReleaseStatus.locked && locked === true) {
     throw new ApiError(400, "Release is already locked");
   }
-  if (!release.isLocked && locked === false) {
+  if (release.status !== ReleaseStatus.locked && locked === false) {
     throw new ApiError(400, "Release is already unlocked");
   }
 
@@ -709,15 +756,92 @@ export const lockReleaseService = async (releaseId, locked, user) => {
     const row = await tx.release.update({
       where: { id: releaseId },
       data: {
-        isLocked: locked,
         status: newStatus,
-        isActive: false,
       },
     });
     await syncProjectActiveVersionForProject(tx, release.projectId);
     return row;
   });
   return updated;
+};
+
+/**
+ * Partial update: name, description, isMvp, plannedReleaseDate. Blocked when release is locked.
+ */
+export const updateReleaseService = async (releaseId, data, user) => {
+  const { id: userId, role } = user;
+  const { name, description, isMvp, plannedReleaseDate } = data;
+
+  const release = await prisma.release.findUnique({
+    where: { id: releaseId },
+    select: {
+      id: true,
+      projectId: true,
+      status: true,
+      project: { select: { assignedManagerId: true } },
+    },
+  });
+  if (!release) throw new ApiError(404, "Release not found");
+
+  const hasPermission =
+    role === "admin" ||
+    (role === "manager" && release.project.assignedManagerId === userId);
+  if (!hasPermission) throw new ApiError(403, "Forbidden");
+
+  if (release.status === ReleaseStatus.locked) {
+    throw new ApiError(400, "Cannot update a locked release.");
+  }
+
+  const updateData = {};
+  if (name !== undefined) {
+    const releaseNameTrimmed =
+      name && typeof name === "string" ? name.trim() : "";
+    if (!releaseNameTrimmed) {
+      throw new ApiError(400, "Release name cannot be empty");
+    }
+    const existingRelease = await prisma.release.findFirst({
+      where: {
+        projectId: release.projectId,
+        id: { not: releaseId },
+        name: { equals: releaseNameTrimmed, mode: "insensitive" },
+      },
+      select: { id: true },
+    });
+    if (existingRelease) {
+      throw new ApiError(
+        400,
+        "Release name already exists for this project. Choose a unique name.",
+      );
+    }
+    updateData.name = releaseNameTrimmed;
+  }
+  if (description !== undefined) {
+    updateData.description =
+      description == null || description === ""
+        ? null
+        : String(description).trim();
+  }
+  if (isMvp !== undefined) {
+    updateData.isMvp = Boolean(isMvp);
+  }
+  if (plannedReleaseDate !== undefined) {
+    updateData.plannedReleaseDate =
+      plannedReleaseDate === null || plannedReleaseDate === ""
+        ? null
+        : toDate(plannedReleaseDate, "plannedReleaseDate");
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    throw new ApiError(400, "No updatable fields provided");
+  }
+
+  return prisma.release.update({
+    where: { id: releaseId },
+    data: updateData,
+    include: {
+      creator: { select: { id: true, name: true, email: true } },
+    },
+  });
 };
 
 /**
@@ -908,17 +1032,17 @@ async function prepareNextStaticExportForPreview(absBuild, pkg) {
     await fs.writeFile(
       minimalPath,
       `/** Temporary Launchpad preview config (removed after build). */\n` +
-        `import path from 'path';\n` +
-        `import { fileURLToPath } from 'url';\n` +
-        `const __lpRoot = path.dirname(fileURLToPath(import.meta.url));\n` +
-        `export default { output: 'export', images: { unoptimized: true }, outputFileTracingRoot: __lpRoot };\n`,
+      `import path from 'path';\n` +
+      `import { fileURLToPath } from 'url';\n` +
+      `const __lpRoot = path.dirname(fileURLToPath(import.meta.url));\n` +
+      `export default { output: 'export', images: { unoptimized: true }, outputFileTracingRoot: __lpRoot };\n`,
       "utf8",
     );
     let restored = false;
     return async () => {
       if (restored) return;
       restored = true;
-      await fs.remove(minimalPath).catch(() => {});
+      await fs.remove(minimalPath).catch(() => { });
     };
   }
 
@@ -937,11 +1061,11 @@ async function prepareNextStaticExportForPreview(absBuild, pkg) {
     if (!patched) {
       console.warn(
         `[runBuildSequence] ${baseName} has no output: 'export' and could not be auto-patched. ` +
-          `Use a const nextConfig = { ... } or export default { ... } shape, or add output: 'export' manually.`,
+        `Use a const nextConfig = { ... } or export default { ... } shape, or add output: 'export' manually.`,
       );
       return null;
     }
-    await fs.remove(backupPath).catch(() => {});
+    await fs.remove(backupPath).catch(() => { });
     await fs.copy(foundPath, backupPath);
     await fs.writeFile(foundPath, patched, "utf8");
     console.log(
@@ -962,7 +1086,7 @@ async function prepareNextStaticExportForPreview(absBuild, pkg) {
     };
   }
 
-  await fs.remove(backupPath).catch(() => {});
+  await fs.remove(backupPath).catch(() => { });
   await fs.copy(foundPath, backupPath);
 
   const relBackup = `./${backupName}`;
@@ -975,7 +1099,7 @@ async function prepareNextStaticExportForPreview(absBuild, pkg) {
     const esm = await nextConfigJsLooksEsm(absBuild, pkg);
     wrapper = esm ? buildNextConfigEsmWrapper(relBackup) : buildNextConfigCjsWrapper(relBackup);
   } else {
-    await fs.remove(backupPath).catch(() => {});
+    await fs.remove(backupPath).catch(() => { });
     return null;
   }
 
@@ -1019,10 +1143,10 @@ async function resolveStaticSiteOutputDir(absBuild, pkg) {
   if (isNextProject(pkg) && (await fs.pathExists(dotNextDir))) {
     throw new Error(
       "Next.js build produced `.next/` but no static export folder. " +
-        "Default `next build` writes the app under `.next/` (not `dist/`). " +
-        "For Launchpad preview we copy static files like a Vite `dist/`. " +
-        "Add `output: 'export'` to `next.config.js` or `next.config.mjs` so `next build` also generates `out/`, then rebuild. " +
-        "See: https://nextjs.org/docs/app/building-your-application/deploying/static-exports",
+      "Default `next build` writes the app under `.next/` (not `dist/`). " +
+      "For Launchpad preview we copy static files like a Vite `dist/`. " +
+      "Add `output: 'export'` to `next.config.js` or `next.config.mjs` so `next build` also generates `out/`, then rebuild. " +
+      "See: https://nextjs.org/docs/app/building-your-application/deploying/static-exports",
     );
   }
 
@@ -1153,10 +1277,11 @@ export const uploadReleaseVersionService = async (
     throw new ApiError(404, "Release not found");
   }
 
-  // Upload allowed for draft and active; not for locked
-  const releaseStatus = release.status ?? (release.isLocked ? ReleaseStatus.locked : ReleaseStatus.draft);
-  if (releaseStatus === ReleaseStatus.locked) {
-    throw new ApiError(400, "Locked release cannot be modified until status changes.");
+  if (release.status === ReleaseStatus.locked) {
+    throw new ApiError(
+      400,
+      "Cannot upload a version to a locked release. Unlock the release first.",
+    );
   }
 
   const project = release.project;
@@ -1310,8 +1435,8 @@ export const uploadReleaseVersionService = async (
     const buildUrl = `${protocol}://${domain}:${project.port}`;
 
     /* -------------------- 12️⃣ DB Update -------------------- */
-    // Only the active release can have the uploaded version as project-active; draft releases get isActive: false.
-    const makeVersionActive = releaseStatus === ReleaseStatus.active;
+    // Only the active release can have the uploaded version as project-active; draft releases get isActive: false on ProjectVersion.
+    const makeVersionActive = release.status === ReleaseStatus.active;
 
     await prisma.$transaction(async (tx) => {
       if (makeVersionActive) {
@@ -1385,8 +1510,8 @@ export const getReleaseInfoService = async (releaseId) => {
     project: release.project,
     version: release.versions[0]?.version || "1.0.0",
     lastUpdated: release.versions[0]?.createdAt || null,
-    status: release.status ?? (release.isLocked ? ReleaseStatus.locked : ReleaseStatus.draft),
-    locked: release.isLocked || false,
+    status: release.status,
+    locked: release.status === ReleaseStatus.locked,
     lockToken: lockToken,
   };
 };
@@ -1424,10 +1549,10 @@ export const publicLockReleaseService = async (releaseId, locked, token) => {
     throw new ApiError(404, "Release not found");
   }
 
-  if (release.isLocked && locked === true) {
+  if (release.status === ReleaseStatus.locked && locked === true) {
     throw new ApiError(400, "Release is already locked");
   }
-  if (!release.isLocked && locked === false) {
+  if (release.status !== ReleaseStatus.locked && locked === false) {
     throw new ApiError(400, "Release is already unlocked");
   }
 
@@ -1435,14 +1560,11 @@ export const publicLockReleaseService = async (releaseId, locked, token) => {
     const row = await tx.release.update({
       where: { id: releaseId },
       data: {
-        isLocked: locked,
         status: locked ? ReleaseStatus.locked : ReleaseStatus.draft,
-        isActive: false,
       },
       select: {
         id: true,
         name: true,
-        isLocked: true,
         status: true,
         projectId: true,
       },
@@ -1455,38 +1577,7 @@ export const publicLockReleaseService = async (releaseId, locked, token) => {
     message: `Release ${locked ? "locked" : "unlocked"} successfully`,
     releaseId: updatedRelease.id,
     releaseName: updatedRelease.name,
-    locked: updatedRelease.isLocked,
+    locked: updatedRelease.status === ReleaseStatus.locked,
   };
 };
 
-// services/releasePreview.service.ts
-
-export const getReleasePreviewUrl = async (versionId, user) => {
-  const version = await prisma.projectVersion.findUnique({
-    where: { id: versionId },
-    include: {
-      project: {
-        select: {
-          assignedManagerId: true,
-        },
-      },
-    },
-  });
-
-  if (!version) {
-    throw new ApiError(404, "Version not found");
-  }
-
-  const hasAccess =
-    user.role === "admin" || user.id === version.project.assignedManagerId;
-
-  if (!hasAccess) {
-    throw new ApiError(403, "Forbidden");
-  }
-
-  if (!version.buildUrl) {
-    throw new ApiError(400, "Build not available");
-  }
-
-  return version.buildUrl;
-};
