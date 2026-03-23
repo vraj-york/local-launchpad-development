@@ -14,12 +14,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2 } from "lucide-react";
-import { GoogleOAuthProvider } from "@react-oauth/google";
 import logo from "../assets/launchpad-logo-svg.svg";
 
-const clientId =
-  import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-  "516448789962-jhsndv38lfpdt30h334j8khu825fried.apps.googleusercontent.com";
 
 function getFigmaState() {
   const params = new URLSearchParams(window.location.search);
@@ -128,7 +124,6 @@ const LoginPage = () => {
   }
 
   return (
-    <GoogleOAuthProvider clientId={clientId}>
       <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-gradient-to-br from-slate-50 via-muted/30 to-indigo-50/50 p-6 md:p-10">
         <div className="flex w-full max-w-sm flex-col gap-6">
           <a
@@ -175,7 +170,6 @@ const LoginPage = () => {
           </Card>
         </div>
       </div>
-    </GoogleOAuthProvider>
   );
 };
 

@@ -1,7 +1,8 @@
 import React from "react";
-import { LayoutDashboard, Folder, LogOut, User } from "lucide-react";
+import { LayoutDashboard, Folder, LogOut } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { HubProfileAvatar } from "./HubProfileAvatar";
 import {
   Sidebar,
   SidebarContent,
@@ -15,14 +16,12 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import logo from "../assets/launchpad-logo-svg.svg";
 
 export function AppSidebar() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-
   const items = [
     {
       title: "Dashboard",
@@ -96,10 +95,14 @@ export function AppSidebar() {
                 size="lg"
                 className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
               >
-                <Avatar className="h-8 w-8 rounded-lg">
-                  <AvatarImage src={user.avatar} alt={user.name} />
-                  <AvatarFallback className="rounded-lg">U</AvatarFallback>
-                </Avatar>
+                <HubProfileAvatar
+                  email={user.email}
+                  alt={user.name}
+                  fallbackImageUrl={user.avatar}
+                  className="h-8 w-8 rounded-lg"
+                  fallbackClassName="rounded-lg"
+                  iconClassName="size-5"
+                />
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">{user.name}</span>
                   <span className="truncate text-xs">{user.email}</span>

@@ -8,7 +8,7 @@ const API_URL = config.API_URL;
 const PROACTIVE_REFRESH_BUFFER_SEC = 5 * 60; // 5 minutes
 /** How often to check if we should refresh (ms). */
 const REFRESH_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
-const HUB_API_URL = (config.HUB_API_URL || "").replace(/\/$/, "");
+const HUB_API_URL = config.HUB_API_URL
 
 // Create axios instance with default config
 const api = axios.create({
@@ -75,14 +75,15 @@ function clearAuthAndRedirect() {
  * Uses access_token (Hub requires access token); does not clear local storage (caller clears after).
  */
 export async function hubLogout() {
-  const accessToken = localStorage.getItem("access_token") || localStorage.getItem("token");
+  const accessToken =
+    localStorage.getItem("access_token") || localStorage.getItem("token");
   const refreshToken = localStorage.getItem("cognito_refresh_token");
   if (!HUB_API_URL || !accessToken) return;
   try {
     await axios.post(
       `${HUB_API_URL}/api/auth/logout`,
       refreshToken ? { refreshToken } : {},
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` } },
     );
   } catch {
     // Best-effort; caller always clears local state (e.g. even if Hub returns 401)
@@ -98,7 +99,7 @@ function getStoredEmail() {
     const raw = localStorage.getItem("user");
     const user = raw ? JSON.parse(raw) : null;
     return user?.email ?? null;
-  } catch { }
+  } catch {}
   return null;
 }
 
@@ -121,7 +122,8 @@ export async function refreshAppToken() {
     if (launchpadToken) {
       localStorage.setItem("token", launchpadToken);
       if (accessToken) localStorage.setItem("access_token", accessToken);
-      if (newRefreshToken) localStorage.setItem("cognito_refresh_token", newRefreshToken);
+      if (newRefreshToken)
+        localStorage.setItem("cognito_refresh_token", newRefreshToken);
       if (body?.user) localStorage.setItem("user", JSON.stringify(body.user));
       return launchpadToken;
     }
@@ -139,7 +141,8 @@ export async function tryProactiveRefresh() {
   const refreshToken = localStorage.getItem("cognito_refresh_token");
   if (!refreshToken) return false;
   const token = localStorage.getItem("token");
-  if (token && !isTokenExpiringSoon(token, PROACTIVE_REFRESH_BUFFER_SEC)) return false;
+  if (token && !isTokenExpiringSoon(token, PROACTIVE_REFRESH_BUFFER_SEC))
+    return false;
   const newToken = await refreshAppToken();
   return !!newToken;
 }
@@ -536,19 +539,6 @@ export const updateRoadmapByProjectId = async (projectId, roadmapData) => {
   }
 };
 
-// Function to handle Google Login (local backend, ID token)
-export const googleLogin = async (token) => {
-  try {
-    const response = await axios.post(`${API_URL}/api/auth/google`, { token });
-    const { token: jwtToken, user } = response.data;
-    localStorage.setItem("token", jwtToken);
-    localStorage.setItem("user", JSON.stringify(user));
-    return { token: jwtToken, user };
-  } catch (error) {
-    throw error.response?.data || { error: "Google Login failed" };
-  }
-};
-
 /**
  * Parse Hub /auth/callback response. We store both: idToken for launchpad (has email), accessToken for Hub.
  * Format: { success, data: { accessToken, refreshToken, idToken?, expiresIn, permissions, employeeData } }
@@ -561,11 +551,17 @@ function parseHubAuthResponse(body) {
   const accessToken =
     d.accessToken ?? d.access_token ?? body.accessToken ?? body.access_token;
   const refreshToken =
-    d.refreshToken ?? d.refresh_token ?? body.refreshToken ?? body.refresh_token;
+    d.refreshToken ??
+    d.refresh_token ??
+    body.refreshToken ??
+    body.refresh_token;
   const launchpadToken = idToken ?? accessToken ?? d.token ?? body.token;
   if (!launchpadToken) return null;
 
-  const emp = d.employeeData && typeof d.employeeData === "object" ? d.employeeData : null;
+  const emp =
+    d.employeeData && typeof d.employeeData === "object"
+      ? d.employeeData
+      : null;
   const nameFromEmp =
     emp?.first_name != null || emp?.last_name != null
       ? [emp.first_name, emp.last_name].filter(Boolean).join(" ").trim()
@@ -577,8 +573,7 @@ function parseHubAuthResponse(body) {
     d.image ??
     body.picture ??
     body.image;
-  let user =
-    d.user || d.userProfile || d.profile || body.user;
+  let user = d.user || d.userProfile || d.profile || body.user;
   if (user && typeof user === "string") {
     try {
       user = JSON.parse(user);
@@ -645,19 +640,27 @@ export async function exchangeHubAuthCode(code, redirectUri) {
     }
     const idToken = parsed.idToken || parsed.token;
     const accessToken = parsed.accessToken || parsed.token;
-    if (!idToken && !accessToken) throw new Error("No token in callback response");
+    if (!idToken && !accessToken)
+      throw new Error("No token in callback response");
     const nameFromCallback =
       parsed.user?.name ??
-      [parsed.employeeData?.first_name, parsed.employeeData?.last_name].filter(Boolean).join(" ").trim();
+      [parsed.employeeData?.first_name, parsed.employeeData?.last_name]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
     const imageFromCallback =
-      parsed.user?.image ?? parsed.employeeData?.profile_pic ?? parsed.user?.image;
+      parsed.user?.image ??
+      parsed.employeeData?.profile_pic ??
+      parsed.user?.image;
     let user = {
       ...parsed.user,
       email: parsed.user?.email ?? parsed.employeeData?.email,
       name: nameFromCallback || parsed.user?.name,
       image: imageFromCallback,
       employee_data: parsed.employeeData ?? undefined,
-      permissions: Array.isArray(parsed.permissions) ? parsed.permissions : undefined,
+      permissions: Array.isArray(parsed.permissions)
+        ? parsed.permissions
+        : undefined,
     };
     localStorage.setItem("token", idToken || accessToken);
     if (accessToken) localStorage.setItem("access_token", accessToken);
@@ -678,7 +681,11 @@ export async function exchangeHubAuthCode(code, redirectUri) {
       // Token valid; DB user will be linked on first protected request
     }
     localStorage.setItem("user", JSON.stringify(user));
-    return { token: idToken || accessToken, user, employeeData: parsed.employeeData };
+    return {
+      token: idToken || accessToken,
+      user,
+      employeeData: parsed.employeeData,
+    };
   })();
 
   hubAuthByCode.set(code, promise);
@@ -729,6 +736,22 @@ export const getProjectDataPublically = async (projectId) => {
   }
 };
 
+export async function fetchHubProfilePicSignedUrl(email) {
+  const endpoint = `${config.HUB_API_URL}/api/external/interview/get-profile-pic/${email}`;
+  const picKey = config.HUB_PROFILE_PIC_API_KEY;
+  const headers = picKey ? { "x-api-key": picKey } : {};
+  try {
+    const { data } = await axios.get(endpoint, {
+      headers,
+      validateStatus: (s) => s === 200,
+    });
+    const raw = data?.url ?? data?.data?.url;
+    if (raw == null || typeof raw !== "string" || !raw.trim()) return null;
+    return raw.trim();
+  } catch {
+    return null;
+  }
+}
 
 // fetch project list form hub
 export const fetchExternalHubProjects = async () => {

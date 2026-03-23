@@ -19,7 +19,6 @@ import {
   Lock,
   Plus,
   Upload,
-  User,
   CalendarDays,
   Sparkles,
 } from "lucide-react";
@@ -35,6 +34,7 @@ import {
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { SelectActiveVersion } from "./SelectActiveVersion";
+import { HubProfileAvatar } from "./HubProfileAvatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import {
   Collapsible,
@@ -463,6 +463,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             ) : (
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 {releases.map((release) => {
+                  console.log(release, "release");
                   const statusUi = releaseStatusPresentation(release);
                   return (
                     <div
@@ -536,13 +537,15 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                               className="hidden h-3 w-px shrink-0 self-center bg-slate-200 sm:inline-block"
                               aria-hidden
                             />
-                            <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 sm:max-w-44 md:max-w-52">
-                              <User
-                                className="size-3.5 shrink-0 text-slate-400"
-                                aria-hidden
+                            <span className="inline-flex min-w-0 max-w-full items-center gap-2 sm:max-w-44 md:max-w-52">
+                              <HubProfileAvatar
+                                email={release.creator?.email}
+                                alt={release.creator?.name ?? ""}
+                                className="size-5"
+                                fallbackClassName="rounded-md"
                               />
                               <span className="truncate">
-                                {release.creator.name}
+                                {release.creator?.name ?? "—"}
                               </span>
                             </span>
                           </div>

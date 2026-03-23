@@ -37,14 +37,14 @@ const config = {
     `${(import.meta.env.VITE_FRONTEND_URL || "http://localhost:5173").trim().replace(/\/$/, "")}/auth/callback`
   ).replace(/\/$/, ""),
 
+  /** Sent as x-api-key on Hub GET …/get-profile-pic/:email (returns { url }) */
+  HUB_PROFILE_PIC_API_KEY: import.meta.env.VITE_HUB_PROFILE_PIC_API_KEY,
+
   // Current environment (development/production)
   NODE_ENV: import.meta.env.VITE_MODE || "development",
 
   // Helper to check if running in production
   isProduction: import.meta.env.VITE_MODE === "production",
-  GOOGLE_CLIENT_ID:
-    import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-    "516448789962-jhsndv38lfpdt30h334j8khu825fried.apps.googleusercontent.com",
 };
 
 export default config;
