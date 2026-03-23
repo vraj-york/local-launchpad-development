@@ -2,13 +2,8 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
-import { OAuth2Client } from "google-auth-library";
-import crypto from "crypto";
 import { authenticateToken } from "../middleware/auth.middleware.js";
-import {
-  getCognitoVerifier,
-  findOrCreateUserFromCognitoPayload,
-} from "../utils/cognitoAuth.js";
+
 
 const router = express.Router();
 const prisma = new PrismaClient();
