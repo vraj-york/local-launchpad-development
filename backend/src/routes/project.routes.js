@@ -870,6 +870,24 @@ router.post(
   projectController.setReleaseStatus
 );
 
+/**
+ * @swagger
+ * /projects/public/{slug}:
+ *   get:
+ *     summary: Get public project (id, name, releases with versions only)
+ *     tags: [Projects]
+ *     parameters:
+ *       - in: path
+ *         name: slug
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Project URL slug
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.get("/public/:slug", projectController.getProjectPublicDetail);
 
 /**
  * @swagger
@@ -1577,25 +1595,5 @@ router.put(
  *         description: Failed to fetch tickets from Jira (Invalid credentials or network error)
  */
 router.get("/:id/jira/tickets", authenticateToken, projectController.getJiraTickets);
-/**
- * @swagger
- * /projects/public/{projectId}:
- *   get:
- *     summary: Get project by ID
- *     tags: [Projects]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: projectId
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Success
- */
-router.get('/public/:projectId', projectController.getProjectPublicDetail);// Get diff summary for a project
-
 
 export default router;

@@ -98,7 +98,7 @@ export const createProjectValidation = [
     body("jiraApiToken")
         .trim()
         .notEmpty()
-        .withMessage("Jira API Token is required")
+        .withMessage("Jira API Token is required"),
     // body("roadmaps")
     //     .isArray({ min: 1 })
     //     .withMessage("At least one roadmap is required"),
@@ -155,6 +155,15 @@ export const updateProjectValidation = [
         .trim()
         .isLength({ min: 1, max: 2048 })
         .withMessage("GitHub token must be 1–2048 characters"),
+
+    body("slug")
+        .optional({ nullable: true })
+        .custom((value) => {
+            if (value === undefined) return true;
+            if (value === null || value === "") return true;
+            return typeof value === "string" && value.length <= 100;
+        })
+        .withMessage("slug must be a string (max 100) or null"),
 
 ];
 export const updateRoadmapsArrayValidation = [

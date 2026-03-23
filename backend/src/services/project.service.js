@@ -27,6 +27,29 @@ import {
 import { parseGitRepoPath } from "./github.service.js";
 import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
 
+/**
+ * Allocate a unique slug for Project.slug (DB unique). Tries base, then base-2, base-3, ...
+ * @param {number} [excludeProjectId] - when updating, exclude this project from the collision check
+ */
+async function ensureUniqueProjectSlug(baseSlug, excludeProjectId) {
+  let n = 0;
+  while (n < 100000) {
+    const candidate = n === 0 ? baseSlug : `${baseSlug}-${n}`;
+    const taken = await prisma.project.findFirst({
+      where: {
+        slug: candidate,
+        ...(excludeProjectId != null
+          ? { id: { not: excludeProjectId } }
+          : {}),
+      },
+      select: { id: true },
+    });
+    if (!taken) return candidate;
+    n += 1;
+  }
+  throw new ApiError(500, "Could not allocate a unique project slug");
+}
+
 const PREVIEW_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 const PREVIEW_META_FILE = ".preview-meta.json";
 const PREVIEW_CLEANUP_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -233,7 +256,16 @@ export const regenerateAllProjectNginxConfigs = async () => {
 };
 
 export const createProjectService = async ({ userId, body }) => {
-  const { name, assignedManagerId, jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken, githubUsername, githubToken } = body;
+  const {
+    name,
+    assignedManagerId,
+    jiraBaseUrl,
+    jiraProjectKey,
+    jiraUsername,
+    jiraApiToken,
+    githubUsername,
+    githubToken,
+  } = body;
   const isLinux = os.platform() === 'linux';
   const nginxBinary = isLinux ? '/usr/sbin/nginx' : '/opt/homebrew/bin/nginx';
 
@@ -261,10 +293,11 @@ export const createProjectService = async ({ userId, body }) => {
     ]);
     // 2. Paths: projects and nginx-configs live under backend (backend/projects, backend/nginx-configs)
     const backendRoot = getBackendRoot();
-    const projectName = projectRepoSlugFromDisplayName(nameTrimmed);
-    const configFileName = `${projectName}.conf`;
-    const relativeProjectPath = path.join("projects", projectName);
-    const absoluteProjectPath = path.join(getProjectsDir(), projectName);
+    const baseSlug = projectRepoSlugFromDisplayName(nameTrimmed);
+    const slug = await ensureUniqueProjectSlug(baseSlug);
+    const configFileName = `${slug}.conf`;
+    const relativeProjectPath = path.join("projects", slug);
+    const absoluteProjectPath = path.join(getProjectsDir(), slug);
 
     const nginxAvailableDir = getNginxConfigsDir();
     // NOTE: On Mac Homebrew, the real 'enabled' dir is /opt/homebrew/etc/nginx/servers/
@@ -294,14 +327,14 @@ export const createProjectService = async ({ userId, body }) => {
     let gitRepoUrl = null;
     if (githubCreds.githubUsername && githubCreds.githubToken) {
       try {
-        await createGithubRepo(projectName, githubCreds);
-        gitRepoUrl = `https://github.com/${githubCreds.githubUsername}/${projectName}`;
+        await createGithubRepo(slug, githubCreds);
+        gitRepoUrl = `https://github.com/${githubCreds.githubUsername}/${slug}`;
         // Collaborator + invitation email (GitHub notifies invitee)
         const defaultCollaborator =
           process.env.GITHUB_DEFAULT_COLLABORATOR || "kalrav@york.ie";
         const invited = await addGithubCollaborator(
           githubCreds.githubUsername,
-          projectName,
+          slug,
           defaultCollaborator,
           githubCreds.githubToken,
           "push",
@@ -327,7 +360,7 @@ export const createProjectService = async ({ userId, body }) => {
     if (!isLinux) await fsExtra.ensureDir(nginxEnabledDir);
 
     // 6. Nginx Config
-    const configContent = generateNginxConfigTemplate(projectName, port);
+    const configContent = generateNginxConfigTemplate(slug, port);
     await fsExtra.writeFile(absoluteNginxConfigPath, configContent);
 
     // 7. Symlink & Restart (skip symlink when nginx includes /app/nginx-configs directly — Docker backend-only nginx)
@@ -349,11 +382,13 @@ export const createProjectService = async ({ userId, body }) => {
       console.warn(`[WARN] Nginx reload skipped/failed: ${err.message}`);
     }
 
-    // 8. DB Persistence
+    // 8. DB Persistence — name stays the original display value (trim only); slug is derived for URLs / projects/<slug> / public API
     const project = await prisma.$transaction(async (tx) => {
       return await tx.project.create({
         data: {
           ...body,
+          name: nameTrimmed,
+          slug,
           assignedManagerId: Number(assignedManagerId),
           createdById: userId,
           port,
@@ -528,69 +563,91 @@ export async function listProjectsService(user) {
   });
 }
 /**
- * GET project by ID (with roadmap + items)
+ * GET project by ID or public slug (single entry point).
+ * @param {number|null} projectId — numeric id (ignored when `options.slug` is set for public).
+ * @param {object|null} user
+ * @param {object} [options]
+ * @param {boolean} [options.publicView] — ignored; public slug lookups use `options.slug`.
+ * @param {string} [options.slug] — look up by slug (minimal project fields); otherwise use `projectId`.
  */
-export const getProjectByIdService = async (projectId, user = null) => {
-  // 1. Define the base query that applies to everyone
-  const whereClause = {
-    id: projectId,
-  };
+export const getProjectByIdService = async (
+  projectId,
+  user = null, // ignored
+  options = {}
+) => {
+  const slug =
+    typeof options.slug === "string" ? options.slug.trim() : null;
 
-  /**
-  * 2️ Role-based access
-  */
-  if (user?.id) {
-    if (user.role === "manager") {
-      // Manager → only own created projects
-      whereClause.assignedManagerId = user.id;
-    }
+  const isSlugMode = !!slug;
+
+  // ---------------------------
+  // WHERE CLAUSE
+  // ---------------------------
+  let where = null;
+
+  if (isSlugMode) {
+    where = { slug };
+  } else if (projectId) {
+    where = { id: Number(projectId) };
   }
 
-  /* 3️ Include releases ONLY if user exists
-  */
-  const include = {
-    createdBy: {
-      select: { id: true, name: true, email: true },
+  if (!where) return null;
+
+  const versionsQuery = {
+    where: { isActive: true },
+    select: {
+      id: true,
+      version: true,
+      buildUrl: true,
+      createdAt: true,
     },
-    assignedManager: {
-      select: { id: true, name: true, email: true },
-    },
-    versions: {
-      where: { isActive: true },
-      select: { id: true, version: true, buildUrl: true, createdAt: true }
-    },
-    //  Roadmaps
-    roadmaps: {
-      orderBy: { id: "asc" },
-      include: {
-        items: {
-          orderBy: { id: "asc" },
-          include: {
-            projectVersions: {
-              include: {
-                release: true,
-              },
-            },
-          }
+  };
+
+  const releasesQuery = {
+    orderBy: { id: "desc" },
+    select: {
+      id: true,
+      name: true,
+      versions: {
+        orderBy: { id: "desc" },
+        select: {
+          id: true,
+          version: true,
+          buildUrl: true,
+          createdAt: true,
         },
       },
     },
   };
 
-  if (user?.id) {
-    include.releases = {
-      orderBy: { id: "desc" },
-      include: {
-        versions: { orderBy: { id: "desc" } },
+  // Slug / public: only id + name on Project; full row when fetching by project id.
+  if (isSlugMode) {
+    return prisma.project.findUnique({
+      where,
+      select: {
+        id: true,
+        name: true,
+        versions: versionsQuery,
+        releases: releasesQuery,
       },
-    };
+    });
   }
-  const project = await prisma.project.findFirst({
-    where: whereClause,
-    include
+
+  return prisma.project.findUnique({
+    where,
+    include: {
+      createdBy: {
+        select: { id: true, name: true, email: true },
+      },
+      assignedManager: {
+        select: { id: true, name: true, email: true },
+      },
+      versions: versionsQuery,
+      releases: releasesQuery,
+    },
   });
-  return project;
 };
+
 
 /**
  * Checkout tag, build, copy build output into projects/{projectPath}, reload nginx, update version buildUrl.
@@ -964,6 +1021,7 @@ export async function listProjectVersionsService({ projectId, user }) {
 
 const PROJECT_UPDATE_KEYS = [
   "description",
+  "slug",
   "jiraUsername",
   "jiraBaseUrl",
   "jiraProjectKey",
@@ -987,6 +1045,20 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
   for (const key of PROJECT_UPDATE_KEYS) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {
       const raw = body[key];
+      if (key === "slug") {
+        if (raw === null || raw === "") {
+          data.slug = null;
+        } else if (typeof raw === "string") {
+          const normalized = projectRepoSlugFromDisplayName(raw.trim());
+          data.slug = await ensureUniqueProjectSlug(
+            normalized,
+            Number(projectId),
+          );
+        } else {
+          throw new ApiError(400, "slug must be a string or null");
+        }
+        continue;
+      }
       if (raw === null || raw === "") {
         data[key] = null;
       } else if (typeof raw === "string") {
@@ -1001,7 +1073,6 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
   if (Object.keys(data).length === 0) {
     throw new ApiError(400, "No updatable fields provided");
   }
-
 
   const jEmail =
     data.jiraUsername !== undefined ? data.jiraUsername : existingProject.jiraUsername;

@@ -5,10 +5,10 @@ import {
     listReleasesService,
     lockReleaseService,
     setReleaseStatusService,
+    updateReleaseService,
     getReleaseInfoService,
     publicLockReleaseService,
     uploadReleaseVersionService,
-    getReleasePreviewUrl,
 } from "../services/release.service.js";
 
 export const releaseController = {
@@ -58,7 +58,16 @@ export const releaseController = {
     }),
 
     /**
-     * Set release status: draft | active | locked
+     * Partially update a release (name, description, isMvp, plannedReleaseDate)
+     */
+    update: asyncHandler(async (req, res) => {
+        const releaseId = parseInt(req.params.id, 10);
+        const release = await updateReleaseService(releaseId, req.body, req.user);
+        res.json(release);
+    }),
+
+    /**
+     * Set release status: draft | active | locked | skip
      */
     setStatus: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
@@ -114,17 +123,6 @@ export const releaseController = {
         const { locked, token } = req.body;
         const result = await publicLockReleaseService(releaseId, locked, token);
         res.json(result);
-    }),
-    previewVersion: asyncHandler(async (req, res) => {
-        const { versionId } = req.params;
-
-        const previewUrl = await getReleasePreviewUrl(
-            Number(versionId),
-            req.user
-        );
-
-        // Redirect browser directly to build
-        return res.redirect(previewUrl);
     })
 
 };
