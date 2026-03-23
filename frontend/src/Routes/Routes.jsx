@@ -26,11 +26,6 @@ export const Routes = () => {
       element: <AuthCallbackPage />,
       publicOnly: false,
     },
-    // {
-    //   path: "/projects/public/:projectId",
-    //   element: <PublicProjectView />,
-    //   publicOnly: false,
-    // },
     {
       path: "/projects/public/:projectId",
       element: <ClientLink />,

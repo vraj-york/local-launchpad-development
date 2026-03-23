@@ -8,7 +8,7 @@ const API_URL = config.API_URL;
 const PROACTIVE_REFRESH_BUFFER_SEC = 5 * 60; // 5 minutes
 /** How often to check if we should refresh (ms). */
 const REFRESH_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
-const HUB_API_URL = config.HUB_API_URL
+const HUB_API_URL = config.HUB_API_URL;
 
 // Create axios instance with default config
 const api = axios.create({
