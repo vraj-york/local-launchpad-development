@@ -9,9 +9,6 @@ const PROACTIVE_REFRESH_BUFFER_SEC = 5 * 60; // 5 minutes
 /** How often to check if we should refresh (ms). */
 const REFRESH_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
 const HUB_API_URL = (config.HUB_API_URL || "").replace(/\/$/, "");
-const HUB_PROFILE_PIC_BASE = (
-  config.HUB_PROFILE_PIC_API_URL || HUB_API_URL
-).replace(/\/$/, "");
 
 // Create axios instance with default config
 const api = axios.create({
@@ -539,19 +536,6 @@ export const updateRoadmapByProjectId = async (projectId, roadmapData) => {
   }
 };
 
-// Function to handle Google Login (local backend, ID token)
-export const googleLogin = async (token) => {
-  try {
-    const response = await axios.post(`${API_URL}/api/auth/google`, { token });
-    const { token: jwtToken, user } = response.data;
-    localStorage.setItem("token", jwtToken);
-    localStorage.setItem("user", JSON.stringify(user));
-    return { token: jwtToken, user };
-  } catch (error) {
-    throw error.response?.data || { error: "Google Login failed" };
-  }
-};
-
 /**
  * Parse Hub /auth/callback response. We store both: idToken for launchpad (has email), accessToken for Hub.
  * Format: { success, data: { accessToken, refreshToken, idToken?, expiresIn, permissions, employeeData } }
@@ -732,16 +716,8 @@ export const getProjectDataPublically = async (projectId) => {
   }
 };
 
-/**
- * GET signed profile picture URL: GET …/get-profile-pic/:email
- * Same shape as curl: literal email in path (e.g. jay@york.ie), header x-api-key only.
- * Uses HUB_PROFILE_PIC_BASE (VITE_HUB_PROFILE_PIC_API_URL or VITE_HUB_API_URL).
- */
 export async function fetchHubProfilePicSignedUrl(email) {
-  if (!HUB_PROFILE_PIC_BASE) return null;
-  const trimmed = typeof email === "string" ? email.trim() : "";
-  if (!trimmed) return null;
-  const endpoint = `${HUB_PROFILE_PIC_BASE}/api/external/interview/get-profile-pic/${trimmed}`;
+  const endpoint = `${config.HUB_PROFILE_PIC_API_URL}/api/external/interview/get-profile-pic/${email}`;
   const picKey = config.HUB_PROFILE_PIC_API_KEY;
   const headers = picKey ? { "x-api-key": picKey } : {};
   try {
