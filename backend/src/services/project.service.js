@@ -600,6 +600,7 @@ export const getProjectByIdService = async (
       version: true,
       buildUrl: true,
       createdAt: true,
+      isActive: true,
     },
   };
 
@@ -608,12 +609,14 @@ export const getProjectByIdService = async (
     select: {
       id: true,
       name: true,
+      status: true,
       versions: {
         orderBy: { id: "desc" },
         select: {
           id: true,
           version: true,
           buildUrl: true,
+          isActive: true,
           createdAt: true,
         },
       },

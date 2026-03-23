@@ -607,17 +607,20 @@ export const switchProjectVersion = async (
   }
 };
 
-// get project data publically
-export const getProjectDataPublically = async (projectId) => {
+/** GET /api/projects/public/:slug — no auth; id, name, releases/versions for client link. */
+export const fetchPublicProjectBySlug = async (slug) => {
   try {
-    const response = await api.get(`/api/projects/public/${projectId}`);
+    const enc = encodeURIComponent(String(slug).trim());
+    const response = await api.get(`/api/projects/public/${enc}`);
     return response.data;
   } catch (error) {
     throw (
-      error.response?.data || { error: "Failed to get project data publically" }
+      error.response?.data || { error: "Failed to load public project" }
     );
   }
 };
+
+export const getProjectDataPublically = fetchPublicProjectBySlug;
 
 export async function fetchHubProfilePicSignedUrl(email) {
   const endpoint = `${config.HUB_API_URL}/api/external/interview/get-profile-pic/${email}`;

@@ -283,9 +283,9 @@ const CreateProject = () => {
                       </TooltipContent>
                     </Tooltip>
                   </div>
-                  <p className="text-xs text-muted-foreground -mt-1">
+                  {/* <p className="text-xs text-muted-foreground -mt-1">
                     Form hub — link an external project to this workspace.
-                  </p>
+                  </p> */}
                   <Select
                     value={selectedHubProjectId || undefined}
                     onValueChange={setSelectedHubProjectId}

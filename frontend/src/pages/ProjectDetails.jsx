@@ -93,9 +93,12 @@ const ProjectDetails = () => {
   const projectDescription = project?.description || "This is Testing Project";
 
   const activeVersionUrl = project?.versions?.[0]?.buildUrl ?? null;
-  const clientUrl = project
-    ? `${typeof window !== "undefined" ? window.location.origin : config.FRONTEND_URL}/projects/public/${project.id}`
-    : null;
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : config.FRONTEND_URL;
+  const clientUrl =
+    project?.slug != null && String(project.slug).trim() !== ""
+      ? `${origin}/projects/${encodeURIComponent(project.slug.trim())}`
+      : null;
 
   if (loading) {
     return (
@@ -164,9 +167,14 @@ const ProjectDetails = () => {
         <PageHeader title={projectName} description={projectDescription}>
           <div className="flex gap-2">
             <Button
-              disabled={!activeVersionUrl}
-              onClick={() => window.open(clientUrl, "_blank")}
+              onClick={() => clientUrl && window.open(clientUrl, "_blank")}
               variant="outline"
+              disabled={!clientUrl}
+              title={
+                clientUrl
+                  ? undefined
+                  : "Set a project slug (Edit project) to enable the client link."
+              }
             >
               <ExternalLink className="w-3.5 h-3.5" />
               Client Link

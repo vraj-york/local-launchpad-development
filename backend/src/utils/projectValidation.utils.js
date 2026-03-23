@@ -47,3 +47,76 @@ export const assertStartBeforeEnd = (start, end, label) => {
         throw new ApiError(400, `${label} start must be before end`);
     }
 };
+
+/** Dot-separated numeric segments (e.g. 1.0.0, 1.0.1, 1.02). */
+const RELEASE_DOT_VERSION_RE = /^\d+(?:\.\d+)+$/;
+
+/**
+ * @param {string | undefined} name
+ * @returns {number[] | null}
+ */
+export function parseReleaseNameToTuple(name) {
+    const n = name?.trim();
+    if (!n || !RELEASE_DOT_VERSION_RE.test(n)) return null;
+    return n.split(".").map((p) => parseInt(p, 10));
+}
+
+function compareTuples(a, b) {
+    const len = Math.max(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+        const x = a[i] ?? 0;
+        const y = b[i] ?? 0;
+        if (x < y) return -1;
+        if (x > y) return 1;
+    }
+    return 0;
+}
+
+/**
+ * @param {{ name: string }[]} rows
+ * @returns {number[] | null}
+ */
+function maxReleaseTupleFromRows(rows) {
+    let maxTuple = null;
+    for (const row of rows) {
+        const t = parseReleaseNameToTuple(row?.name);
+        if (!t) continue;
+        if (!maxTuple || compareTuples(t, maxTuple) > 0) maxTuple = t;
+    }
+    return maxTuple;
+}
+
+/**
+ * New release name must be strictly greater than the latest parsable name (allows patch, minor, or major bumps).
+ * @param {number} projectId
+ * @param {string} releaseNameTrimmed
+ * @param {{ release: { findMany: Function } }} prismaClient
+ */
+export async function assertReleaseNameIsNextIncrement(
+    projectId,
+    releaseNameTrimmed,
+    prismaClient,
+) {
+    const submitted = parseReleaseNameToTuple(releaseNameTrimmed);
+    if (!submitted) {
+        throw new ApiError(
+            400,
+            "Release name must be dot-separated numbers with at least two segments (e.g. 1.0.0, 1.0.1, 1.02).",
+        );
+    }
+    const existing = await prismaClient.release.findMany({
+        where: { projectId },
+        select: { name: true },
+    });
+    const maxTuple = maxReleaseTupleFromRows(existing);
+    if (!maxTuple) {
+        return;
+    }
+    if (compareTuples(submitted, maxTuple) <= 0) {
+        const latestStr = maxTuple.map(String).join(".");
+        throw new ApiError(
+            400,
+            `Release name must be greater than the latest: ${latestStr} (e.g. higher patch, minor, or major).`,
+        );
+    }
+}
