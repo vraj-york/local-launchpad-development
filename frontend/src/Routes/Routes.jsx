@@ -28,14 +28,9 @@ export const Routes = () => {
     },
     {
       path: "/projects/public/:projectId",
-      element: <PublicProjectView />,
+      element: <ClientLink />,
       publicOnly: false,
     },
-    // {
-    //   path: "/projects/public/:projectId",
-    //   element: <ClientLink />,
-    //   publicOnly: false,
-    // },
   ];
 
   const privateRoutes = [
