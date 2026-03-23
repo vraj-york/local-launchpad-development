@@ -121,68 +121,7 @@ router.post("/login", async (req, res) => {
     { expiresIn: "30d" }
   );
   res.json({ token, user });
-
 });
-
-//   const { token, role } = req.body;
-
-//   try {
-//     const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-//     const ticket = await client.verifyIdToken({
-//       idToken: token,
-//       audience: process.env.GOOGLE_CLIENT_ID,
-//     });
-
-//     const payload = ticket.getPayload();
-//     if (!payload.email_verified) {
-//       return res.status(400).json({ error: "Google email not verified" });
-//     }
-
-//     const { email, name, picture } = payload;
-//     // 🚫 Domain restriction
-//     if (!email.endsWith("@york.ie")) {
-//       return res.status(403).json({
-//         error: "Access denied. Only york.ie accounts are allowed",
-//       });
-//     }
-
-//     let user = await prisma.user.findUnique({ where: { email } });
-//     if (!user) {
-//       // Create new user
-//       const randomPassword = crypto.randomBytes(16).toString("hex");
-//       const hashedPassword = await bcrypt.hash(randomPassword, 10);
-
-//       user = await prisma.user.create({
-//         data: {
-//           name,
-//           email,
-//           password: hashedPassword,
-//           role: (role && ["admin", "manager"].includes(role)) ? role : "manager",
-//           image: picture,
-//         }
-//       });
-//     } else {
-//       // 🔄 keep profile updated
-//       if (user.image !== picture) {
-//         await prisma.user.update({
-//           where: { email },
-//           data: { image: picture },
-//         });
-//       }
-//     }
-
-//     const jwtToken = jwt.sign(
-//       { id: user.id, role: user.role },
-//       process.env.JWT_SECRET,
-//       { expiresIn: "1d" }
-//     );
-
-//     res.json({ token: jwtToken, user });
-
-//   } catch (error) {
-//     res.status(400).json({ error: "Invalid Google Token" });
-//   }
-// });
 
 /**
  * @swagger
