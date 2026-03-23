@@ -32,33 +32,6 @@ api.interceptors.request.use(
   },
 );
 
-/** Id token = launchpad (api interceptor). Access token = Hub (logout, refresh). */
-export function getCognitoAccessToken() {
-  return localStorage.getItem("access_token") || localStorage.getItem("token");
-}
-
-/** Get employee data from stored user (email, employee_id, first_name, last_name, etc.). */
-export function getEmployeeData() {
-  try {
-    const raw = localStorage.getItem("user");
-    const user = raw ? JSON.parse(raw) : null;
-    return user?.employee_data ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** Get permissions from stored user. */
-export function getPermissions() {
-  try {
-    const raw = localStorage.getItem("user");
-    const user = raw ? JSON.parse(raw) : null;
-    return Array.isArray(user?.permissions) ? user.permissions : [];
-  } catch {
-    return [];
-  }
-}
-
 const STORAGE_KEYS = ["token", "access_token", "user", "cognito_refresh_token"];
 
 export function clearAuthStorageOnly() {
@@ -231,20 +204,6 @@ api.interceptors.response.use(
   },
 );
 
-// Function to handle user login
-export const loginUser = async (credentials) => {
-  try {
-    const response = await axios.post(`${API_URL}/api/auth/login`, credentials);
-    const { token, user } = response.data;
-
-    localStorage.setItem("token", token);
-    localStorage.setItem("user", JSON.stringify(user));
-    return { token, user };
-  } catch (error) {
-    throw error.response?.data || { error: "Login failed" };
-  }
-};
-
 /** Call after login when opened by Figma plugin (URL has ?state=writeKey). Tells backend to associate token with writeKey so plugin poll gets it. */
 export const figmaComplete = async (state, access_token) => {
   try {
@@ -256,16 +215,6 @@ export const figmaComplete = async (state, access_token) => {
   } catch (error) {
     const data = error.response?.data || {};
     return { error: data.error || "Failed to complete Figma login" };
-  }
-};
-
-// Function to register a new user
-export const registerUser = async (userData) => {
-  try {
-    const response = await axios.post(`${API_URL}/api/auth/register`, userData);
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Registration failed" };
   }
 };
 
@@ -306,62 +255,6 @@ export const fetchProjectById = async (projectId) => {
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to fetch project" };
-  }
-};
-
-// Function to get project live URL
-export const getProjectLiveUrl = async (projectId) => {
-  try {
-    const response = await api.get(`/api/projects/${projectId}/live-url`);
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to get live URL" };
-  }
-};
-
-// Function to upload project build
-export const uploadProjectBuild = async (projectId, file, version = null) => {
-  try {
-    const formData = new FormData();
-    formData.append("project", file);
-    if (version) {
-      formData.append("version", version);
-    }
-
-    const response = await api.post(
-      `/api/projects/${projectId}/upload`,
-      formData,
-      {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      },
-    );
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to upload project" };
-  }
-};
-
-// Function to get project versions
-export const getProjectVersions = async (projectId) => {
-  try {
-    const response = await api.get(`/api/projects/${projectId}/versions`);
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to fetch versions" };
-  }
-};
-
-// Function to activate a version
-export const activateVersion = async (projectId, versionId) => {
-  try {
-    const response = await api.post(
-      `/api/projects/${projectId}/versions/${versionId}/activate`,
-    );
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to activate version" };
   }
 };
 
@@ -471,16 +364,6 @@ export const generateJiraTickets = async (projectId) => {
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to generate Jira tickets" };
-  }
-};
-
-// Function to test Jira connection
-export const testJiraConnection = async () => {
-  try {
-    const response = await api.get("/api/projects/jira/test-connection");
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to test Jira connection" };
   }
 };
 
