@@ -27,14 +27,22 @@ export const createReleaseValidation = [
     .optional()
     .isBoolean()
     .withMessage("isMvp must be a boolean"),
-  body("plannedReleaseDate")
+  body("releaseDate")
     .optional({ nullable: true })
     .custom((value) => {
       if (value === undefined || value === null || value === "") return true;
       const t = Date.parse(value);
       return !Number.isNaN(t);
     })
-    .withMessage("plannedReleaseDate must be a valid date"),
+    .withMessage("releaseDate must be a valid date"),
+  body("startDate")
+    .optional({ nullable: true })
+    .custom((value) => {
+      if (value === undefined || value === null || value === "") return true;
+      const t = Date.parse(value);
+      return !Number.isNaN(t);
+    })
+    .withMessage("startDate must be a valid date"),
 ];
 
 export const updateReleaseValidation = [
@@ -57,14 +65,26 @@ export const updateReleaseValidation = [
     .optional()
     .isBoolean()
     .withMessage("isMvp must be a boolean"),
-  body("plannedReleaseDate")
+  body("releaseDate")
     .optional({ nullable: true })
     .custom((value) => {
       if (value === undefined || value === null || value === "") return true;
       const t = Date.parse(value);
       return !Number.isNaN(t);
     })
-    .withMessage("plannedReleaseDate must be a valid date"),
+    .withMessage("releaseDate must be a valid date"),
+  body("startDate")
+    .optional({ nullable: true })
+    .custom((value) => {
+      if (value === undefined || value === null || value === "") return true;
+      const t = Date.parse(value);
+      return !Number.isNaN(t);
+    })
+    .withMessage("startDate must be a valid date"),
+  body("reason")
+    .optional({ nullable: true })
+    .isString()
+    .withMessage("reason must be a string"),
 ];
 
 export const setReleaseStatusValidation = [
@@ -76,4 +96,34 @@ export const setReleaseStatusValidation = [
     .withMessage("status is required")
     .isIn(RELEASE_STATUSES)
     .withMessage(`status must be one of: ${RELEASE_STATUSES.join(", ")}`),
+  body("reason")
+    .optional({ nullable: true })
+    .isString()
+    .withMessage("reason must be a string"),
+];
+
+export const lockReleaseValidation = [
+  param("id")
+    .isInt({ min: 1 })
+    .withMessage("Invalid release id"),
+  body("locked")
+    .exists()
+    .isBoolean()
+    .withMessage("locked must be a boolean"),
+];
+
+export const publicLockReleaseValidation = [
+  param("id")
+    .isInt({ min: 1 })
+    .withMessage("Invalid release id"),
+  body("lockedBy")
+    .trim()
+    .notEmpty()
+    .withMessage("lockedBy email is required"),
+];
+
+export const releaseChangelogParamValidation = [
+  param("id")
+    .isInt({ min: 1 })
+    .withMessage("Invalid release id"),
 ];

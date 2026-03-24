@@ -281,6 +281,23 @@ export const createProjectService = async ({ userId, body }) => {
       throw new ApiError(400, "Project name already exists. Choose a unique name.");
     }
 
+    const hubProjectId =
+      body.projectId != null && String(body.projectId).trim() !== ""
+        ? String(body.projectId).trim()
+        : null;
+    if (hubProjectId) {
+      const existingHubLink = await prisma.project.findFirst({
+        where: { projectId: hubProjectId },
+        select: { id: true },
+      });
+      if (existingHubLink) {
+        throw new ApiError(
+          400,
+          "Project already exists.",
+        );
+      }
+    }
+
     // 2. Validate Manager
     const managerExists = await prisma.user.findFirst({
       where: { id: Number(assignedManagerId), role: "manager" },
@@ -393,6 +410,7 @@ export const createProjectService = async ({ userId, body }) => {
           createdById: userId,
           port,
           projectPath: relativeProjectPath,
+          projectId: hubProjectId,
           // Remote clone URL when GitHub repo was created; else local .git path for legacy
           gitRepoPath:
             gitRepoUrl || path.join(relativeProjectPath, ".git"),
@@ -406,7 +424,7 @@ export const createProjectService = async ({ userId, body }) => {
 
     return project;
   } catch (error) {
-    // 9. Cleanup
+    if (error instanceof ApiError) throw error;
     throw new ApiError(500, `Project creation failed: ${error.message}`);
   }
 };
@@ -969,7 +987,7 @@ export async function activateProjectVersionService({
  * Activate a release (POST /projects/:id/releases/:releaseId/activate).
  * Delegates to release.service status rules (single active release, lock-before-switch, etc.).
  */
-export async function setReleaseStatusService({ projectId, releaseId, user }) {
+export async function setReleaseStatusService({ projectId, releaseId, user, reason }) {
   await assertProjectAccess(projectId, user);
 
   const release = await prisma.release.findFirst({
@@ -980,7 +998,7 @@ export async function setReleaseStatusService({ projectId, releaseId, user }) {
     throw new ApiError(404, "Release not found");
   }
 
-  await applyReleaseStatus(releaseId, ReleaseStatus.active, user);
+  await applyReleaseStatus(releaseId, ReleaseStatus.active, user, { reason });
 }
 /*GET LIVE URL - reflects projects/ folder (updated on upload release and on activate version from tag) */
 export async function getProjectLiveUrlService({ projectId, user }) {

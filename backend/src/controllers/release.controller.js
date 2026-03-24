@@ -2,6 +2,7 @@ import asyncHandler from "../middleware/asyncHandler.middleware.js";
 import {
     createReleaseService,
     getReleaseByIdService,
+    getReleaseChangelogService,
     listReleasesService,
     lockReleaseService,
     setReleaseStatusService,
@@ -58,7 +59,7 @@ export const releaseController = {
     }),
 
     /**
-     * Partially update a release (name, description, isMvp, plannedReleaseDate)
+     * Partially update a release (name, description, isMvp, releaseDate, startDate; reason if changes)
      */
     update: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
@@ -72,7 +73,9 @@ export const releaseController = {
     setStatus: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
         const { status } = req.body;
-        const release = await setReleaseStatusService(releaseId, status, req.user);
+        const release = await setReleaseStatusService(releaseId, status, req.user, {
+            reason: req.body?.reason,
+        });
         res.json({
             message: `Release status set to ${release.status}`,
             release,
@@ -123,6 +126,12 @@ export const releaseController = {
         const { lockedBy } = req.body;
         const result = await publicLockReleaseService(releaseId, lockedBy);
         res.json(result);
-    })
+    }),
+
+    changelog: asyncHandler(async (req, res) => {
+        const releaseId = parseInt(req.params.id, 10);
+        const entries = await getReleaseChangelogService(releaseId, req.user);
+        res.json(entries);
+    }),
 
 };

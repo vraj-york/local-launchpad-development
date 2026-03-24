@@ -662,13 +662,32 @@ export const fetchExternalHubProjects = async () => {
 };
 
 /** Set release lifecycle status: draft | active | locked */
-export const updateReleaseStatus = async (releaseId, status) => {
+export const updateReleaseStatus = async (releaseId, status, reason) => {
   try {
     const response = await api.patch(`/api/releases/${releaseId}/status`, {
       status,
+      reason: reason ?? "",
     });
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to update release status" };
+  }
+};
+
+export const patchRelease = async (releaseId, payload) => {
+  try {
+    const response = await api.patch(`/api/releases/${releaseId}`, payload);
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to update release" };
+  }
+};
+
+export const fetchReleaseChangelog = async (releaseId) => {
+  try {
+    const response = await api.get(`/api/releases/${releaseId}/changelog`);
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to load release history" };
   }
 };
