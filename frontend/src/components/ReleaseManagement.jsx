@@ -61,7 +61,7 @@ const RELEASE_STATUS_CHANGELOG_LABELS = {
   draft: "Draft",
   active: "Active",
   locked: "Locked",
-  skip: "Skipped",
+  skip: "Skip",
 };
 
 const CHANGELOG_FIELD_LABELS = {
@@ -122,7 +122,7 @@ const RELEASE_STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
   { value: "active", label: "Active" },
   { value: "locked", label: "Locked" },
-  { value: "skip", label: "Skipped" },
+  { value: "skip", label: "Skip" },
 ];
 
 function normalizeReleaseStatus(release) {
@@ -177,7 +177,7 @@ function releaseStatusPresentation(release) {
   }
   if (s === "skip") {
     return {
-      label: "Skipped",
+      label: "Skip",
       hint: "Marked as not shipping this cycle — change status anytime if plans change",
       pillClass:
         "bg-gradient-to-r from-violet-50 to-indigo-50 text-indigo-950 ring-1 ring-violet-200/70 shadow-sm shadow-violet-500/5",
@@ -1659,10 +1659,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                   className={`relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-all duration-200 ${isDragActive
-                      ? "border-primary bg-primary/5"
-                      : uploadFile
-                        ? "border-emerald-300 bg-emerald-50/50"
-                        : "border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-slate-100/50"
+                    ? "border-primary bg-primary/5"
+                    : uploadFile
+                      ? "border-emerald-300 bg-emerald-50/50"
+                      : "border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-slate-100/50"
                     }`}
                 >
                   {uploadFile ? (
@@ -1686,8 +1686,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                     <>
                       <div
                         className={`flex size-12 items-center justify-center rounded-full ${isDragActive
-                            ? "bg-primary/10 text-primary"
-                            : "bg-slate-200 text-slate-500"
+                          ? "bg-primary/10 text-primary"
+                          : "bg-slate-200 text-slate-500"
                           }`}
                       >
                         <Upload className="size-6" />
@@ -1725,10 +1725,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               {uploadStatus && (
                 <div
                   className={`p-3 rounded-lg border text-sm ${uploadStatus.includes("Upload successful")
-                      ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                      : uploadStatus.includes("Upload failed")
-                        ? "bg-red-50 border-red-200 text-red-800"
-                        : "bg-blue-50 border-blue-200 text-blue-800"
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                    : uploadStatus.includes("Upload failed")
+                      ? "bg-red-50 border-red-200 text-red-800"
+                      : "bg-blue-50 border-blue-200 text-blue-800"
                     }`}
                 >
                   {uploadStatus}
