@@ -102,13 +102,14 @@ To use your **existing** Postgres (same DB as when you run the app normally) so 
 | `VITE_MODE` | frontend (build) | Set to `production` so `frontend/src/config` treats the app as production (default in compose). |
 | `VITE_HUB_API_URL` | frontend (build) | Hub API base URL (optional; app has a default). |
 | `VITE_HUB_OAUTH_REDIRECT_URL` | frontend (build) | Hub OAuth callback URL (optional). |
+| `VITE_HUB_PROFILE_PIC_API_KEY` | frontend (build) | Hub `x-api-key` for `GET …/get-profile-pic/:email` (optional; avatars omit header if unset). |
 | `JWT_SECRET` | backend | Secret for JWT (set in production) |
 | `BASE_URL` | backend | Backend base URL for generated links |
 | `NGINX_BASE_DOMAIN` | backend | Base domain for project subdomains (see INSTANCE_SETUP.md) |
 | `NGINX_UPSTREAM_HOST` | (optional) | Only if you use a **separate** nginx container; otherwise nginx runs **inside** backend and proxies to `localhost:<port>`. |
 | `PROJECT_PORT_END` | docker-compose | Last port in the published project port range (default 8100 → 8001–8100). Only needed for direct host access; nginx uses the Docker network. Increase if you have many projects (e.g. 8999). |
 
-For production, set `VITE_API_URL` and `VITE_FRONTEND_URL`, and optionally Hub-related `VITE_HUB_*` vars, **before** building the frontend image (e.g. in `.env` when running `docker compose build --no-cache frontend`). `VITE_MODE` defaults to `production` in compose.
+For production, set `VITE_API_URL` and `VITE_FRONTEND_URL`, and optionally Hub-related `VITE_HUB_*` vars (including `VITE_HUB_PROFILE_PIC_API_KEY` if you use Hub avatars), **before** building the frontend image (e.g. in `.env` when running `docker compose build --no-cache frontend`). `VITE_MODE` defaults to `production` in compose.
 
 ## Nginx only inside backend (no separate nginx service)
 
