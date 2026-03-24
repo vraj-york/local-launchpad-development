@@ -62,11 +62,12 @@ const RELEASE_STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
   { value: "active", label: "Active" },
   { value: "locked", label: "Locked" },
+  { value: "skip", label: "Skipped" },
 ];
 
 function normalizeReleaseStatus(release) {
   const s = String(release?.status ?? "draft").toLowerCase();
-  return ["draft", "active", "locked"].includes(s) ? s : "draft";
+  return ["draft", "active", "locked", "skip"].includes(s) ? s : "draft";
 }
 
 function isReleaseLocked(release) {
@@ -79,6 +80,8 @@ function releaseCardAccentBarClass(release) {
       return "bg-red-500";
     case "active":
       return "bg-primary";
+    case "skip":
+      return "bg-gradient-to-r from-violet-500 to-indigo-500";
     default:
       return "bg-slate-400";
   }
@@ -110,6 +113,15 @@ function releaseStatusPresentation(release) {
       pillClass:
         "bg-gradient-to-r from-rose-50 to-orange-50 text-rose-900 ring-1 ring-rose-200/70 shadow-sm shadow-rose-500/5",
       dotClass: "bg-rose-500 shadow-[0_0_0_3px_rgba(244,63,94,0.2)]",
+    };
+  }
+  if (s === "skip") {
+    return {
+      label: "Skipped",
+      hint: "Marked as not shipping this cycle — change status anytime if plans change",
+      pillClass:
+        "bg-gradient-to-r from-violet-50 to-indigo-50 text-indigo-950 ring-1 ring-violet-200/70 shadow-sm shadow-violet-500/5",
+      dotClass: "bg-violet-500 shadow-[0_0_0_3px_rgba(139,92,246,0.25)]",
     };
   }
   return {
@@ -334,7 +346,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       setStatusConfirmSubmitting(true);
       setStatusUpdatingId(releaseId);
       await updateReleaseStatus(releaseId, toStatus);
-      toast.success(`Release status set to ${toStatus}`);
+      toast.success(
+        `Release status set to ${releaseStatusLabel(toStatus)}`,
+      );
       setStatusConfirm(null);
       await loadReleases();
     } catch (err) {
@@ -562,7 +576,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 </p>
                 {canManageReleases && (
                   <Button
-                    className="text-white"selectedItems
+                    className="text-white"
                     onClick={openCreateReleaseDialog}
                   >
                     Create Release
@@ -1361,6 +1375,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 {statusConfirm?.toStatus === "locked" && (
                   <p className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-amber-950/90">
                     Once you lock this release, the Upload and Status Change options will be disabled.
+                  </p>
+                )}
+                {statusConfirm?.toStatus === "skip" && (
+                  <p className="rounded-lg border border-violet-200/80 bg-linear-to-br from-violet-50/90 to-indigo-50/80 px-3 py-2 text-indigo-950/90">
+                    Any other active release in this project becomes draft, and this release is marked skipped. The client link updates to reflect the new active build.
                   </p>
                 )}
                 {statusConfirm?.toStatus === "active" &&
