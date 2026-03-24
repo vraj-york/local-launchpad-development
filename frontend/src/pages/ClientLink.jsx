@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { fetchPublicProjectBySlug, toggleReleaseLock } from "@/api";
+import { fetchPublicProjectBySlug, publicLockRelease } from "@/api";
 import { useParams } from "react-router-dom";
 // import { SelectActiveVersion } from "@/components/SelectActiveVersion";
 import { Button } from "@/components/ui/button";
@@ -21,12 +21,20 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { SelectClientLinkVersion } from "@/components/SelectClientLinkVersion";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
+/** Remember lock-confirmation email on this device for client link pages. */
+const CLIENT_LINK_LOCK_EMAIL_KEY = "release_lock_email";
+
+const LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const ClientLink = () => {
   const [publicProject, setPublicProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
   const [lockConfirmOpen, setLockConfirmOpen] = useState(false);
+  const [lockEmail, setLockEmail] = useState("");
   const [previewBuildUrl, setPreviewBuildUrl] = useState(null);
   const { projectSlug } = useParams();
 
@@ -52,6 +60,21 @@ export const ClientLink = () => {
   useEffect(() => {
     loadProject();
   }, [loadProject]);
+
+  useEffect(() => {
+    if (!lockConfirmOpen) return;
+    try {
+      const stored = localStorage.getItem(CLIENT_LINK_LOCK_EMAIL_KEY);
+      setLockEmail(typeof stored === "string" ? stored : "");
+    } catch {
+      setLockEmail("");
+    }
+  }, [lockConfirmOpen]);
+
+  const lockEmailValid = React.useMemo(() => {
+    const e = lockEmail.trim().toLowerCase();
+    return LOCK_EMAIL_RE.test(e);
+  }, [lockEmail]);
 
   /**
    * Public API returns root `versions` as the active build(s) but often omits `isActive`
@@ -115,18 +138,30 @@ export const ClientLink = () => {
 
   const handleLockConfirm = useCallback(async () => {
     if (!selectedReleaseId) return;
+    const email = lockEmail.trim().toLowerCase();
+    if (!LOCK_EMAIL_RE.test(email)) {
+      toast.error("Please enter a valid email address.");
+      return;
+    }
     try {
       setLocking(true);
+      const res = await publicLockRelease(selectedReleaseId, email);
+      try {
+        localStorage.setItem(CLIENT_LINK_LOCK_EMAIL_KEY, email);
+      } catch {
+        /* storage unavailable */
+      }
       setLockConfirmOpen(false);
-      const res = await toggleReleaseLock(selectedReleaseId, true);
       toast.success(res?.message ?? "Release locked successfully");
       await loadProject();
     } catch (err) {
-      toast.error(err?.error || "Failed to lock release");
+      toast.error(
+        err?.error || err?.message || "Failed to lock release",
+      );
     } finally {
       setLocking(false);
     }
-  }, [selectedReleaseId, loadProject]);
+  }, [selectedReleaseId, loadProject, lockEmail]);
 
   const rawBuildUrl =
     publicProject?.versions?.find(
@@ -334,11 +369,26 @@ export const ClientLink = () => {
           <DialogHeader>
             <DialogTitle>Lock this release?</DialogTitle>
             <DialogDescription>
-              Once this release is locked, it cannot be unlocked from this page.
-              Only a Project Manager can unlock it. Are you sure you want to
-              continue?
+              Once this release is locked, it cannot be unlock. Are you sure you want to
+              lock it?
             </DialogDescription>
           </DialogHeader>
+          <div className="grid gap-2 py-1">
+            <Label htmlFor="client-link-lock-email" className="text-slate-700">
+              Your email
+            </Label>
+            <Input
+              id="client-link-lock-email"
+              type="email"
+              name="email"
+              autoComplete="email"
+              placeholder="you@company.com"
+              value={lockEmail}
+              onChange={(e) => setLockEmail(e.target.value)}
+              disabled={locking}
+              className="rounded-lg border-slate-200 focus-visible:ring-emerald-500/30"
+            />
+          </div>
           <DialogFooter showCloseButton={false}>
             <Button
               type="button"
@@ -349,9 +399,9 @@ export const ClientLink = () => {
             </Button>
             <Button
               type="button"
-              className="bg-green-600 hover:bg-green-700 text-white"
+              className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-sm"
               onClick={handleLockConfirm}
-              disabled={locking}
+              disabled={locking || !lockEmailValid}
             >
               {locking ? (
                 <span className="flex items-center gap-2">
