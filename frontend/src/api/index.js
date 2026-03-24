@@ -312,11 +312,10 @@ export const toggleReleaseLock = async (releaseId, locked) => {
   }
 };
 
-export const publicLockRelease = async (releaseId, locked, token) => {
+export const publicLockRelease = async (releaseId, lockedBy) => {
   try {
     const response = await api.post(`/api/releases/${releaseId}/public-lock`, {
-      locked,
-      token,
+      lockedBy,
     });
     return response.data;
   } catch (error) {

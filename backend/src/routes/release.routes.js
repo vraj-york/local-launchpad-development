@@ -152,13 +152,13 @@ router.patch(
     releaseController.update,
 );
 
-// Lock/Unlock
+// Lock (one-way)
 
 /**
  * @swagger
  * /releases/{id}/lock:
  *   post:
- *     summary: Lock or unlock a release
+ *     summary: Lock a release (unlock not supported)
  *     tags: [Releases]
  *     security:
  *       - bearerAuth: []
@@ -179,9 +179,10 @@ router.patch(
  *             properties:
  *               locked:
  *                 type: boolean
+ *                 description: Must be true; false is rejected
  *     responses:
  *       200:
- *         description: Release lock status updated
+ *         description: Release locked; versions on this release have isActive cleared
  *       403:
  *         description: Forbidden
  *       404:
@@ -234,7 +235,7 @@ router.patch(
  * @swagger
  * /releases/{id}/public-lock:
  *   post:
- *     summary: Lock or unlock a release (Public)
+ *     summary: Lock a release (Public; unlock not supported)
  *     tags: [Releases]
  *     parameters:
  *       - in: path
@@ -249,22 +250,21 @@ router.patch(
  *           schema:
  *             type: object
  *             required:
- *               - locked
- *               - token
+ *               - lockedBy
  *             properties:
- *               locked:
- *                 type: boolean
- *               token:
+ *               lockedBy:
  *                 type: string
+ *                 format: email
+ *                 description: Email of the person locking the release
  *     responses:
  *       200:
- *         description: Release lock status updated
+ *         description: Release locked; versions on this release have isActive cleared
  *       400:
- *         description: Invalid token or parameters
+ *         description: Invalid email or parameters
  *       404:
  *         description: Release not found
  */
-router.post("/:id/public-lock", releaseController.publicLock); // No auth required (token based)
+router.post("/:id/public-lock", releaseController.publicLock); // No auth required
 
 // Info (Public)
 
@@ -282,7 +282,7 @@ router.post("/:id/public-lock", releaseController.publicLock); // No auth requir
  *           type: integer
  *     responses:
  *       200:
- *         description: Release info including lock token
+ *         description: Release info (includes lockedBy when locked)
  *       404:
  *         description: Release not found
  */

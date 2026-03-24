@@ -111,6 +111,8 @@ model Release {
   plannedReleaseDate DateTime?
   status      ReleaseStatus @default(draft)
   isMvp       Boolean  @default(false)
+  /// Email of the user who locked via the public lock API (set only when status is locked).
+  lockedBy    String?
 
   createdBy   Int
   createdAt   DateTime @default(now())

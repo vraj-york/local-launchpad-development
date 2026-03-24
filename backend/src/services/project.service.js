@@ -610,6 +610,7 @@ export const getProjectByIdService = async (
       id: true,
       name: true,
       status: true,
+      lockedBy: true,
       versions: {
         orderBy: { id: "desc" },
         select: {

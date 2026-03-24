@@ -3,7 +3,6 @@ import path from "path";
 import fs from "fs-extra";
 import extract from "extract-zip";
 import { execSync, spawn, exec } from "child_process";
-import crypto from "crypto";
 import fetch from "node-fetch";
 import ApiError from "../utils/apiError.js";
 import config from "../config/index.js";
@@ -562,10 +561,18 @@ export async function syncProjectActiveVersionForProject(tx, projectId) {
   }
 }
 
+/** Clear isActive on all project versions tied to this release (only isActive is updated). */
+async function deactivateProjectVersionsForRelease(tx, releaseId) {
+  await tx.projectVersion.updateMany({
+    where: { releaseId },
+    data: { isActive: false },
+  });
+}
+
 /**
  * Set release status: draft | active | locked | skip.
  * — Only one release per project may be active; setting a release to active demotes any other active release in the project to draft (locked releases are unchanged).
- * — A locked release cannot change status via this endpoint (idempotent `locked` is a no-op; unlock via lock API first).
+ * — A locked release cannot change status via this endpoint (idempotent `locked` is a no-op).
  * — After activation, sync sets the newly active release’s latest version as the project-active build.
  */
 const RELEASE_STATUS_VALUES = Object.values(ReleaseStatus);
@@ -595,11 +602,11 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
 
   const isLockedState = release.status === ReleaseStatus.locked;
 
-  // Locked releases: no status changes via this endpoint (must unlock via lock API first).
+  // Locked releases: no status changes via this endpoint.
   if (isLockedState && releaseStatus !== ReleaseStatus.locked) {
     throw new ApiError(
       400,
-      "A locked release cannot change status. Unlock the release first.",
+      "A locked release cannot change status.",
     );
   }
 
@@ -721,10 +728,15 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
 };
 
 /**
- * Lock or unlock a release (kept for backward compat). Syncs status: locked → status locked, unlocked → status draft.
+ * Lock a release (one-way). Clears isActive on all versions for this release only.
+ * Unlock is not supported.
  */
 export const lockReleaseService = async (releaseId, locked, user) => {
   const { id: userId, role } = user;
+
+  if (locked !== true) {
+    throw new ApiError(400, "Unlocking a release is not allowed.");
+  }
 
   const release = await prisma.release.findUnique({
     where: { id: releaseId },
@@ -747,22 +759,18 @@ export const lockReleaseService = async (releaseId, locked, user) => {
     throw new ApiError(403, "Forbidden");
   }
 
-  if (release.status === ReleaseStatus.locked && locked === true) {
+  if (release.status === ReleaseStatus.locked) {
     throw new ApiError(400, "Release is already locked");
   }
-  if (release.status !== ReleaseStatus.locked && locked === false) {
-    throw new ApiError(400, "Release is already unlocked");
-  }
 
-  const newStatus = locked ? ReleaseStatus.locked : ReleaseStatus.draft;
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.release.update({
       where: { id: releaseId },
       data: {
-        status: newStatus,
+        status: ReleaseStatus.locked,
       },
     });
-    await syncProjectActiveVersionForProject(tx, release.projectId);
+    await deactivateProjectVersionsForRelease(tx, releaseId);
     return row;
   });
   return updated;
@@ -1479,7 +1487,7 @@ export const uploadReleaseVersionService = async (
 };
 
 /**
- * Get release info for header display (generates lock token)
+ * Get release info for header display (public)
  */
 export const getReleaseInfoService = async (releaseId) => {
   const release = await prisma.release.findUnique({
@@ -1504,9 +1512,6 @@ export const getReleaseInfoService = async (releaseId) => {
     throw new ApiError(404, "Release not found");
   }
 
-  // Generate a unique lock token for this release
-  const lockToken = crypto.randomBytes(32).toString("hex");
-
   return {
     id: release.id,
     name: release.name,
@@ -1515,27 +1520,26 @@ export const getReleaseInfoService = async (releaseId) => {
     lastUpdated: release.versions[0]?.createdAt || null,
     status: release.status,
     locked: release.status === ReleaseStatus.locked,
-    lockToken: lockToken,
+    lockedBy: release.lockedBy,
   };
 };
 
+const PUBLIC_LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /**
- * Public lock/unlock a release
+ * Public lock a release (one-way). Clears isActive on all versions for this release only.
+ * Unlock is not supported. No auth token — caller supplies `lockedBy` email.
  */
-export const publicLockReleaseService = async (releaseId, locked, token) => {
-  // Validate required parameters
-  if (typeof locked !== "boolean") {
-    throw new ApiError(
-      400,
-      "Invalid 'locked' parameter. Must be true or false.",
-    );
+export const publicLockReleaseService = async (releaseId, lockedBy) => {
+  const email =
+    typeof lockedBy === "string" ? lockedBy.trim().toLowerCase() : "";
+  if (!email) {
+    throw new ApiError(400, "lockedBy email is required.");
+  }
+  if (!PUBLIC_LOCK_EMAIL_RE.test(email)) {
+    throw new ApiError(400, "lockedBy must be a valid email address.");
   }
 
-  if (!token || typeof token !== "string") {
-    throw new ApiError(400, "Token is required for public lock operations.");
-  }
-
-  // Check if release exists
   const release = await prisma.release.findUnique({
     where: { id: releaseId },
     include: {
@@ -1552,35 +1556,35 @@ export const publicLockReleaseService = async (releaseId, locked, token) => {
     throw new ApiError(404, "Release not found");
   }
 
-  if (release.status === ReleaseStatus.locked && locked === true) {
+  if (release.status === ReleaseStatus.locked) {
     throw new ApiError(400, "Release is already locked");
-  }
-  if (release.status !== ReleaseStatus.locked && locked === false) {
-    throw new ApiError(400, "Release is already unlocked");
   }
 
   const updatedRelease = await prisma.$transaction(async (tx) => {
     const row = await tx.release.update({
       where: { id: releaseId },
       data: {
-        status: locked ? ReleaseStatus.locked : ReleaseStatus.draft,
+        status: ReleaseStatus.locked,
+        lockedBy: email,
       },
       select: {
         id: true,
         name: true,
         status: true,
         projectId: true,
+        lockedBy: true,
       },
     });
-    await syncProjectActiveVersionForProject(tx, row.projectId);
+    await deactivateProjectVersionsForRelease(tx, releaseId);
     return row;
   });
 
   return {
-    message: `Release ${locked ? "locked" : "unlocked"} successfully`,
+    message: "Release locked successfully",
     releaseId: updatedRelease.id,
     releaseName: updatedRelease.name,
     locked: updatedRelease.status === ReleaseStatus.locked,
+    lockedBy: updatedRelease.lockedBy,
   };
 };
 
