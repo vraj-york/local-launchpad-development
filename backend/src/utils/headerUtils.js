@@ -151,6 +151,11 @@ function generateHeader(type = 'project', data = {}) {
       
       if (!confirmed) return;
 
+      const lockEmail = window.prompt('Enter your email to confirm lock:');
+      if (!lockEmail || !String(lockEmail).trim()) {
+        return;
+      }
+
       extractFromUrl();
       if (!releaseId) return alert("Error: Release ID missing.");
 
@@ -161,7 +166,7 @@ function generateHeader(type = 'project', data = {}) {
         const response = await fetch(\`\${getApiUrl()}/api/releases/\${releaseId}/public-lock\`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ locked: true, token: window.LaunchpadLockToken })
+          body: JSON.stringify({ lockedBy: String(lockEmail).trim().toLowerCase() })
         });
 
         if (response.ok) {
@@ -193,7 +198,7 @@ function generateHeader(type = 'project', data = {}) {
           div.className = 'launchpad-lock-overlay';
           div.innerHTML = \`
             <div class="overlay-title">🔒 Project Locked</div>
-            <div class="overlay-msg">This \${label.toLowerCase()} has been secured. Please contact your Project Manager to request an unlock.</div>
+            <div class="overlay-msg">This \${label.toLowerCase()} has been secured. Please contact your Project Manager if you need further changes.</div>
           \`;
           document.body.appendChild(div);
         }
@@ -217,7 +222,6 @@ function generateHeader(type = 'project', data = {}) {
           if (res.ok) {
             const info = await res.json();
             isLocked = info.locked;
-            window.LaunchpadLockToken = info.lockToken;
             renderUI();
           }
         } catch (e) { console.warn("API Offline"); }

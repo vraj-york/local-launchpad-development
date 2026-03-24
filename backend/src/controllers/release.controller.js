@@ -39,7 +39,7 @@ export const releaseController = {
     }),
 
     /**
-     * Lock or unlock a release
+     * Lock a release (one-way; unlock is not supported)
      */
     lock: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
@@ -52,7 +52,7 @@ export const releaseController = {
         const release = await lockReleaseService(releaseId, locked, req.user);
 
         res.json({
-            message: `Release ${locked ? 'locked' : 'unlocked'} successfully`,
+            message: "Release locked successfully",
             release
         });
     }),
@@ -116,12 +116,12 @@ export const releaseController = {
     }),
 
     /**
-     * Public lock (no auth, token based)
+     * Public lock (no auth). Body: { lockedBy: email }
      */
     publicLock: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
-        const { locked, token } = req.body;
-        const result = await publicLockReleaseService(releaseId, locked, token);
+        const { lockedBy } = req.body;
+        const result = await publicLockReleaseService(releaseId, lockedBy);
         res.json(result);
     })
 
