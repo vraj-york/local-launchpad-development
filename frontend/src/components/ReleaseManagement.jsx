@@ -6,6 +6,8 @@ import {
   updateReleaseStatus,
   uploadToRelease,
   getRoadmapItemsByProjectId,
+  patchRelease,
+  fetchReleaseChangelog,
 } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -22,6 +24,8 @@ import {
   Upload,
   CalendarDays,
   Sparkles,
+  History,
+  Pencil,
 } from "lucide-react";
 import { Badge } from "./ui/badge";
 import {
@@ -50,13 +54,69 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { Calendar } from "./ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "./ui/popover";
+import { DatePickerWithRange } from "./ui/date-range-picker";
 import { cn } from "@/lib/utils";
+
+const RELEASE_STATUS_CHANGELOG_LABELS = {
+  draft: "Draft",
+  active: "Active",
+  locked: "Locked",
+  skip: "Skipped",
+};
+
+const CHANGELOG_FIELD_LABELS = {
+  status: "Status",
+  releaseDate: "Target release",
+  startDate: "Start date",
+  name: "Name",
+  description: "Description",
+  isMvp: "MVP",
+  lockedBy: "Locked by",
+};
+
+function formatReadableDate(value) {
+  if (value == null || value === "") return "—";
+  try {
+    const d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+    return format(d, "MMMM d, yyyy");
+  } catch {
+    return String(value);
+  }
+}
+
+function formatChangelogTimestamp(iso) {
+  if (!iso) return "";
+  try {
+    return format(new Date(iso), "MMM d, yyyy 'at' h:mm a");
+  } catch {
+    return new Date(iso).toLocaleString();
+  }
+}
+
+function formatChangelogScalar(value) {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") {
+    const key = value.toLowerCase();
+    if (RELEASE_STATUS_CHANGELOG_LABELS[value])
+      return RELEASE_STATUS_CHANGELOG_LABELS[value];
+    if (RELEASE_STATUS_CHANGELOG_LABELS[key])
+      return RELEASE_STATUS_CHANGELOG_LABELS[key];
+    if (/^\d{4}-\d{2}-\d{2}/.test(value) && !Number.isNaN(Date.parse(value)))
+      return formatReadableDate(value);
+    return value;
+  }
+  return String(value);
+}
+
+function changelogFieldLabel(key) {
+  return (
+    CHANGELOG_FIELD_LABELS[key] ??
+    key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase())
+  );
+}
 
 const RELEASE_STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
@@ -205,10 +265,16 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [newRelease, setNewRelease] = useState({
     name: "",
     description: "",
-    plannedReleaseDate: null,
+    startDate: null,
+    releaseDate: null,
     isMvp: false,
   });
-  const [plannedDateOpen, setPlannedDateOpen] = useState(false);
+
+  const [editDialog, setEditDialog] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
+
+  const [changelogByRelease, setChangelogByRelease] = useState({});
+  const [changelogLoadingId, setChangelogLoadingId] = useState(null);
 
   const latestReleaseTuple = useMemo(
     () => maxReleaseTupleFromList(releases),
@@ -228,10 +294,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     setNewRelease({
       name: suggestedPatchReleaseName,
       description: "",
-      plannedReleaseDate: null,
+      startDate: null,
+      releaseDate: null,
       isMvp: false,
     });
-    setPlannedDateOpen(false);
     setShowCreateForm(true);
   };
 
@@ -268,6 +334,65 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     }
   };
 
+  const loadChangelog = async (releaseId) => {
+    setChangelogLoadingId(releaseId);
+    try {
+      const data = await fetchReleaseChangelog(releaseId);
+      setChangelogByRelease((prev) => ({ ...prev, [releaseId]: data }));
+    } catch (err) {
+      toast.error(err.error || "Failed to load history");
+    } finally {
+      setChangelogLoadingId(null);
+    }
+  };
+
+  const openEditRelease = (release) => {
+    setEditDialog({
+      id: release.id,
+      name: release.name ?? "",
+      description: release.description ?? "",
+      isMvp: !!release.isMvp,
+      startDate: release.startDate ? new Date(release.startDate) : null,
+      releaseDate: release.releaseDate
+        ? new Date(release.releaseDate)
+        : null,
+      reason: "",
+    });
+  };
+
+  const saveEditRelease = async (e) => {
+    e.preventDefault();
+    if (!editDialog) return;
+    const payload = {
+      description: editDialog.description.trim() || null,
+      isMvp: editDialog.isMvp,
+      startDate: editDialog.startDate
+        ? format(editDialog.startDate, "yyyy-MM-dd")
+        : null,
+      releaseDate: editDialog.releaseDate
+        ? format(editDialog.releaseDate, "yyyy-MM-dd")
+        : null,
+      reason: editDialog.reason.trim(),
+    };
+    try {
+      setEditSaving(true);
+      await patchRelease(editDialog.id, payload);
+      toast.success("Release updated");
+      const rid = editDialog.id;
+      setEditDialog(null);
+      await loadReleases();
+      setChangelogByRelease((prev) => {
+        const next = { ...prev };
+        delete next[rid];
+        return next;
+      });
+    } catch (err) {
+      toast.error(err.error || "Failed to update release");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const handleCreateRelease = async (e) => {
     e.preventDefault();
     const name = newRelease.name.trim();
@@ -297,8 +422,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
         projectId: Number(projectId),
         name,
         description: newRelease.description.trim() || null,
-        plannedReleaseDate: newRelease.plannedReleaseDate
-          ? format(newRelease.plannedReleaseDate, "yyyy-MM-dd")
+        startDate: newRelease.startDate
+          ? format(newRelease.startDate, "yyyy-MM-dd")
+          : null,
+        releaseDate: newRelease.releaseDate
+          ? format(newRelease.releaseDate, "yyyy-MM-dd")
           : null,
         isMvp: newRelease.isMvp,
       };
@@ -306,7 +434,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       setNewRelease({
         name: "",
         description: "",
-        plannedReleaseDate: null,
+        startDate: null,
+        releaseDate: null,
         isMvp: false,
       });
       setShowCreateForm(false);
@@ -330,6 +459,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       releaseName: rel.name,
       fromStatus: normalizeReleaseStatus(rel),
       toStatus: newStatus,
+      statusReason: "",
     });
   };
 
@@ -342,13 +472,21 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       );
       if (otherActive) return;
     }
+    const reason = (statusConfirm.statusReason || "").trim();
+    if (toStatus !== "locked" && !reason) {
+      toast.error("Please enter a reason for this status change.");
+      return;
+    }
+
     try {
       setStatusConfirmSubmitting(true);
       setStatusUpdatingId(releaseId);
-      await updateReleaseStatus(releaseId, toStatus);
-      toast.success(
-        `Release status set to ${releaseStatusLabel(toStatus)}`,
+      await updateReleaseStatus(
+        releaseId,
+        toStatus,
+        toStatus === "locked" ? undefined : reason,
       );
+      toast.success(`Release status set to ${toStatus}`);
       setStatusConfirm(null);
       await loadReleases();
     } catch (err) {
@@ -617,11 +755,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                   </span>
                                   {normalizeReleaseStatus(release) ===
                                     "active" && (
-                                    <Sparkles
-                                      className="size-3.5 shrink-0 text-emerald-600/80"
-                                      aria-hidden
-                                    />
-                                  )}
+                                      <Sparkles
+                                        className="size-3.5 shrink-0 text-emerald-600/80"
+                                        aria-hidden
+                                      />
+                                    )}
                                   {isReleaseLocked(release) && (
                                     <Lock
                                       className="size-3.5 shrink-0 text-rose-600/80"
@@ -638,23 +776,27 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                               </TooltipContent>
                             </Tooltip>
                           </div>
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-slate-100/80 pt-3 text-xs text-slate-500 sm:ml-auto sm:shrink-0 sm:border-t-0 sm:pt-0">
-                            <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                          <div className="flex flex-col gap-2 border-t border-slate-100/80 pt-3 text-xs sm:ml-auto sm:shrink-0 sm:max-w-md sm:border-t-0 sm:pt-0">
+                            <div className="inline-flex flex-wrap items-center gap-2 rounded-lg bg-slate-100/70 px-2.5 py-1.5 text-slate-700 ring-1 ring-slate-200/60">
                               <CalendarDays
-                                className="size-3.5 shrink-0 text-slate-400"
+                                className="size-3.5 shrink-0 text-slate-500"
                                 aria-hidden
                               />
-                              <time dateTime={release.plannedReleaseDate}>
-                                {release.plannedReleaseDate ? new Date(release.plannedReleaseDate).toLocaleDateString(
-                                  undefined,
-                                  {
-                                    month: "short",
-                                    day: "numeric",
-                                    year: "numeric",
-                                  },
-                                ): "No planned release date"}
-                              </time>
-                            </span>
+                              <span className="font-medium text-slate-600">
+                                Schedule
+                              </span>
+                              <span className="min-w-0 font-semibold text-slate-900">
+                                <time dateTime={release.startDate ?? undefined}>
+                                  {formatReadableDate(release.startDate)}
+                                </time>
+                                <span className="mx-1 font-normal text-slate-400">
+                                  →
+                                </span>
+                                <time dateTime={release.releaseDate ?? undefined}>
+                                  {formatReadableDate(release.releaseDate)}
+                                </time>
+                              </span>
+                            </div>
                             <span
                               className="hidden h-3 w-px shrink-0 self-center bg-slate-200 sm:inline-block"
                               aria-hidden
@@ -687,6 +829,154 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                             )}
                           </p>
                         </div>
+
+                        {canManageReleases && !isReleaseLocked(release) && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="w-fit gap-2"
+                            onClick={() => openEditRelease(release)}
+                          >
+                            <Pencil className="size-3.5" />
+                            Edit details
+                          </Button>
+                        )}
+
+                        {canManageReleases && (
+                          <Collapsible
+                            onOpenChange={(open) => {
+                              if (
+                                open &&
+                                !changelogByRelease[release.id] &&
+                                changelogLoadingId !== release.id
+                              ) {
+                                loadChangelog(release.id);
+                              }
+                            }}
+                          >
+                            <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100/80">
+                              <History className="size-3.5 shrink-0" />
+                              Change history
+                              <ChevronDown className="ml-auto size-4 shrink-0 opacity-60" />
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="pt-2">
+                              {changelogLoadingId === release.id ? (
+                                <div className="flex justify-center py-4">
+                                  <Spinner />
+                                </div>
+                              ) : (
+                                <ul className="max-h-80 space-y-3 overflow-y-auto pr-0.5">
+                                  {(changelogByRelease[release.id] || [])
+                                    .length === 0 ? (
+                                    <li className="rounded-md border border-dashed border-slate-200 bg-slate-50/80 px-3 py-4 text-center text-sm text-slate-500">
+                                      No changes recorded yet.
+                                    </li>
+                                  ) : (
+                                    (changelogByRelease[release.id] || []).map(
+                                      (log) => (
+                                        <li
+                                          key={log.id}
+                                          className="overflow-hidden rounded-lg border border-slate-200/90 bg-white shadow-sm"
+                                        >
+                                          <div className="flex flex-col gap-1 border-b border-slate-100 bg-slate-50/90 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                                            <span className="text-sm font-semibold text-slate-900">
+                                              {log.changedBy?.name ||
+                                                log.changedByEmail ||
+                                                "Unknown"}
+                                            </span>
+                                            <time
+                                              className="text-xs text-slate-500"
+                                              dateTime={log.createdAt}
+                                            >
+                                              {formatChangelogTimestamp(
+                                                log.createdAt,
+                                              )}
+                                            </time>
+                                          </div>
+                                          <div className="px-3 py-2">
+                                            <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                                              Reason
+                                            </p>
+                                            <p className="mt-0.5 text-sm leading-relaxed text-slate-700">
+                                              {log.reason}
+                                            </p>
+                                          </div>
+                                          {log.changes &&
+                                            typeof log.changes === "object" &&
+                                            Object.keys(log.changes).length > 0 ? (
+                                            <div className="border-t border-slate-100 px-2 py-2">
+                                              <p className="px-1 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                                                What changed
+                                              </p>
+                                              <div className="overflow-x-auto rounded-md border border-slate-100">
+                                                <table className="w-full min-w-[280px] text-left text-xs">
+                                                  <thead>
+                                                    <tr className="border-b border-slate-100 bg-slate-50/80 text-slate-600">
+                                                      <th className="px-2 py-1.5 font-semibold">
+                                                        Field
+                                                      </th>
+                                                      <th className="px-2 py-1.5 font-semibold">
+                                                        Before
+                                                      </th>
+                                                      <th className="px-2 py-1.5 font-semibold">
+                                                        After
+                                                      </th>
+                                                    </tr>
+                                                  </thead>
+                                                  <tbody>
+                                                    {Object.entries(
+                                                      log.changes,
+                                                    ).map(([key, val]) => {
+                                                      const isDiff =
+                                                        val &&
+                                                        typeof val ===
+                                                        "object" &&
+                                                        "from" in val &&
+                                                        "to" in val;
+                                                      return (
+                                                        <tr
+                                                          key={key}
+                                                          className="border-b border-slate-50 last:border-0"
+                                                        >
+                                                          <td className="px-2 py-2 align-top font-medium text-slate-800">
+                                                            {changelogFieldLabel(
+                                                              key,
+                                                            )}
+                                                          </td>
+                                                          <td className="px-2 py-2 align-top text-slate-600">
+                                                            {isDiff
+                                                              ? formatChangelogScalar(
+                                                                val.from,
+                                                              )
+                                                              : formatChangelogScalar(
+                                                                val,
+                                                              )}
+                                                          </td>
+                                                          <td className="px-2 py-2 align-top text-slate-900">
+                                                            {isDiff
+                                                              ? formatChangelogScalar(
+                                                                val.to,
+                                                              )
+                                                              : "—"}
+                                                          </td>
+                                                        </tr>
+                                                      );
+                                                    })}
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            </div>
+                                          ) : null}
+                                        </li>
+                                      ),
+                                    )
+                                  )}
+                                </ul>
+                              )}
+                            </CollapsibleContent>
+                          </Collapsible>
+                        )}
 
                         {canManageReleases && (
                           <div className="flex flex-col gap-3 border-t border-slate-100 pt-4">
@@ -894,7 +1184,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
       {/* Create Release Form Modal */}
       <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Create New Release</DialogTitle>
           </DialogHeader>
@@ -955,43 +1245,35 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="planned-release-date">Planned release date</Label>
-              <Popover open={plannedDateOpen} onOpenChange={setPlannedDateOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    id="planned-release-date"
-                    className={cn(
-                      "h-10 w-full justify-start border-slate-200 bg-white text-left font-normal hover:bg-slate-50/90",
-                      !newRelease.plannedReleaseDate &&
-                        "text-muted-foreground",
-                    )}
-                  >
-                    <CalendarDays className="mr-2 size-4 shrink-0 opacity-70" />
-                    {newRelease.plannedReleaseDate ? (
-                      format(newRelease.plannedReleaseDate, "PPP")
-                    ) : (
-                      <span>Pick a date</span>
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={newRelease.plannedReleaseDate ?? undefined}
-                    onSelect={(date) => {
-                      setNewRelease((prev) => ({
-                        ...prev,
-                        plannedReleaseDate: date ?? null,
-                      }));
-                      setPlannedDateOpen(false);
-                    }}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-              {newRelease.plannedReleaseDate ? (
+              <Label>Schedule (start → target release)</Label>
+              <p className="text-xs text-slate-500">
+                Choose the start date, then the target release date. Both are
+                saved as separate fields.
+              </p>
+              <DatePickerWithRange
+                className={cn(
+                  "h-10 w-full border-slate-200 bg-white hover:bg-slate-50/90",
+                  !newRelease.startDate &&
+                  !newRelease.releaseDate &&
+                  "text-muted-foreground",
+                )}
+                date={
+                  newRelease.startDate || newRelease.releaseDate
+                    ? {
+                      from: newRelease.startDate ?? undefined,
+                      to: newRelease.releaseDate ?? undefined,
+                    }
+                    : undefined
+                }
+                setDate={(range) => {
+                  setNewRelease((prev) => ({
+                    ...prev,
+                    startDate: range?.from ?? null,
+                    releaseDate: range?.to ?? null,
+                  }));
+                }}
+              />
+              {(newRelease.startDate || newRelease.releaseDate) && (
                 <Button
                   type="button"
                   variant="ghost"
@@ -1000,13 +1282,14 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   onClick={() =>
                     setNewRelease((prev) => ({
                       ...prev,
-                      plannedReleaseDate: null,
+                      startDate: null,
+                      releaseDate: null,
                     }))
                   }
                 >
-                  Clear date
+                  Clear schedule
                 </Button>
-              ) : null}
+              )}
             </div>
 
             <div className="flex items-start gap-3 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-3">
@@ -1097,6 +1380,160 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!editDialog}
+        onOpenChange={(open) => {
+          if (!open && !editSaving) setEditDialog(null);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Edit release</DialogTitle>
+            <DialogDescription>
+              Release name cannot be changed. Other updates are saved with an
+              audit entry when something actually changes (reason required then).
+            </DialogDescription>
+          </DialogHeader>
+          {editDialog ? (
+            <form onSubmit={saveEditRelease} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-release-name">Release name</Label>
+                <Input
+                  id="edit-release-name"
+                  value={editDialog.name}
+                  readOnly
+                  disabled
+                  className="cursor-not-allowed bg-slate-100 text-slate-600"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-release-desc">Description</Label>
+                <Textarea
+                  id="edit-release-desc"
+                  rows={3}
+                  value={editDialog.description}
+                  onChange={(e) =>
+                    setEditDialog((prev) =>
+                      prev ? { ...prev, description: e.target.value } : prev,
+                    )
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Schedule (start → target release)</Label>
+                <p className="text-xs text-slate-500">
+                  Same as create: pick start, then target. Stored as{" "}
+                  <code className="rounded bg-slate-100 px-1 text-[11px]">
+                    startDate
+                  </code>{" "}
+                  and{" "}
+                  <code className="rounded bg-slate-100 px-1 text-[11px]">
+                    releaseDate
+                  </code>
+                  .
+                </p>
+                <DatePickerWithRange
+                  className={cn(
+                    "h-10 w-full border-slate-200 bg-white hover:bg-slate-50/90",
+                    !editDialog.startDate &&
+                    !editDialog.releaseDate &&
+                    "text-muted-foreground",
+                  )}
+                  date={
+                    editDialog.startDate || editDialog.releaseDate
+                      ? {
+                        from: editDialog.startDate ?? undefined,
+                        to: editDialog.releaseDate ?? undefined,
+                      }
+                      : undefined
+                  }
+                  setDate={(range) => {
+                    setEditDialog((prev) =>
+                      prev
+                        ? {
+                          ...prev,
+                          startDate: range?.from ?? null,
+                          releaseDate: range?.to ?? null,
+                        }
+                        : prev,
+                    );
+                  }}
+                />
+                {(editDialog.startDate || editDialog.releaseDate) && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-xs text-slate-500"
+                    onClick={() =>
+                      setEditDialog((prev) =>
+                        prev
+                          ? {
+                            ...prev,
+                            startDate: null,
+                            releaseDate: null,
+                          }
+                          : prev,
+                      )
+                    }
+                  >
+                    Clear schedule
+                  </Button>
+                )}
+              </div>
+              <div className="flex items-start gap-3 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-3">
+                <Checkbox
+                  id="edit-is-mvp"
+                  checked={editDialog.isMvp}
+                  onCheckedChange={(checked) =>
+                    setEditDialog((prev) =>
+                      prev ? { ...prev, isMvp: checked === true } : prev,
+                    )
+                  }
+                  className="mt-0.5"
+                />
+                <Label htmlFor="edit-is-mvp" className="cursor-pointer text-sm">
+                  MVP release
+                </Label>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-reason">Reason</Label>
+                <Textarea
+                  id="edit-reason"
+                  rows={2}
+                  placeholder="Required if you change any field above"
+                  value={editDialog.reason}
+                  onChange={(e) =>
+                    setEditDialog((prev) =>
+                      prev ? { ...prev, reason: e.target.value } : prev,
+                    )
+                  }
+                />
+              </div>
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditDialog(null)}
+                  disabled={editSaving}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" className="text-white" disabled={editSaving}>
+                  {editSaving ? (
+                    <>
+                      <Spinner /> Saving
+                    </>
+                  ) : (
+                    "Save"
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -1221,13 +1658,12 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
-                  className={`relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-all duration-200 ${
-                    isDragActive
+                  className={`relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-all duration-200 ${isDragActive
                       ? "border-primary bg-primary/5"
                       : uploadFile
                         ? "border-emerald-300 bg-emerald-50/50"
                         : "border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-slate-100/50"
-                  }`}
+                    }`}
                 >
                   {uploadFile ? (
                     <>
@@ -1249,11 +1685,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   ) : (
                     <>
                       <div
-                        className={`flex size-12 items-center justify-center rounded-full ${
-                          isDragActive
+                        className={`flex size-12 items-center justify-center rounded-full ${isDragActive
                             ? "bg-primary/10 text-primary"
                             : "bg-slate-200 text-slate-500"
-                        }`}
+                          }`}
                       >
                         <Upload className="size-6" />
                       </div>
@@ -1289,13 +1724,12 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
               {uploadStatus && (
                 <div
-                  className={`p-3 rounded-lg border text-sm ${
-                    uploadStatus.includes("Upload successful")
+                  className={`p-3 rounded-lg border text-sm ${uploadStatus.includes("Upload successful")
                       ? "bg-emerald-50 border-emerald-200 text-emerald-800"
                       : uploadStatus.includes("Upload failed")
                         ? "bg-red-50 border-red-200 text-red-800"
                         : "bg-blue-50 border-blue-200 text-blue-800"
-                  }`}
+                    }`}
                 >
                   {uploadStatus}
                   {uploadStatus.includes("Upload successful") &&
@@ -1407,6 +1841,24 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       link.
                     </p>
                   )}
+                {statusConfirm?.toStatus !== "locked" ? (
+                  <div className="space-y-2 pt-2">
+                    <Label htmlFor="status-change-reason">Reason for change</Label>
+                    <Textarea
+                      id="status-change-reason"
+                      rows={3}
+                      placeholder="Required — explain why you are changing status"
+                      value={statusConfirm?.statusReason ?? ""}
+                      onChange={(e) =>
+                        setStatusConfirm((prev) =>
+                          prev ? { ...prev, statusReason: e.target.value } : prev,
+                        )
+                      }
+                      disabled={statusConfirmSubmitting}
+                      className="resize-none"
+                    />
+                  </div>
+                ) : null}
               </div>
             </DialogDescription>
           </DialogHeader>
@@ -1424,7 +1876,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               className="text-white"
               onClick={confirmStatusChange}
               disabled={
-                statusConfirmSubmitting || blockActivateUntilOtherLocked
+                statusConfirmSubmitting ||
+                blockActivateUntilOtherLocked ||
+                (statusConfirm?.toStatus !== "locked" &&
+                  !(statusConfirm?.statusReason || "").trim())
               }
             >
               {statusConfirmSubmitting ? (

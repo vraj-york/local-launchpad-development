@@ -18,6 +18,7 @@ model User {
   projectAccess        ProjectAccess[]
   versionsUploaded     ProjectVersion[] @relation("VersionUploader")
   releasesCreated       Release[]       @relation("ReleaseCreator")
+  releaseChangeLogs     ReleaseChangeLog[]
   figmaConversions     FigmaConversion[] @relation("FigmaConversionAttemptedBy")
   image    String?  
 
@@ -107,8 +108,10 @@ model Release {
   projectId   Int
   name        String
   description String?
-  releaseDate DateTime?   // 🔥 ADD (key for timeline & roadmap)
-  plannedReleaseDate DateTime?
+  /// Planned ship / target date (timeline).
+  releaseDate DateTime?
+  /// Planned start date (timeline).
+  startDate   DateTime?
   status      ReleaseStatus @default(draft)
   isMvp       Boolean  @default(false)
   /// Email of the user who locked via the public lock API (set only when status is locked).
@@ -122,8 +125,23 @@ model Release {
   creator     User            @relation("ReleaseCreator", fields: [createdBy], references: [id])
   versions    ProjectVersion[]
   figmaConversions FigmaConversion[]
+  changeLogs  ReleaseChangeLog[]
 
+}
 
+model ReleaseChangeLog {
+  id              Int      @id @default(autoincrement())
+  releaseId       Int
+  reason          String
+  changedById     Int?
+  changedByEmail  String?
+  changes         Json
+  createdAt       DateTime @default(now())
+
+  release   Release @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  changedBy User?   @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([releaseId, createdAt])
 }
 
 model FigmaConversion {

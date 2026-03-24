@@ -86,10 +86,12 @@ export const projectController = {
     setReleaseStatus: asyncHandler(async (req, res) => {
         const projectId = Number(req.params.id);
         const releaseId = Number(req.params.releaseId);
+        const { reason } = req.body || {};
         await setReleaseStatusService({
             projectId,
             releaseId,
-            user: req.user
+            user: req.user,
+            reason,
         });
 
         res.json({ message: "Release activated successfully" });

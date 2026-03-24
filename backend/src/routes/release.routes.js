@@ -5,6 +5,9 @@ import {
     createReleaseValidation,
     updateReleaseValidation,
     setReleaseStatusValidation,
+    lockReleaseValidation,
+    publicLockReleaseValidation,
+    releaseChangelogParamValidation,
 } from "../validators/release.validator.js";
 import { validate } from "../validators/validate.middleware.js";
 import multer from "multer";
@@ -115,6 +118,23 @@ router.post(
 
 /**
  * @swagger
+ * /releases/{id}/changelog:
+ *   get:
+ *     summary: Release audit history (newest first)
+ *     tags: [Releases]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get(
+    "/:id/changelog",
+    authenticateToken,
+    releaseChangelogParamValidation,
+    validate,
+    releaseController.changelog,
+);
+
+/**
+ * @swagger
  * /releases/{id}:
  *   get:
  *     summary: Get a release by ID
@@ -188,7 +208,13 @@ router.patch(
  *       404:
  *         description: Release not found
  */
-router.post("/:id/lock", authenticateToken, releaseController.lock);
+router.post(
+    "/:id/lock",
+    authenticateToken,
+    lockReleaseValidation,
+    validate,
+    releaseController.lock,
+);
 
 /**
  * @swagger
@@ -264,7 +290,12 @@ router.patch(
  *       404:
  *         description: Release not found
  */
-router.post("/:id/public-lock", releaseController.publicLock); // No auth required
+router.post(
+    "/:id/public-lock",
+    publicLockReleaseValidation,
+    validate,
+    releaseController.publicLock,
+); // No auth required
 
 // Info (Public)
 

@@ -20,6 +20,42 @@ import { execa } from "execa";
 const execAsync = promisify(exec);
 const prisma = new PrismaClient();
 
+function datesEqual(a, b) {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return new Date(a).getTime() === new Date(b).getTime();
+}
+
+function dateToIsoOrNull(d) {
+  if (d == null) return null;
+  return new Date(d).toISOString();
+}
+
+async function appendReleaseChangeLog(tx, {
+  releaseId,
+  reason,
+  changedById,
+  changedByEmail,
+  changes,
+}) {
+  const trimmed = typeof reason === "string" ? reason.trim() : "";
+  if (!trimmed) {
+    throw new ApiError(400, "reason is required for this change.");
+  }
+  if (!changes || typeof changes !== "object" || Object.keys(changes).length === 0) {
+    throw new ApiError(500, "Internal: changelog must include at least one field change.");
+  }
+  await tx.releaseChangeLog.create({
+    data: {
+      releaseId,
+      reason: trimmed,
+      changedById: changedById ?? null,
+      changedByEmail: changedByEmail ?? null,
+      changes,
+    },
+  });
+}
+
 // Environment variables
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_USERNAME = process.env.GITHUB_USERNAME;
@@ -437,6 +473,35 @@ export const getReleaseByIdService = async (releaseId) => {
 };
 
 /**
+ * Audit history for a release (newest first).
+ */
+export const getReleaseChangelogService = async (releaseId, user) => {
+  const { id: userId, role } = user;
+
+  const release = await prisma.release.findUnique({
+    where: { id: releaseId },
+    select: {
+      projectId: true,
+      project: { select: { assignedManagerId: true } },
+    },
+  });
+  if (!release) throw new ApiError(404, "Release not found");
+
+  const hasPermission =
+    role === "admin" ||
+    (role === "manager" && release.project.assignedManagerId === userId);
+  if (!hasPermission) throw new ApiError(403, "Forbidden");
+
+  return prisma.releaseChangeLog.findMany({
+    where: { releaseId },
+    orderBy: { createdAt: "desc" },
+    include: {
+      changedBy: { select: { id: true, name: true, email: true } },
+    },
+  });
+};
+
+/**
  * Create a new release
  */
 export const createReleaseService = async (data, user) => {
@@ -446,7 +511,8 @@ export const createReleaseService = async (data, user) => {
     description,
     roadmapItemId,
     isMvp,
-    plannedReleaseDate,
+    releaseDate: releaseDateInput,
+    startDate: startDateInput,
   } = data;
   const { id: userId, role } = user;
 
@@ -497,9 +563,13 @@ export const createReleaseService = async (data, user) => {
     }
   }
 
-  const plannedDate =
-    plannedReleaseDate != null && plannedReleaseDate !== ""
-      ? toDate(plannedReleaseDate, "plannedReleaseDate")
+  const shipDate =
+    releaseDateInput != null && releaseDateInput !== ""
+      ? toDate(releaseDateInput, "releaseDate")
+      : null;
+  const startDate =
+    startDateInput != null && startDateInput !== ""
+      ? toDate(startDateInput, "startDate")
       : null;
 
   return prisma.$transaction(async (tx) => {
@@ -510,7 +580,8 @@ export const createReleaseService = async (data, user) => {
         description: description?.trim() || null,
         status: ReleaseStatus.draft,
         isMvp: Boolean(isMvp),
-        plannedReleaseDate: plannedDate,
+        releaseDate: shipDate,
+        startDate,
         createdBy: userId,
       },
       include: {
@@ -577,8 +648,9 @@ async function deactivateProjectVersionsForRelease(tx, releaseId) {
  */
 const RELEASE_STATUS_VALUES = Object.values(ReleaseStatus);
 
-export const setReleaseStatusService = async (releaseId, status, user) => {
+export const setReleaseStatusService = async (releaseId, status, user, options = {}) => {
   const { id: userId, role } = user;
+  const reasonRaw = options?.reason;
   const releaseStatus = status && String(status).toLowerCase();
   if (!RELEASE_STATUS_VALUES.includes(releaseStatus)) {
     throw new ApiError(400, `status must be one of: ${RELEASE_STATUS_VALUES.join(", ")}`);
@@ -646,6 +718,17 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
     });
   }
 
+  const isLockTransition = releaseStatus === ReleaseStatus.locked;
+  const reasonTrim =
+    typeof reasonRaw === "string" ? reasonRaw.trim() : "";
+  if (!isLockTransition && !reasonTrim) {
+    throw new ApiError(400, "reason is required when changing release status.");
+  }
+
+  const statusChangePayload = {
+    status: { from: release.status, to: releaseStatus },
+  };
+
   await prisma.$transaction(async (tx) => {
     if (releaseStatus === ReleaseStatus.locked) {
       await tx.release.update({
@@ -676,6 +759,12 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
           status: ReleaseStatus.active,
         },
       });
+      await appendReleaseChangeLog(tx, {
+        releaseId,
+        reason: reasonTrim,
+        changedById: userId,
+        changes: statusChangePayload,
+      });
       await syncProjectActiveVersionForProject(tx, release.projectId);
       return;
     }
@@ -697,6 +786,12 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
           status: ReleaseStatus.skip,
         },
       });
+      await appendReleaseChangeLog(tx, {
+        releaseId,
+        reason: reasonTrim,
+        changedById: userId,
+        changes: statusChangePayload,
+      });
       await syncProjectActiveVersionForProject(tx, release.projectId);
       return;
     }
@@ -707,6 +802,12 @@ export const setReleaseStatusService = async (releaseId, status, user) => {
       data: {
         status: ReleaseStatus.draft,
       },
+    });
+    await appendReleaseChangeLog(tx, {
+      releaseId,
+      reason: reasonTrim,
+      changedById: userId,
+      changes: statusChangePayload,
     });
     await syncProjectActiveVersionForProject(tx, release.projectId);
   });
@@ -777,33 +878,59 @@ export const lockReleaseService = async (releaseId, locked, user) => {
 };
 
 /**
- * Partial update: name, description, isMvp, plannedReleaseDate. Blocked when release is locked.
+ * Partial update: name, description, isMvp, releaseDate, startDate. Blocked when release is locked.
+ * Requires non-empty reason when any persisted field actually changes.
  */
 export const updateReleaseService = async (releaseId, data, user) => {
   const { id: userId, role } = user;
-  const { name, description, isMvp, plannedReleaseDate } = data;
+  const {
+    name,
+    description,
+    isMvp,
+    releaseDate: releaseDateInput,
+    startDate: startDateInput,
+    reason: reasonRaw,
+  } = data;
 
-  const release = await prisma.release.findUnique({
+  const current = await prisma.release.findUnique({
     where: { id: releaseId },
     select: {
       id: true,
       projectId: true,
       status: true,
+      name: true,
+      description: true,
+      isMvp: true,
+      releaseDate: true,
+      startDate: true,
       project: { select: { assignedManagerId: true } },
     },
   });
-  if (!release) throw new ApiError(404, "Release not found");
+  if (!current) throw new ApiError(404, "Release not found");
 
   const hasPermission =
     role === "admin" ||
-    (role === "manager" && release.project.assignedManagerId === userId);
+    (role === "manager" && current.project.assignedManagerId === userId);
   if (!hasPermission) throw new ApiError(403, "Forbidden");
 
-  if (release.status === ReleaseStatus.locked) {
+  if (current.status === ReleaseStatus.locked) {
     throw new ApiError(400, "Cannot update a locked release.");
   }
 
+  const hasFieldInput =
+    name !== undefined ||
+    description !== undefined ||
+    isMvp !== undefined ||
+    releaseDateInput !== undefined ||
+    startDateInput !== undefined;
+
+  if (!hasFieldInput) {
+    throw new ApiError(400, "No updatable fields provided");
+  }
+
   const updateData = {};
+  const changes = {};
+
   if (name !== undefined) {
     const releaseNameTrimmed =
       name && typeof name === "string" ? name.trim() : "";
@@ -812,7 +939,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
     }
     const existingRelease = await prisma.release.findFirst({
       where: {
-        projectId: release.projectId,
+        projectId: current.projectId,
         id: { not: releaseId },
         name: { equals: releaseNameTrimmed, mode: "insensitive" },
       },
@@ -824,34 +951,90 @@ export const updateReleaseService = async (releaseId, data, user) => {
         "Release name already exists for this project. Choose a unique name.",
       );
     }
-    updateData.name = releaseNameTrimmed;
+    if (releaseNameTrimmed !== current.name) {
+      updateData.name = releaseNameTrimmed;
+      changes.name = { from: current.name, to: releaseNameTrimmed };
+    }
   }
+
   if (description !== undefined) {
-    updateData.description =
+    const nextDesc =
       description == null || description === ""
         ? null
-        : String(description).trim();
+        : String(description).trim() || null;
+    const prevDesc = current.description ?? null;
+    if (nextDesc !== prevDesc) {
+      updateData.description = nextDesc;
+      changes.description = { from: prevDesc, to: nextDesc };
+    }
   }
+
   if (isMvp !== undefined) {
-    updateData.isMvp = Boolean(isMvp);
+    const nextMvp = Boolean(isMvp);
+    if (nextMvp !== current.isMvp) {
+      updateData.isMvp = nextMvp;
+      changes.isMvp = { from: current.isMvp, to: nextMvp };
+    }
   }
-  if (plannedReleaseDate !== undefined) {
-    updateData.plannedReleaseDate =
-      plannedReleaseDate === null || plannedReleaseDate === ""
+
+  if (releaseDateInput !== undefined) {
+    const nextDate =
+      releaseDateInput === null || releaseDateInput === ""
         ? null
-        : toDate(plannedReleaseDate, "plannedReleaseDate");
+        : toDate(releaseDateInput, "releaseDate");
+    if (!datesEqual(nextDate, current.releaseDate)) {
+      updateData.releaseDate = nextDate;
+      changes.releaseDate = {
+        from: dateToIsoOrNull(current.releaseDate),
+        to: dateToIsoOrNull(nextDate),
+      };
+    }
+  }
+
+  if (startDateInput !== undefined) {
+    const nextStart =
+      startDateInput === null || startDateInput === ""
+        ? null
+        : toDate(startDateInput, "startDate");
+    if (!datesEqual(nextStart, current.startDate)) {
+      updateData.startDate = nextStart;
+      changes.startDate = {
+        from: dateToIsoOrNull(current.startDate),
+        to: dateToIsoOrNull(nextStart),
+      };
+    }
   }
 
   if (Object.keys(updateData).length === 0) {
-    throw new ApiError(400, "No updatable fields provided");
+    return prisma.release.findUnique({
+      where: { id: releaseId },
+      include: {
+        creator: { select: { id: true, name: true, email: true } },
+      },
+    });
   }
 
-  return prisma.release.update({
-    where: { id: releaseId },
-    data: updateData,
-    include: {
-      creator: { select: { id: true, name: true, email: true } },
-    },
+  const reasonTrim =
+    typeof reasonRaw === "string" ? reasonRaw.trim() : "";
+  if (!reasonTrim) {
+    throw new ApiError(400, "reason is required when changing release fields.");
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.release.update({
+      where: { id: releaseId },
+      data: updateData,
+      include: {
+        creator: { select: { id: true, name: true, email: true } },
+      },
+    });
+    await appendReleaseChangeLog(tx, {
+      releaseId,
+      reason: reasonTrim,
+      changedById: userId,
+      changes,
+    });
+    return row;
   });
 };
 
