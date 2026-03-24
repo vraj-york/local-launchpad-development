@@ -11,6 +11,7 @@ import { getBackendRoot } from "../utils/instanceRoot.js";
 import {
   projectRepoSlugFromDisplayName,
   toDate,
+  assertReleaseNameIsNextIncrement,
 } from "../utils/projectValidation.utils.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
 import { promisify } from "util";
@@ -467,6 +468,8 @@ export const createReleaseService = async (data, user) => {
   if (!releaseNameTrimmed) {
     throw new ApiError(400, "Release name is required");
   }
+
+  await assertReleaseNameIsNextIncrement(projectId, releaseNameTrimmed, prisma);
 
   // Release name must be unique within this project (case-insensitive)
   const existingRelease = await prisma.release.findFirst({

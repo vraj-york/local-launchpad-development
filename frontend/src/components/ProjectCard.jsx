@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { useNavigate, Link } from "react-router-dom";
 import {
   Card,
@@ -10,20 +10,20 @@ import {
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Calendar, Hash, ExternalLink } from "lucide-react";
-// import ProjectActionsDropdown from "./ProjectActionsDropdown";
-// import DiffModal from "./DiffModal";
 import config from "@/config";
 
 const ProjectCard = ({ project }) => {
   const navigate = useNavigate();
-  // const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
 
   const activeVersionUrl = project ? project.versions[0]?.buildUrl : null;
   const activeVersionNumber = project ? project.versions[0]?.version : null;
   // Use current origin so the link matches how the user opened the app (localhost vs 127.0.0.1)
-  const clientUrl = project
-    ? `${typeof window !== "undefined" ? window.location.origin : config.FRONTEND_URL}/projects/public/${project.id}`
-    : null;
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : config.FRONTEND_URL;
+  const clientUrl =
+    project?.slug != null && String(project.slug).trim() !== ""
+      ? `${origin}/projects/${encodeURIComponent(project.slug.trim())}`
+      : null;
 
   const status = project.status || "Active";
 
@@ -92,51 +92,32 @@ const ProjectCard = ({ project }) => {
           </div>
         </CardContent>
         <CardFooter className="grid grid-cols-2 gap-2">
-          {/* <Button
-            disabled={!activeVersionUrl}
-            onClick={() => window.open(activeVersionUrl, "_blank")}
-            variant="outline"
-            size="sm"
-            className="h-8 px-2 lg:px-3"
-          >
-            <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
-            Project Link
-          </Button> */}
           <Button
-            disabled={!activeVersionUrl}
-            onClick={() => window.open(clientUrl, "_blank")}
+            onClick={() => clientUrl && window.open(clientUrl, "_blank")}
             variant="outline"
             size="sm"
             className="h-8 px-2 lg:px-3"
+            disabled={!clientUrl}
+            title={
+              clientUrl
+                ? undefined
+                : "Project needs a slug before the client link is available."
+            }
           >
             <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
             Client Link
           </Button>
 
           <Button
-            onClick={() => navigate(`/projects/${project.id}`)}
+            onClick={() => navigate(`/projects/details/${project.id}`)}
             size="sm"
             className="h-8 text-white"
           >
             Manage Project
           </Button>
-          {/* <Button
-            onClick={() => setIsDiffModalOpen(true)}
-            size="sm"
-            variant="outline"
-            className="h-8"
-          >
-            Summary
-          </Button> */}
+
         </CardFooter>
       </Card>
-
-      {/* <DiffModal
-        isOpen={isDiffModalOpen}
-        onClose={() => setIsDiffModalOpen(false)}
-        projectId={project.id}
-        projectName={project.name}
-      /> */}
     </>
   );
 };

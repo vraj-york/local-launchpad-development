@@ -13,7 +13,6 @@ import Dashboard from "@/pages/Dashboard";
 import GitDiff from "@/pages/GitDiff";
 import Projects from "@/pages/Projects";
 import CreateProject from "@/pages/CreateProject";
-import { PublicProjectView } from "@/pages/PublicProjectView";
 import { ClientLink } from "@/pages/ClientLink";
 
 export const Routes = () => {
@@ -26,19 +25,14 @@ export const Routes = () => {
       element: <AuthCallbackPage />,
       publicOnly: false,
     },
-    {
-      path: "/projects/public/:projectId",
-      element: <ClientLink />,
-      publicOnly: false,
-    },
   ];
 
   const privateRoutes = [
     { path: "/dashboard", element: <Dashboard /> },
     { path: "/projects", element: <Projects /> },
     { path: "/projects/new", element: <CreateProject /> },
-    { path: "/projects/:projectId", element: <ProjectDetails /> },
-    { path: "/projects/:projectId/diff", element: <GitDiff /> },
+    { path: "/projects/details/:projectId", element: <ProjectDetails /> },
+    { path: "/projects/:projectId(\\d+)/diff", element: <GitDiff /> },
   ];
 
   if (loading) {
@@ -78,6 +72,8 @@ export const Routes = () => {
             />
           ))}
         </Route>
+
+        <Route path="/projects/:projectSlug" element={<ClientLink />} />
 
         <Route
           path="*"

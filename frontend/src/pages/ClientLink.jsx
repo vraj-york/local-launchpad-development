@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { fetchProjectById, toggleReleaseLock } from "@/api";
+import { fetchPublicProjectBySlug, toggleReleaseLock } from "@/api";
 import { useParams } from "react-router-dom";
 // import { SelectActiveVersion } from "@/components/SelectActiveVersion";
 import { Button } from "@/components/ui/button";
@@ -28,36 +28,67 @@ export const ClientLink = () => {
   const [locking, setLocking] = useState(false);
   const [lockConfirmOpen, setLockConfirmOpen] = useState(false);
   const [previewBuildUrl, setPreviewBuildUrl] = useState(null);
-  const { projectId } = useParams();
+  const { projectSlug } = useParams();
 
   const loadProject = useCallback(async () => {
+    if (!projectSlug?.trim()) {
+      setPublicProject(null);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       setPreviewBuildUrl(null);
-      const data = await fetchProjectById(projectId);
+      const data = await fetchPublicProjectBySlug(projectSlug);
       setPublicProject(data);
     } catch (error) {
       console.error("Failed to load project:", error);
+      setPublicProject(null);
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectSlug]);
 
   useEffect(() => {
     loadProject();
   }, [loadProject]);
 
-  const releases = publicProject?.releases?.length
-    ? publicProject.releases
-    : publicProject?.versions?.length
-      ? [
-          {
-            id: publicProject.id,
-            name: "Version",
-            versions: publicProject.versions,
-          },
-        ]
-      : [];
+  /**
+   * Public API returns root `versions` as the active build(s) but often omits `isActive`
+   * on those objects; nested `releases[].versions` may also omit flags. Treat any
+   * version id present on root `versions` as active so iframe, lock UI, and selector match.
+   */
+  const activeVersionIds = React.useMemo(() => {
+    const ids = (publicProject?.versions ?? [])
+      .map((v) => v.id)
+      .filter((id) => id != null);
+    return new Set(ids);
+  }, [publicProject?.versions]);
+
+  const releases = React.useMemo(() => {
+    if (!publicProject) return [];
+    const raw =
+      publicProject.releases?.length > 0
+        ? publicProject.releases
+        : publicProject.versions?.length
+          ? [
+              {
+                id: publicProject.id,
+                name: "Version",
+                versions: publicProject.versions,
+              },
+            ]
+          : [];
+    return raw.map((r) => ({
+      ...r,
+      versions: (r.versions || []).map((v) => ({
+        ...v,
+        isActive:
+          Boolean(v.isActive) ||
+          (v.id != null && activeVersionIds.has(v.id)),
+      })),
+    }));
+  }, [publicProject, activeVersionIds]);
 
   const activeRelease =
     releases.find((r) => (r.versions || []).some((v) => v.isActive)) ||
@@ -98,8 +129,9 @@ export const ClientLink = () => {
   }, [selectedReleaseId, loadProject]);
 
   const rawBuildUrl =
-    publicProject?.versions?.find((v) => v.isActive)?.buildUrl ??
-    publicProject?.versions?.[0]?.buildUrl;
+    publicProject?.versions?.find(
+      (v) => v.isActive || activeVersionIds.has(v.id),
+    )?.buildUrl ?? publicProject?.versions?.[0]?.buildUrl;
 
   /**
    * Rewrite a cross-origin build URL to a same-origin proxy path so the
@@ -187,7 +219,7 @@ export const ClientLink = () => {
             <div className="flex min-w-0 flex-1 justify-center px-2">
               <SelectClientLinkVersion
                 release={releases}
-                projectId={projectId}
+                projectId={publicProject?.id}
                 onActivated={loadProject}
                 isPublic={true}
                 onSwitched={({ buildUrl }) => setPreviewBuildUrl(buildUrl)}
@@ -289,16 +321,14 @@ export const ClientLink = () => {
           ) : null}
         </div>
       </div>
-      {hasActiveVersion && (
         <EmbeddedFeedbackWidget
-          projectId={projectId}
+          projectId={String(publicProject.id)}
           captureTarget="#feedback-capture-wrapper"
           onSuccess={() => toast.success("Feedback submitted successfully")}
           onError={(err) =>
             toast.error(err?.message ?? "Failed to submit feedback")
           }
         />
-      )}
       <Dialog open={lockConfirmOpen} onOpenChange={setLockConfirmOpen}>
         <DialogContent showCloseButton={false} className="sm:max-w-md">
           <DialogHeader>

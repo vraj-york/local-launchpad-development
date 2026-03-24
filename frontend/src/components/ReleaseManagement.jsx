@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { format } from "date-fns";
 import {
   fetchReleases,
   createRelease,
@@ -32,6 +33,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Label } from "./ui/label";
+import { Checkbox } from "./ui/checkbox";
 import { Textarea } from "./ui/textarea";
 import { SelectActiveVersion } from "./SelectActiveVersion";
 import { HubProfileAvatar } from "./HubProfileAvatar";
@@ -48,6 +50,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
+import { Calendar } from "./ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./ui/popover";
+import { cn } from "@/lib/utils";
 
 const RELEASE_STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
@@ -97,7 +106,7 @@ function releaseStatusPresentation(release) {
   if (s === "locked") {
     return {
       label: "Locked",
-      hint: "No new uploads until unlocked or status changed",
+      hint: "Cannot be unlocked here. View this release by choosing a version on the client link.",
       pillClass:
         "bg-gradient-to-r from-rose-50 to-orange-50 text-rose-900 ring-1 ring-rose-200/70 shadow-sm shadow-rose-500/5",
       dotClass: "bg-rose-500 shadow-[0_0_0_3px_rgba(244,63,94,0.2)]",
@@ -110,6 +119,48 @@ function releaseStatusPresentation(release) {
       "bg-gradient-to-r from-slate-50 to-slate-100/90 text-slate-800 ring-1 ring-slate-200/80",
     dotClass: "bg-slate-400",
   };
+}
+
+const RELEASE_DOT_VERSION_RE = /^\d+(?:\.\d+)+$/;
+
+function parseReleaseNameToTuple(name) {
+  const n = name?.trim();
+  if (!n || !RELEASE_DOT_VERSION_RE.test(n)) return null;
+  return n.split(".").map((p) => parseInt(p, 10));
+}
+
+function compareTuples(a, b) {
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    if (x < y) return -1;
+    if (x > y) return 1;
+  }
+  return 0;
+}
+
+function bumpLastSegment(tuple) {
+  const next = [...tuple];
+  next[next.length - 1] += 1;
+  return next;
+}
+
+function maxReleaseTupleFromList(releasesList) {
+  let maxTuple = null;
+  for (const r of releasesList) {
+    const t = parseReleaseNameToTuple(r?.name);
+    if (!t) continue;
+    if (!maxTuple || compareTuples(t, maxTuple) > 0) maxTuple = t;
+  }
+  return maxTuple;
+}
+
+/** Default patch bump for placeholder / autofill (any greater version is allowed). */
+function getSuggestedPatchReleaseNameFromList(releasesList) {
+  const maxTuple = maxReleaseTupleFromList(releasesList);
+  if (!maxTuple) return "1.0.0";
+  return bumpLastSegment(maxTuple).map(String).join(".");
 }
 
 const ReleaseManagement = ({ projectId, projectName }) => {
@@ -142,7 +193,35 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [newRelease, setNewRelease] = useState({
     name: "",
     description: "",
+    plannedReleaseDate: null,
+    isMvp: false,
   });
+  const [plannedDateOpen, setPlannedDateOpen] = useState(false);
+
+  const latestReleaseTuple = useMemo(
+    () => maxReleaseTupleFromList(releases),
+    [releases],
+  );
+
+  const suggestedPatchReleaseName = useMemo(
+    () => getSuggestedPatchReleaseNameFromList(releases),
+    [releases],
+  );
+
+  const lastRelease = latestReleaseTuple
+    ? latestReleaseTuple.map(String).join(".")
+    : null;
+
+  const openCreateReleaseDialog = () => {
+    setNewRelease({
+      name: suggestedPatchReleaseName,
+      description: "",
+      plannedReleaseDate: null,
+      isMvp: false,
+    });
+    setPlannedDateOpen(false);
+    setShowCreateForm(true);
+  };
 
   useEffect(() => {
     if (projectId) {
@@ -179,19 +258,48 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
   const handleCreateRelease = async (e) => {
     e.preventDefault();
-    if (!newRelease.name.trim()) return;
+    const name = newRelease.name.trim();
+    if (!name) return;
+    const submitted = parseReleaseNameToTuple(name);
+    if (!submitted) {
+      toast.error(
+        "Use dot-separated numbers with at least two segments (e.g. 1.0.0, 1.1.0).",
+      );
+      return;
+    }
+    if (
+      latestReleaseTuple &&
+      compareTuples(submitted, latestReleaseTuple) <= 0
+    ) {
+      const latestStr = latestReleaseTuple.map(String).join(".");
+      toast.error(
+        `Release name must be greater than the latest: ${latestStr} (e.g. 1.0.3, 1.1.0, or 2.0.0).`,
+      );
+      return;
+    }
 
     try {
       setCreating(true);
-      await createRelease({
+
+      const releaseData = {
         projectId: Number(projectId),
-        name: newRelease.name.trim(),
+        name,
         description: newRelease.description.trim() || null,
+        plannedReleaseDate: newRelease.plannedReleaseDate
+          ? format(newRelease.plannedReleaseDate, "yyyy-MM-dd")
+          : null,
+        isMvp: newRelease.isMvp,
+      };
+      await createRelease(releaseData);
+      setNewRelease({
+        name: "",
+        description: "",
+        plannedReleaseDate: null,
+        isMvp: false,
       });
-      setNewRelease({ name: "", description: "" });
       setShowCreateForm(false);
       await loadReleases();
-      toast.success(`Release "${newRelease.name}" created successfully!`);
+      toast.success(`Release "${name}" created successfully!`);
     } catch (err) {
       const errorMessage = err.error || "Failed to create release";
       setError(errorMessage);
@@ -204,6 +312,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const requestStatusChange = (releaseId, newStatus) => {
     const rel = releases.find((r) => r.id === releaseId);
     if (!rel || normalizeReleaseStatus(rel) === newStatus) return;
+    if (isReleaseLocked(rel)) return;
     setStatusConfirm({
       releaseId,
       releaseName: rel.name,
@@ -410,7 +519,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
         {canManageReleases && (
           <Button
             className="text-white gap-2"
-            onClick={() => setShowCreateForm(true)}
+            onClick={openCreateReleaseDialog}
           >
             <Plus />
             Create Release
@@ -453,8 +562,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 </p>
                 {canManageReleases && (
                   <Button
-                    className="text-white"
-                    onClick={() => setShowCreateForm(true)}
+                    className="text-white"selectedItems
+                    onClick={openCreateReleaseDialog}
                   >
                     Create Release
                   </Button>
@@ -463,7 +572,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             ) : (
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 {releases.map((release) => {
-                  console.log(release, "release");
                   const statusUi = releaseStatusPresentation(release);
                   return (
                     <div
@@ -522,15 +630,15 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                 className="size-3.5 shrink-0 text-slate-400"
                                 aria-hidden
                               />
-                              <time dateTime={release.createdAt}>
-                                {new Date(release.createdAt).toLocaleDateString(
+                              <time dateTime={release.plannedReleaseDate}>
+                                {release.plannedReleaseDate ? new Date(release.plannedReleaseDate).toLocaleDateString(
                                   undefined,
                                   {
                                     month: "short",
                                     day: "numeric",
                                     year: "numeric",
                                   },
-                                )}
+                                ): "No planned release date"}
                               </time>
                             </span>
                             <span
@@ -573,30 +681,69 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                 <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
                                   Set status
                                 </span>
-                                <Select
-                                  value={normalizeReleaseStatus(release)}
-                                  onValueChange={(v) =>
-                                    requestStatusChange(release.id, v)
-                                  }
-                                  disabled={
-                                    statusUpdatingId === release.id ||
-                                    statusConfirm?.releaseId === release.id
-                                  }
-                                >
-                                  <SelectTrigger className="h-10 w-full border-slate-200 bg-white transition-colors hover:border-slate-300 hover:bg-slate-50/90">
-                                    <SelectValue placeholder="Status" />
-                                  </SelectTrigger>
-                                  <SelectContent align="start">
-                                    {RELEASE_STATUS_OPTIONS.map((opt) => (
-                                      <SelectItem
-                                        key={opt.value}
-                                        value={opt.value}
-                                      >
-                                        {opt.label}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                {isReleaseLocked(release) ? (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="inline-flex w-full">
+                                        <Select
+                                          value={normalizeReleaseStatus(
+                                            release,
+                                          )}
+                                          disabled
+                                        >
+                                          <SelectTrigger className="h-10 w-full cursor-not-allowed border-slate-200 bg-slate-50/90 text-slate-500 opacity-90 shadow-none hover:border-slate-200 hover:bg-slate-50/90">
+                                            <SelectValue placeholder="Status" />
+                                          </SelectTrigger>
+                                          <SelectContent align="start">
+                                            {RELEASE_STATUS_OPTIONS.map(
+                                              (opt) => (
+                                                <SelectItem
+                                                  key={opt.value}
+                                                  value={opt.value}
+                                                >
+                                                  {opt.label}
+                                                </SelectItem>
+                                              ),
+                                            )}
+                                          </SelectContent>
+                                        </Select>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent
+                                      side="top"
+                                      className="max-w-[280px] text-left leading-snug"
+                                    >
+                                      This release is locked! You cannot unlock
+                                      it. You can still view this release by
+                                      selecting a version from the client link.
+                                    </TooltipContent>
+                                  </Tooltip>
+                                ) : (
+                                  <Select
+                                    value={normalizeReleaseStatus(release)}
+                                    onValueChange={(v) =>
+                                      requestStatusChange(release.id, v)
+                                    }
+                                    disabled={
+                                      statusUpdatingId === release.id ||
+                                      statusConfirm?.releaseId === release.id
+                                    }
+                                  >
+                                    <SelectTrigger className="h-10 w-full border-slate-200 bg-white transition-colors hover:border-slate-300 hover:bg-slate-50/90">
+                                      <SelectValue placeholder="Status" />
+                                    </SelectTrigger>
+                                    <SelectContent align="start">
+                                      {RELEASE_STATUS_OPTIONS.map((opt) => (
+                                        <SelectItem
+                                          key={opt.value}
+                                          value={opt.value}
+                                        >
+                                          {opt.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                )}
                               </div>
                               <div className="flex min-w-0 flex-col gap-1.5">
                                 <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
@@ -622,10 +769,12 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                     </TooltipTrigger>
                                     <TooltipContent
                                       side="top"
-                                      className="max-w-[260px] text-center"
+                                      className="max-w-[260px] text-center leading-snug"
                                     >
                                       Uploads are disabled while this release is
-                                      locked. Set status to Active first.
+                                      locked. Locked releases cannot be unlocked
+                                      here; view this release from the client
+                                      link version selector.
                                     </TooltipContent>
                                   </Tooltip>
                                 ) : (
@@ -657,7 +806,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                 className="group flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-slate-50 data-[state=open]:rounded-b-none"
                               >
                                 <span className="text-sm text-slate-800">
-                                  Version history
+                                  Revision history
                                 </span>
                                 <span className="text-sm text-slate-500">
                                   {release.versions.length} version
@@ -745,9 +894,33 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 onChange={(e) =>
                   setNewRelease({ ...newRelease, name: e.target.value })
                 }
-                placeholder="Ex: 1.1.0"
+                placeholder={suggestedPatchReleaseName}
                 required
               />
+              <p className="text-xs text-slate-500">
+                {lastRelease ? (
+                  <>
+                    Last release is{" "}
+                    <span className="font-mono font-medium text-slate-700">
+                      {lastRelease}
+                    </span>
+                    . The new release name must be greater than this. Suggested
+                    patch:{" "}
+                    <span className="font-mono font-medium text-slate-700">
+                      {suggestedPatchReleaseName}
+                    </span>
+                    .
+                  </>
+                ) : (
+                  <>
+                    Use a dot-separated version (e.g.{" "}
+                    <span className="font-mono font-medium text-slate-700">
+                      1.0.0
+                    </span>
+                    ).
+                  </>
+                )}
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="release-description">
@@ -765,6 +938,83 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 placeholder="Enter release description"
                 rows={3}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="planned-release-date">Planned release date</Label>
+              <Popover open={plannedDateOpen} onOpenChange={setPlannedDateOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    id="planned-release-date"
+                    className={cn(
+                      "h-10 w-full justify-start border-slate-200 bg-white text-left font-normal hover:bg-slate-50/90",
+                      !newRelease.plannedReleaseDate &&
+                        "text-muted-foreground",
+                    )}
+                  >
+                    <CalendarDays className="mr-2 size-4 shrink-0 opacity-70" />
+                    {newRelease.plannedReleaseDate ? (
+                      format(newRelease.plannedReleaseDate, "PPP")
+                    ) : (
+                      <span>Pick a date</span>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={newRelease.plannedReleaseDate ?? undefined}
+                    onSelect={(date) => {
+                      setNewRelease((prev) => ({
+                        ...prev,
+                        plannedReleaseDate: date ?? null,
+                      }));
+                      setPlannedDateOpen(false);
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+              {newRelease.plannedReleaseDate ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-xs text-slate-500"
+                  onClick={() =>
+                    setNewRelease((prev) => ({
+                      ...prev,
+                      plannedReleaseDate: null,
+                    }))
+                  }
+                >
+                  Clear date
+                </Button>
+              ) : null}
+            </div>
+
+            <div className="flex items-start gap-3 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-3">
+              <Checkbox
+                id="release-is-mvp"
+                checked={newRelease.isMvp}
+                onCheckedChange={(checked) =>
+                  setNewRelease((prev) => ({
+                    ...prev,
+                    isMvp: checked === true,
+                  }))
+                }
+                className="mt-0.5"
+              />
+              <div className="grid gap-1 leading-none">
+                <Label
+                  htmlFor="release-is-mvp"
+                  className="cursor-pointer text-sm font-medium text-slate-900"
+                >
+                  MVP release
+                </Label>
+              </div>
             </div>
 
             {/* <div className="space-y-2">
@@ -849,7 +1099,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
             <DialogHeader>
               <DialogTitle>Upload to Release</DialogTitle>
               <DialogDescription>
-                Upload a ZIP file to Version {""}
+                Upload a ZIP file to Release {""}
                 <span className="font-medium text-slate-700">
                   {releases.find((r) => r.id.toString() === selectedRelease)
                     ?.name ?? "this release"}
@@ -857,20 +1107,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleUpload} className="space-y-6">
-              <div className="space-y-1">
-                <Label htmlFor="upload-version">Version (Optional)</Label>
-                <Input
-                  id="upload-version"
-                  type="text"
-                  value={version}
-                  onChange={(e) => setVersion(e.target.value)}
-                  placeholder="e.g., 1.0.1, 1.0.2, 1.0.3..."
-                />
-                <p className="text-xs text-muted-foreground">
-                  Leave empty for auto-increment
-                </p>
-              </div>
-
               {/* <div className="space-y-2"> */}
               {/* <Label>Roadmap Items (Optional)</Label>
                 <DropdownMenu>
@@ -1124,8 +1360,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 </p>
                 {statusConfirm?.toStatus === "locked" && (
                   <p className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-amber-950/90">
-                    Uploads will be disabled for this release while it is
-                    locked.
+                    Once you lock this release, the Upload and Status Change options will be disabled.
                   </p>
                 )}
                 {statusConfirm?.toStatus === "active" &&
@@ -1134,8 +1369,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       role="alert"
                       className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm font-medium text-rose-900"
                     >
-                      Lock current active release before activating this
-                      version
+                      Lock current active release before activating this version
                       {conflictingActiveRelease?.name ? (
                         <span className="mt-1 block text-xs font-normal text-rose-800/90">
                           Current Active release:{" "}
@@ -1149,7 +1383,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 {statusConfirm?.toStatus === "active" &&
                   !blockActivateUntilOtherLocked && (
                     <p className="rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2 text-slate-700">
-                      This will be the active release for the project. It may take some time to activate, as it also updates the client link.
+                      This will be the active release for the project. It may
+                      take some time to activate, as it also updates the client
+                      link.
                     </p>
                   )}
               </div>
