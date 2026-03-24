@@ -426,7 +426,7 @@ export const createProjectService = async ({ userId, body }) => {
           // Remote clone URL when GitHub repo was created; else local .git path for legacy
           gitRepoPath:
             gitRepoUrl || path.join(relativeProjectPath, ".git"),
-          nginxConfigPath: path.join('nginx-configs', configFileName)
+          nginxConfigPath: path.join('nginx-configs', configFileName),
         },
       });
     });
@@ -631,6 +631,7 @@ export const getProjectByIdService = async (
       buildUrl: true,
       createdAt: true,
       isActive: true,
+      releaseId: true,
     },
   };
 
@@ -649,6 +650,7 @@ export const getProjectByIdService = async (
           buildUrl: true,
           isActive: true,
           createdAt: true,
+          releaseId: true,
         },
       },
     },

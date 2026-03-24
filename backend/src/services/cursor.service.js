@@ -58,6 +58,8 @@ export async function cursorRequest({ method, path, body }) {
     headers["Content-Type"] = "application/json";
   }
 
+  console.log("[cursor] API request", { method: method || "GET", path });
+
   const res = await fetch(url, {
     method: method || "GET",
     headers,
@@ -77,27 +79,26 @@ export async function cursorRequest({ method, path, body }) {
     data = text ? { error: text } : {};
   }
 
+  if (!res.ok) {
+    console.warn("[cursor] API non-OK response", {
+      path,
+      status: res.status,
+      body: typeof data === "object" ? JSON.stringify(data).slice(0, 500) : data,
+    });
+  }
+
   return { status: res.status, data };
 }
 
 /**
- * Perform merge-to-launchpad: force-update launchpad branch, create tag, checkout tag,
- * build, copy dist/build into projects/{projectPath}, reload nginx, ProjectVersion with live buildUrl.
- * Idempotent: if FigmaConversion.projectVersionId is already set, returns success without re-running.
- * If project has no projectPath/port, falls back to GitHub-only ProjectVersion (no deploy).
+ * Force `launchpad` to headSha, tag, build, deploy; update FigmaConversion.
+ * @param {object} conversion — row with id, projectId, releaseId, attemptedById
+ * @param {string} headSha
+ * @param {string} headBranchName — agent branch name (for DB)
+ * @param {{ skipShaDedupe?: boolean, prUrl?: string|null }} options
  */
-export async function performMergeToLaunchpad(agentId, agentData) {
-  const conversion = await prisma.figmaConversion.findFirst({
-    where: { agentId },
-    select: { id: true, projectId: true, releaseId: true, attemptedById: true, projectVersionId: true },
-  });
-  if (!conversion) {
-    throw new Error("Agent not found or not linked to a project");
-  }
-
-  if (conversion.projectVersionId != null) {
-    return { merged: true };
-  }
+async function executeLaunchpadHeadDeploy(conversion, headSha, headBranchName, options = {}) {
+  const { skipShaDedupe = false, prUrl = null } = options;
 
   const project = await prisma.project.findUnique({
     where: { id: conversion.projectId },
@@ -117,16 +118,25 @@ export async function performMergeToLaunchpad(agentId, agentData) {
   const { owner, repo } = parsed;
   const token = project.githubToken.trim();
 
-  const headBranch = agentData.target?.branchName;
-  if (!headBranch || typeof headBranch !== "string") {
-    throw new Error("Agent has no target branch name");
+  if (!skipShaDedupe) {
+    const lpNow = await getBranchSha(owner, repo, "launchpad", token);
+    if (
+      lpNow?.sha &&
+      lpNow.sha.toLowerCase() === headSha.toLowerCase()
+    ) {
+      console.log("[cursor] executeLaunchpadHeadDeploy: skip (launchpad already at SHA)", {
+        conversionId: conversion.id,
+        shaPrefix: headSha.slice(0, 7),
+      });
+      return { merged: true, skipped: true, sha: headSha };
+    }
   }
 
-  const headShaResult = await getBranchSha(owner, repo, headBranch, token);
-  if (!headShaResult) {
-    throw new Error("Could not get agent branch SHA; branch may not exist");
-  }
-  const headSha = headShaResult.sha;
+  console.log("[cursor] executeLaunchpadHeadDeploy: updating launchpad", {
+    projectId: conversion.projectId,
+    releaseId: conversion.releaseId,
+    shaPrefix: headSha.slice(0, 7),
+  });
 
   const baseBranch = "launchpad";
   const ensureResult = await ensureBranchFrom(owner, repo, baseBranch, "main", token);
@@ -138,7 +148,7 @@ export async function performMergeToLaunchpad(agentId, agentData) {
   if (!updateResult.ok && updateResult.status === 404) {
     const createResult = await createBranch(owner, repo, baseBranch, headSha, token);
     if (!createResult.ok) {
-      throw new Error(createResult.message || "Could not create launchpad branch at agent SHA");
+      throw new Error(createResult.message || "Could not create launchpad branch at SHA");
     }
   } else if (!updateResult.ok) {
     throw new Error(updateResult.message || "Failed to force-update launchpad branch");
@@ -165,7 +175,6 @@ export async function performMergeToLaunchpad(agentId, agentData) {
     throw new Error(tagResult.message || "Failed to create tag");
   }
 
-  /** Same tag may exist on GitHub from a prior failed run; reuse DB row if present. */
   const existingVersion = await prisma.projectVersion.findFirst({
     where: {
       projectId: conversion.projectId,
@@ -180,14 +189,9 @@ export async function performMergeToLaunchpad(agentId, agentData) {
     Number(project.port) > 0;
 
   let newVersion;
-  /** True only when clone + build + copy + DB succeeded (single attempt; no retry loop). */
   let deployedToPort = false;
   const githubTagUrl = `https://github.com/${owner}/${repo}/releases/tag/${tagName}`;
 
-  /**
-   * Persist version when deploy did not run or failed: `buildUrl` is GitHub tag URL if no port,
-   * otherwise same domain:port as a successful build.
-   */
   const persistFallbackVersion = async (buildUrl) => {
     if (existingVersion) {
       return prisma.projectVersion.update({
@@ -223,7 +227,6 @@ export async function performMergeToLaunchpad(agentId, agentData) {
   );
 
   if (canDeploy) {
-    /** Same as successful path: protocol + domain + port for this project’s preview URL. */
     const liveSiteUrl = `${config.getBuildUrlProtocol()}://${config.getBuildUrlHost()}:${project.port}`;
 
     await fs.ensureDir(tempRoot);
@@ -307,20 +310,80 @@ export async function performMergeToLaunchpad(agentId, agentData) {
   await prisma.figmaConversion.update({
     where: { id: conversion.id },
     data: {
-      targetBranchName: headBranch,
+      targetBranchName: headBranchName,
       projectVersionId: newVersion.id,
       status: "FINISHED",
     },
   });
 
+  console.log("[cursor] executeLaunchpadHeadDeploy: done", {
+    conversionId: conversion.id,
+    tag: tagName,
+    deployedToPort,
+  });
+
   return {
     merged: true,
+    skipped: false,
     sha: headSha,
     version: versionNumber,
     tag: tagName,
-    prUrl: agentData.target?.prUrl || agentData.source?.prUrl,
+    prUrl,
     deployed: deployedToPort,
   };
+}
+
+/**
+ * Merge agent branch to launchpad and deploy (after agent FINISHED).
+ * Skips work if agent branch SHA matches last merged SHA.
+ */
+export async function performMergeToLaunchpad(agentId, agentData, options = {}) {
+  const conversion = await prisma.figmaConversion.findFirst({
+    where: { agentId },
+    select: {
+      id: true,
+      projectId: true,
+      releaseId: true,
+      attemptedById: true,
+    },
+  });
+  if (!conversion) {
+    throw new Error("Agent not found or not linked to a project");
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id: conversion.projectId },
+    select: {
+      githubToken: true,
+      gitRepoPath: true,
+    },
+  });
+  if (!project?.githubToken?.trim() || !project?.gitRepoPath?.trim()) {
+    throw new Error("Project has no GitHub token or Git repo path configured");
+  }
+
+  const parsed = parseGitRepoPath(project.gitRepoPath);
+  if (!parsed) throw new Error("Invalid Git repo path format");
+  const { owner, repo } = parsed;
+  const token = project.githubToken.trim();
+
+  const headBranch = agentData.target?.branchName;
+  if (!headBranch || typeof headBranch !== "string") {
+    throw new Error("Agent has no target branch name");
+  }
+
+  const headShaResult = await getBranchSha(owner, repo, headBranch, token);
+  if (!headShaResult) {
+    throw new Error("Could not get agent branch SHA; branch may not exist");
+  }
+  const headSha = headShaResult.sha;
+
+  const prUrl = agentData.target?.prUrl || agentData.source?.prUrl;
+
+  return executeLaunchpadHeadDeploy(conversion, headSha, headBranch, {
+    skipShaDedupe: options.skipShaDedupe ?? false,
+    prUrl,
+  });
 }
 
 /**
@@ -341,7 +404,9 @@ export function startAgentPolling(agentId) {
         path: `/v0/agents/${encodeURIComponent(id)}`,
       });
       const agentData = data;
-      const agentStatus = agentData?.status ? String(agentData.status).toUpperCase() : null;
+      const agentStatus = agentData?.status
+        ? String(agentData.status).toUpperCase()
+        : null;
 
       await prisma.figmaConversion.updateMany({
         where: { agentId: id },
@@ -349,14 +414,21 @@ export function startAgentPolling(agentId) {
       });
 
       if (agentStatus === "FINISHED") {
-        const conversion = await prisma.figmaConversion.findFirst({
-          where: { agentId: id },
-          select: { projectVersionId: true },
-        });
-        if (conversion?.projectVersionId != null) {
-          return;
+        try {
+          const result = await performMergeToLaunchpad(id, agentData);
+          if (result?.skipped) {
+            console.log("[cursor] poll: FINISHED but merge skipped (duplicate SHA)", {
+              agentId: id,
+            });
+          } else {
+            console.log("[cursor] poll: merged after FINISHED", { agentId: id });
+          }
+        } catch (mergeErr) {
+          console.error("[cursor] poll: merge after FINISHED failed", {
+            agentId: id,
+            error: mergeErr?.message || mergeErr,
+          });
         }
-        await performMergeToLaunchpad(id, agentData);
         return;
       }
 

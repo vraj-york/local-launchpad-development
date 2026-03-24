@@ -323,6 +323,24 @@ export const publicLockRelease = async (releaseId, lockedBy) => {
   }
 };
 
+/** Public client-link chat (routes under /api/p). No JWT. */
+export const clientLinkSendFollowup = async (slug, releaseId, text) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const response = await api.post(`/api/p/${enc}/q`, {
+    r: Number(releaseId),
+    t: text,
+  });
+  return response.data;
+};
+
+export const clientLinkFetchAgentStatus = async (slug, releaseId) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const response = await api.get(`/api/p/${enc}/st`, {
+    params: { r: Number(releaseId) },
+  });
+  return response.data;
+};
+
 // Function to upload ZIP to a release
 export const uploadToRelease = async (
   releaseId,

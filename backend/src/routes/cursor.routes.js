@@ -127,12 +127,39 @@ router.post(
       return res.status(400).json({ error: "prompt.text is required" });
     }
 
+    const conversion = await prisma.figmaConversion.findFirst({
+      where: { agentId: id },
+      select: { projectId: true },
+    });
+    if (!conversion) {
+      return res.status(404).json({ error: "Agent not linked to a project" });
+    }
+    const project = await prisma.project.findUnique({
+      where: { id: conversion.projectId },
+      select: { assignedManagerId: true },
+    });
+    const role = req.user.role;
+    const uid = req.user.id;
+    const hasAccess =
+      role === "admin" ||
+      (role === "manager" && project?.assignedManagerId === uid);
+    if (!hasAccess) {
+      return res.status(403).json({ error: "Forbidden: no access to this project" });
+    }
+
     try {
+      console.log("[cursor] manager followup", {
+        agentIdPrefix: id.slice(0, 8),
+        projectId: conversion.projectId,
+      });
       const { status, data } = await cursorRequest({
         method: "POST",
         path: `/v0/agents/${encodeURIComponent(id)}/followup`,
         body: { prompt: body.prompt },
       });
+      if (status >= 200 && status < 300) {
+        startAgentPolling(id);
+      }
       return res.status(status).json(data);
     } catch (err) {
       if (err.code === "CURSOR_KEY_MISSING") {

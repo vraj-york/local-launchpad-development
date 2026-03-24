@@ -123,7 +123,7 @@ export const releaseController = {
      */
     publicLock: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
-        const { lockedBy } = req.body;
+        const { lockedBy } = req.body || {};
         const result = await publicLockReleaseService(releaseId, lockedBy);
         res.json(result);
     }),
