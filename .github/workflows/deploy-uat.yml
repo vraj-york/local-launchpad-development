@@ -1,0 +1,60 @@
+name: Deploy UAT
+
+on:
+  push:
+    branches:
+      - development
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to UAT server over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.UAT_HOST }}
+          username: ${{ secrets.UAT_USER }}
+          key: ${{ secrets.UAT_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.UAT_PORT || '22' }}
+          script: |
+            set -euo pipefail
+            APP_PATH="${{ secrets.UAT_APP_PATH }}"
+
+            echo "=== Preflight ==="
+            if [ -z "$APP_PATH" ]; then
+              echo "UAT_APP_PATH secret is empty"
+              exit 1
+            fi
+            if [ ! -d "$APP_PATH" ]; then
+              echo "App path does not exist: $APP_PATH"
+              exit 1
+            fi
+            command -v docker >/dev/null || { echo "docker not found"; exit 1; }
+            docker compose version >/dev/null || { echo "docker compose not available"; exit 1; }
+            echo "Preflight OK"
+
+            cd "$APP_PATH"
+            echo "=== Deploy ==="
+            git fetch --all --prune
+            git checkout development
+            git pull origin development
+            docker compose pull
+            docker compose up -d --build
+            docker compose exec -T backend npx prisma migrate deploy
+
+            echo "=== Post-deploy status ==="
+            docker compose ps
+
+            echo "=== API health (localhost:5000) ==="
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -sf --max-time 8 http://127.0.0.1:5000/api/health >/dev/null; then
+                echo "API /api/health OK"
+                exit 0
+              fi
+              echo "Attempt $i/10: waiting for API..."
+              sleep 3
+            done
+            echo "API health check failed"
+            docker compose logs --tail=100 backend
+            exit 1
