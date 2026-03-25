@@ -40,6 +40,10 @@ app.use((req, res, next) => {
 app.use(cors());
 app.use(express.json({limit: '1024mb'}));
 
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({ ok: true });
+});
+
 // Iframe preview proxy: /iframe-preview/<port>/* → localhost:<port> (same-origin for html2canvas)
 app.use(iframeProxyMiddleware);
 
