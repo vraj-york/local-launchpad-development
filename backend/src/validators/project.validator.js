@@ -1,4 +1,20 @@
 import { body, param } from "express-validator";
+import { normalizeOptionalEmailListString } from "../utils/emailList.utils.js";
+
+function optionalEmailList(field) {
+    return body(field)
+        .optional({ nullable: true })
+        .custom((value) => {
+            if (value === undefined || value === null) return true;
+            if (value === "") return true;
+            try {
+                normalizeOptionalEmailListString(value);
+                return true;
+            } catch (e) {
+                throw new Error(e.message || "Invalid email list");
+            }
+        });
+}
 
 /**
  * Shared enums
@@ -99,6 +115,9 @@ export const createProjectValidation = [
         .trim()
         .notEmpty()
         .withMessage("Jira API Token is required"),
+
+    optionalEmailList("assignedUserEmails"),
+    optionalEmailList("stakeholderEmails"),
     // body("roadmaps")
     //     .isArray({ min: 1 })
     //     .withMessage("At least one roadmap is required"),
@@ -165,6 +184,8 @@ export const updateProjectValidation = [
         })
         .withMessage("slug must be a string (max 100) or null"),
 
+    optionalEmailList("assignedUserEmails"),
+    optionalEmailList("stakeholderEmails"),
 ];
 export const updateRoadmapsArrayValidation = [
     param("projectId")

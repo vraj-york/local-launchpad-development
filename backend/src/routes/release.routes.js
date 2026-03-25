@@ -281,12 +281,14 @@ router.patch(
  *               lockedBy:
  *                 type: string
  *                 format: email
- *                 description: Email of the person locking the release
+ *                 description: Must match a project stakeholder email (see Project.stakeholderEmails)
  *     responses:
  *       200:
  *         description: Release locked; versions on this release have isActive cleared
  *       400:
  *         description: Invalid email or parameters
+ *       403:
+ *         description: Email not in project stakeholders, or no stakeholders configured
  *       404:
  *         description: Release not found
  */
