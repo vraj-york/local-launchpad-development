@@ -26,6 +26,7 @@ import {
 } from "./release.service.js";
 import { parseGitRepoPath } from "./github.service.js";
 import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
+import { normalizeOptionalEmailListString } from "../utils/emailList.utils.js";
 
 /**
  * Allocate a unique slug for Project.slug (DB unique). Tries base, then base-2, base-3, ...
@@ -266,6 +267,15 @@ export const createProjectService = async ({ userId, body }) => {
     githubUsername,
     githubToken,
   } = body;
+
+  let assignedUserEmailsDb = null;
+  let stakeholderEmailsDb = null;
+  try {
+    assignedUserEmailsDb = normalizeOptionalEmailListString(body.assignedUserEmails);
+    stakeholderEmailsDb = normalizeOptionalEmailListString(body.stakeholderEmails);
+  } catch (e) {
+    throw new ApiError(400, e.message);
+  }
   const isLinux = os.platform() === 'linux';
   const nginxBinary = isLinux ? '/usr/sbin/nginx' : '/opt/homebrew/bin/nginx';
 
@@ -411,6 +421,8 @@ export const createProjectService = async ({ userId, body }) => {
           port,
           projectPath: relativeProjectPath,
           projectId: hubProjectId,
+          assignedUserEmails: assignedUserEmailsDb,
+          stakeholderEmails: stakeholderEmailsDb,
           // Remote clone URL when GitHub repo was created; else local .git path for legacy
           gitRepoPath:
             gitRepoUrl || path.join(relativeProjectPath, ".git"),
@@ -1050,6 +1062,8 @@ const PROJECT_UPDATE_KEYS = [
   "jiraApiToken",
   "githubUsername",
   "githubToken",
+  "assignedUserEmails",
+  "stakeholderEmails",
 ];
 
 export const updateProjectDetailsService = async ({ projectId, user, body }) => {
@@ -1078,6 +1092,20 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
           );
         } else {
           throw new ApiError(400, "slug must be a string or null");
+        }
+        continue;
+      }
+      if (key === "assignedUserEmails" || key === "stakeholderEmails") {
+        if (raw === null || raw === "") {
+          data[key] = null;
+        } else if (typeof raw === "string") {
+          try {
+            data[key] = normalizeOptionalEmailListString(raw);
+          } catch (e) {
+            throw new ApiError(400, e.message);
+          }
+        } else {
+          throw new ApiError(400, `${key} must be a string or null`);
         }
         continue;
       }

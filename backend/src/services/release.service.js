@@ -13,6 +13,7 @@ import {
   assertReleaseNameIsNextIncrement,
 } from "../utils/projectValidation.utils.js";
 import { generateReleaseHeader } from "../utils/headerUtils.js";
+import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import { promisify } from "util";
 import os from "os";
 import { execa } from "execa";
@@ -1730,6 +1731,7 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
         select: {
           id: true,
           name: true,
+          stakeholderEmails: true,
         },
       },
     },
@@ -1737,6 +1739,22 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
 
   if (!release) {
     throw new ApiError(404, "Release not found");
+  }
+
+  const stakeholderSet = parseStoredEmailListToSet(
+    release.project?.stakeholderEmails,
+  );
+  if (stakeholderSet.size === 0) {
+    throw new ApiError(
+      403,
+      "Public release lock is not available until project stakeholders are configured.",
+    );
+  }
+  if (!stakeholderSet.has(email)) {
+    throw new ApiError(
+      403,
+      "This email is not authorized to lock the release. Use an address listed as a project stakeholder.",
+    );
   }
 
   if (release.status === ReleaseStatus.locked) {

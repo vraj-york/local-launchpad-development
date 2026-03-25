@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { createProject, fetchManagers, fetchExternalHubProjects } from "../api";
+import {
+  validateOptionalCommaSeparatedEmails,
+  uniqueEmailsFromHubProjects,
+} from "@/utils/emailList";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +55,9 @@ const CreateProject = () => {
   const [jiraUsername, setJiraUsername] = useState("");
   const [jiraApiToken, setJiraApiToken] = useState("");
   const [jiraProjectKey, setJiraProjectKey] = useState("");
+
+  const [assignedUserEmails, setAssignedUserEmails] = useState("");
+  const [stakeholderEmails, setStakeholderEmails] = useState("");
 
   // UI State
   const [error, setError] = useState("");
@@ -143,6 +150,17 @@ const CreateProject = () => {
     if (!jiraProjectKey.trim())
       errors.jiraProjectKey = "Jira Project Key is required";
 
+    const assignedErr = validateOptionalCommaSeparatedEmails(
+      assignedUserEmails,
+      "Assigned users",
+    );
+    if (assignedErr) errors.assignedUserEmails = assignedErr;
+    const stakeholderErr = validateOptionalCommaSeparatedEmails(
+      stakeholderEmails,
+      "Stakeholders",
+    );
+    if (stakeholderErr) errors.stakeholderEmails = stakeholderErr;
+
     // Roadmap is optional; validate only when user has added roadmaps
     // if (roadmaps.length > 0) {
     //   roadmaps.forEach((roadmap) => {
@@ -225,6 +243,8 @@ const CreateProject = () => {
         jiraProjectKey: jiraProjectKey,
         jiraUsername: jiraUsername,
         jiraApiToken: jiraApiToken,
+        assignedUserEmails: assignedUserEmails.trim() || undefined,
+        stakeholderEmails: stakeholderEmails.trim() || undefined,
       };
 
       if (user?.role === "admin") {
@@ -389,6 +409,69 @@ const CreateProject = () => {
                   rows={4}
                   className="resize-y min-h-[100px]"
                 />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="assigned-user-emails">
+                    Assigned users (optional)
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Comma-separated emails. Suggestions from Form hub when
+                    available; you can type any email.
+                  </p>
+                  <Input
+                    id="assigned-user-emails"
+                    list="create-assigned-user-emails-datalist"
+                    placeholder="e.g. dev@company.com, pm@company.com"
+                    value={assignedUserEmails}
+                    onChange={(e) => setAssignedUserEmails(e.target.value)}
+                    className={
+                      validationErrors.assignedUserEmails
+                        ? "border-destructive"
+                        : ""
+                    }
+                    autoComplete="off"
+                  />
+                  <datalist id="create-assigned-user-emails-datalist">
+                    {uniqueEmailsFromHubProjects(externalHubProjects).map(
+                      (e) => (
+                        <option key={e} value={e} />
+                      ),
+                    )}
+                  </datalist>
+                  {validationErrors.assignedUserEmails && (
+                    <p className="text-sm text-destructive mt-1">
+                      {validationErrors.assignedUserEmails}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="stakeholder-emails">
+                    Stakeholders (optional)
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Comma-separated emails. Only these addresses can confirm a
+                    public release lock.
+                  </p>
+                  <Textarea
+                    id="stakeholder-emails"
+                    placeholder="e.g. client@example.com, sponsor@example.com"
+                    value={stakeholderEmails}
+                    onChange={(e) => setStakeholderEmails(e.target.value)}
+                    rows={3}
+                    className={
+                      validationErrors.stakeholderEmails
+                        ? "border-destructive resize-y min-h-[80px]"
+                        : "resize-y min-h-[80px]"
+                    }
+                  />
+                  {validationErrors.stakeholderEmails && (
+                    <p className="text-sm text-destructive mt-1">
+                      {validationErrors.stakeholderEmails}
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           </CardContent>

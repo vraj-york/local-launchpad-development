@@ -151,7 +151,7 @@ function generateHeader(type = 'project', data = {}) {
       
       if (!confirmed) return;
 
-      const lockEmail = window.prompt('Enter your email to confirm lock:');
+      const lockEmail = window.prompt('Enter your email to confirm lock (must be a project stakeholder):');
       if (!lockEmail || !String(lockEmail).trim()) {
         return;
       }

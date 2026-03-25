@@ -50,6 +50,11 @@ model Project {
   gitRepoPath       String?
   nginxConfigPath   String?
   projectId String?  
+  /// Optional comma-separated list of assignee emails (external / hub); validated as emails.
+  assignedUserEmails  String?
+  /// Optional comma-separated stakeholder emails; public release lock only allowed for these addresses.
+  stakeholderEmails   String?
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
