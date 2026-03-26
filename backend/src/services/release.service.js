@@ -1652,6 +1652,12 @@ export const uploadReleaseVersionService = async (
           uploadedBy: userId,
         },
       });
+      await tx.project.update({
+        where: { id: project.id },
+        data: {
+          gitRepoPath: `github.com/${githubCreds.githubUsername}/${validatedProjectName}`,
+        },
+      });
     });
 
     return {

@@ -2,11 +2,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   fetchPublicProjectBySlug,
   publicLockRelease,
-  clientLinkSendFollowup,
-  clientLinkFetchAgentStatus,
 } from "@/api";
 import { useParams } from "react-router-dom";
-// import { SelectActiveVersion } from "@/components/SelectActiveVersion";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Spinner } from "@/components/ui/spinner";
@@ -27,15 +24,13 @@ import {
 import { SelectClientLinkVersion } from "@/components/SelectClientLinkVersion";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
-import { Lock, MessageCircle, Sparkles } from "lucide-react";
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { Lock, MessageCircle } from "lucide-react";
+import { ClientLinkChatPanel } from "../components/ClientLinkChatPanel";
 
 /** Remember lock-confirmation email on this device for client link pages. */
 const CLIENT_LINK_LOCK_EMAIL_KEY = "release_lock_email";
@@ -51,11 +46,68 @@ export const ClientLink = () => {
   const [previewBuildUrl, setPreviewBuildUrl] = useState(null);
   const [previewContextReleaseId, setPreviewContextReleaseId] = useState(null);
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatInput, setChatInput] = useState("");
-  const [chatMessages, setChatMessages] = useState([]);
-  const [chatSending, setChatSending] = useState(false);
-  const [chatPolling, setChatPolling] = useState(false);
+  /** Version selected for iframe preview (may differ from live active). */
+  const [previewMeta, setPreviewMeta] = useState(null);
   const { projectSlug } = useParams();
+
+  /**
+   * Public API returns root `versions` as the active build(s) but often omits `isActive`
+   * on those objects; nested `releases[].versions` may also omit flags. Treat any
+   * version id present on root `versions` as active so iframe, lock UI, and selector match.
+   */
+  const activeVersionIds = React.useMemo(() => {
+    const ids = (publicProject?.versions ?? [])
+      .map((v) => v.id)
+      .filter((id) => id != null);
+    return new Set(ids);
+  }, [publicProject?.versions]);
+
+  const rootReleaseIdFromActiveVersion = React.useMemo(() => {
+    const v =
+      publicProject?.versions?.find(
+        (x) => x.isActive || activeVersionIds.has(x.id),
+      ) ?? publicProject?.versions?.[0];
+    return v?.releaseId != null ? Number(v.releaseId) : null;
+  }, [publicProject?.versions, activeVersionIds]);
+
+  const releases = React.useMemo(() => {
+    if (!publicProject) return [];
+    const raw =
+      publicProject.releases?.length > 0
+        ? publicProject.releases
+        : publicProject.versions?.length
+          ? [
+              {
+                id: publicProject.id,
+                name: "Version",
+                versions: publicProject.versions,
+              },
+            ]
+          : [];
+    return raw.map((r) => ({
+      ...r,
+      versions: (r.versions || []).map((v) => ({
+        ...v,
+        isActive:
+          Boolean(v.isActive) || (v.id != null && activeVersionIds.has(v.id)),
+      })),
+    }));
+  }, [publicProject, activeVersionIds]);
+
+  const activeRelease =
+    releases.find((r) => (r.versions || []).some((v) => v.isActive)) ||
+    releases[0];
+
+  const selectedReleaseId = publicProject?.releases?.length
+    ? activeRelease?.id
+    : null;
+
+  const effectiveChatReleaseId =
+    previewContextReleaseId != null
+      ? previewContextReleaseId
+      : selectedReleaseId != null
+        ? selectedReleaseId
+        : rootReleaseIdFromActiveVersion;
 
   const loadProject = useCallback(async () => {
     if (!projectSlug?.trim()) {
@@ -95,64 +147,13 @@ export const ClientLink = () => {
     return LOCK_EMAIL_RE.test(e);
   }, [lockEmail]);
 
-  /**
-   * Public API returns root `versions` as the active build(s) but often omits `isActive`
-   * on those objects; nested `releases[].versions` may also omit flags. Treat any
-   * version id present on root `versions` as active so iframe, lock UI, and selector match.
-   */
-  const activeVersionIds = React.useMemo(() => {
-    const ids = (publicProject?.versions ?? [])
-      .map((v) => v.id)
-      .filter((id) => id != null);
-    return new Set(ids);
-  }, [publicProject?.versions]);
-
-  const releases = React.useMemo(() => {
-    if (!publicProject) return [];
-    const raw =
-      publicProject.releases?.length > 0
-        ? publicProject.releases
-        : publicProject.versions?.length
-          ? [
-              {
-                id: publicProject.id,
-                name: "Version",
-                versions: publicProject.versions,
-              },
-            ]
-          : [];
-    return raw.map((r) => ({
-      ...r,
-      versions: (r.versions || []).map((v) => ({
-        ...v,
-        isActive:
-          Boolean(v.isActive) ||
-          (v.id != null && activeVersionIds.has(v.id)),
-      })),
-    }));
-  }, [publicProject, activeVersionIds]);
-
-  const activeRelease =
-    releases.find((r) => (r.versions || []).some((v) => v.isActive)) ||
-    releases[0];
-  const selectedReleaseId = publicProject?.releases?.length
-    ? activeRelease?.id
-    : null;
-
-  const rootReleaseIdFromActiveVersion = React.useMemo(() => {
-    const v =
-      publicProject?.versions?.find(
-        (x) => x.isActive || activeVersionIds.has(x.id),
-      ) ?? publicProject?.versions?.[0];
-    return v?.releaseId != null ? Number(v.releaseId) : null;
-  }, [publicProject?.versions, activeVersionIds]);
-
-  const effectiveChatReleaseId =
-    previewContextReleaseId != null
-      ? previewContextReleaseId
-      : selectedReleaseId != null
-        ? selectedReleaseId
-        : rootReleaseIdFromActiveVersion;
+  const liveActiveVersionId = React.useMemo(() => {
+    for (const r of releases) {
+      const v = (r.versions || []).find((x) => x.isActive);
+      if (v?.id != null) return Number(v.id);
+    }
+    return null;
+  }, [releases]);
 
   const activeReleaseLocked =
     String(activeRelease?.status ?? "").toLowerCase() === "locked";
@@ -169,112 +170,6 @@ export const ClientLink = () => {
     if (!selectedReleaseId || activeReleaseLocked) return;
     setLockConfirmOpen(true);
   }, [selectedReleaseId, activeReleaseLocked]);
-
-  const pollUntilAgentSettles = useCallback(async () => {
-    if (!projectSlug?.trim() || effectiveChatReleaseId == null) return;
-    setChatPolling(true);
-    const start = Date.now();
-    const maxMs = 15 * 60 * 1000;
-    try {
-      while (Date.now() - start < maxMs) {
-        const st = await clientLinkFetchAgentStatus(
-          projectSlug,
-          effectiveChatReleaseId,
-        );
-        const raw = st?.status ? String(st.status).toUpperCase() : "";
-        if (
-          raw === "FINISHED" ||
-          raw === "FAILED" ||
-          raw.includes("FAIL") ||
-          raw === "ERROR"
-        ) {
-          if (raw === "FINISHED") {
-            setChatMessages((m) => [
-              ...m,
-              {
-                role: "system",
-                text: "Changes applied. Refreshing preview…",
-              },
-            ]);
-            await loadProject();
-          } else {
-            setChatMessages((m) => [
-              ...m,
-              {
-                role: "system",
-                text: `Agent status: ${raw}. Check server logs if this persists.`,
-              },
-            ]);
-            toast.error(`Agent ended with status: ${raw}`);
-          }
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-      toast.message("Still processing — you can close this panel and refresh the page later.");
-    } catch (e) {
-      console.error("[ClientLink] poll agent", e);
-      toast.error(e?.error || e?.message || "Status check failed");
-    } finally {
-      setChatPolling(false);
-    }
-  }, [projectSlug, effectiveChatReleaseId, loadProject]);
-
-  const handleSendChat = useCallback(async () => {
-    const text = chatInput.trim();
-    if (!text || !projectSlug?.trim()) {
-      toast.error("Enter a message.");
-      return;
-    }
-    if (effectiveChatReleaseId == null) {
-      toast.error("Select a version above so we know which release to update.");
-      return;
-    }
-    if (activeReleaseLocked) {
-      toast.error("This release is locked.");
-      return;
-    }
-    setChatMessages((m) => [...m, { role: "user", text }]);
-    setChatInput("");
-    setChatSending(true);
-    try {
-      console.log("[ClientLink] sending follow-up", {
-        releaseId: effectiveChatReleaseId,
-        len: text.length,
-      });
-      await clientLinkSendFollowup(
-        projectSlug,
-        effectiveChatReleaseId,
-        text,
-      );
-      setChatMessages((m) => [
-        ...m,
-        {
-          role: "system",
-          text: "Request sent. Applying changes on the server…",
-        },
-      ]);
-      void pollUntilAgentSettles();
-    } catch (e) {
-      console.error("[ClientLink] followup failed", e);
-      toast.error(e?.error || e?.message || "Failed to send");
-      setChatMessages((m) => [
-        ...m,
-        {
-          role: "system",
-          text: e?.error || e?.message || "Request failed.",
-        },
-      ]);
-    } finally {
-      setChatSending(false);
-    }
-  }, [
-    chatInput,
-    projectSlug,
-    effectiveChatReleaseId,
-    activeReleaseLocked,
-    pollUntilAgentSettles,
-  ]);
 
   const handleLockConfirm = useCallback(async () => {
     if (!selectedReleaseId) return;
@@ -295,9 +190,7 @@ export const ClientLink = () => {
       toast.success(res?.message ?? "Release locked successfully");
       await loadProject();
     } catch (err) {
-      toast.error(
-        err?.error || err?.message || "Failed to lock release",
-      );
+      toast.error(err?.error || err?.message || "Failed to lock release");
     } finally {
       setLocking(false);
     }
@@ -330,6 +223,29 @@ export const ClientLink = () => {
     () => toProxyUrl(rawBuildUrl),
     [rawBuildUrl, toProxyUrl],
   );
+
+  const handleChatPreviewCommitApplied = useCallback(
+    ({ buildUrl, releaseId }) => {
+      const baseUrl = String(buildUrl || "").trim();
+      if (!baseUrl) return;
+      const separator = baseUrl.includes("?") ? "&" : "?";
+      setPreviewBuildUrl(`${baseUrl}${separator}chatPreview=${Date.now()}`);
+      setPreviewMeta(null);
+      if (releaseId != null) setPreviewContextReleaseId(Number(releaseId));
+    },
+    [],
+  );
+
+  const handleChatResetPreview = useCallback(() => {
+    setPreviewBuildUrl(null);
+    setPreviewMeta(null);
+  }, []);
+
+  const activeVersion =
+    (activeRelease?.versions || []).find((v) => v?.isActive) ||
+    activeRelease?.versions?.[0] ||
+    null;
+  const chatMergeTargetLabel = `${String(activeRelease?.name || "Unknown release")} / ${activeVersion?.version}`;
 
   if (loading) {
     return (
@@ -379,247 +295,218 @@ export const ClientLink = () => {
 
   /** Chat FAB whenever the client link loaded a project (no server flag required). */
   const chatEnabled = Boolean(publicProject);
-  const canUseChat =
-    chatEnabled && !isLocked && effectiveChatReleaseId != null;
+  const showRestoreLive =
+    previewMeta?.versionId != null &&
+    previewMeta?.releaseId != null &&
+    liveActiveVersionId != null &&
+    Number(previewMeta.versionId) !== Number(liveActiveVersionId) &&
+    !activeReleaseLocked;
 
-  return (
-    <div className="flex-1 flex flex-col min-h-screen bg-slate-50 w-full overflow-hidden">
-      {/* Wrapper so screenshot includes header + iframe (same-origin via /preview proxy) */}
-      <div
-        id="feedback-capture-wrapper"
-        className="flex flex-col flex-1 w-full min-h-0"
-      >
-        <header className="shrink-0 flex items-center gap-3 px-4 py-2 bg-accent border-b border-slate-200/60 shadow-sm">
-          <div className="flex flex-1 items-center justify-between gap-3 min-w-0">
-            {publicProject?.name && (
-              <h1 className="text-md font-semibold text-slate-800 truncate max-w-[200px] sm:max-w-[280px] shrink-0">
-                {publicProject.name}
-              </h1>
-            )}
-            <div className="flex min-w-0 flex-1 justify-center px-2">
-              <SelectClientLinkVersion
-                release={releases}
-                projectId={publicProject?.id}
-                onActivated={loadProject}
-                isPublic={true}
-                onSwitched={({ buildUrl, releaseId: rid }) => {
-                  setPreviewBuildUrl(buildUrl);
-                  if (rid != null) setPreviewContextReleaseId(rid);
-                }}
-                compact
-                darkTrigger
-                selectLabel="Choose Version :"
-              />
-            </div>
+  const clientLinkPreviewBody = (
+    <>
+      <header className="shrink-0 flex items-center gap-3 border-b border-slate-200/60 bg-accent px-4 py-2 shadow-sm">
+        <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+          {publicProject?.name && (
+            <h1 className="text-md max-w-[200px] shrink-0 truncate font-semibold text-slate-800 sm:max-w-[280px]">
+              {publicProject.name}
+            </h1>
+          )}
+          <div className="flex min-w-0 flex-1 justify-center px-2">
+            <SelectClientLinkVersion
+              release={releases}
+              projectId={publicProject?.id}
+              onSwitched={({ buildUrl, releaseId: rid, versionId }) => {
+                setPreviewBuildUrl(buildUrl);
+                if (rid != null) setPreviewContextReleaseId(rid);
+                if (versionId != null && rid != null) {
+                  setPreviewMeta({
+                    versionId: Number(versionId),
+                    releaseId: Number(rid),
+                  });
+                } else {
+                  setPreviewMeta(null);
+                }
+              }}
+              compact
+              darkTrigger
+              selectLabel="Choose Version :"
+            />
+          </div>
 
-            <div className="shrink-0 flex items-center gap-2">
-              {showLockAndFeedback &&
-                (isLocked ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled
-                          className="h-8 shrink-0 whitespace-nowrap px-3 rounded-md font-bold text-sm bg-red-500 text-white border-0 shadow-sm opacity-70 cursor-not-allowed w-auto"
-                        >
-                          <span className="flex items-center gap-2">
-                            <Lock className="size-4" />
-                            Release Locked
-                          </span>
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="bottom"
-                      className="max-w-[240px] text-center"
-                    >
-                      You cannot unlock it from here. If you want to unlock it,
-                      contact the product manager.
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={locking}
-                    onClick={handleLock}
-                    className="h-8 shrink-0 whitespace-nowrap px-3 rounded-md font-bold text-sm bg-green-600 hover:bg-green-700 text-white border-0 shadow-sm disabled:opacity-70 disabled:cursor-not-allowed w-auto"
+          <div className="flex shrink-0 items-center gap-2">
+            {showLockAndFeedback &&
+              (isLocked ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled
+                        className="h-8 w-auto shrink-0 cursor-not-allowed rounded-md border-0 bg-red-500 px-3 text-sm font-bold text-white opacity-70 shadow-sm"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Lock className="size-4" />
+                          Release Locked
+                        </span>
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="bottom"
+                    className="max-w-[240px] text-center"
                   >
-                    {locking ? (
-                      <span className="flex items-center gap-2">
-                        <Spinner className="size-4" />
-                        Locking...
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-2">
-                        <Lock className="size-4" />
-                        Lock Release
-                      </span>
-                    )}
-                  </Button>
-                ))}
-              {chatEnabled && (
+                    You cannot unlock it from here. If you want to unlock it,
+                    contact the product manager.
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => setChatOpen(true)}
-                  className="h-8 shrink-0 whitespace-nowrap px-3 rounded-md font-bold text-sm border-0 shadow-sm bg-gradient-to-r from-violet-600 to-emerald-600 text-white hover:from-violet-700 hover:to-emerald-700"
-                  aria-label="Open change requests"
+                  disabled={locking}
+                  onClick={handleLock}
+                  className="h-8 w-auto shrink-0 rounded-md border-0 bg-green-600 px-3 text-sm font-bold text-white shadow-sm hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  <span className="flex items-center gap-2">
-                    <MessageCircle className="size-4 shrink-0" />
-                    Chat
-                  </span>
+                  {locking ? (
+                    <span className="flex items-center gap-2">
+                      <Spinner className="size-4" />
+                      Locking...
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <Lock className="size-4" />
+                      Lock Release
+                    </span>
+                  )}
                 </Button>
-              )}
+              ))}
+            {chatEnabled && !chatOpen && (
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={() => setChatOpen((open) => !open)}
+                className="h-8 shrink-0 px-3 font-bold shadow-sm"
+                aria-expanded={chatOpen}
+                aria-label={
+                  chatOpen ? "Close change requests" : "Open change requests"
+                }
+              >
+                <span className="flex items-center gap-2">
+                  <MessageCircle className="size-4 shrink-0" />
+                  Chat
+                </span>
+              </Button>
+            )}
+          </div>
+        </div>
+      </header>
+      <div id="feedback-capture-area" className="relative mt-0 min-h-0 flex-1">
+        {!hasActiveVersion && !previewBuildUrl && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-gradient-to-b from-slate-50/95 via-white/90 to-violet-50/40 p-6 backdrop-blur-[2px]">
+            <div className="w-full max-w-lg rounded-2xl border border-slate-200/80 bg-white/90 p-8 text-center shadow-lg shadow-primary/30">
+              <h2 className="mb-2 text-lg font-semibold text-primary">
+                No active release
+              </h2>
+              <p className="text-sm leading-relaxed text-slate-600">
+                {hasAnyVersions ? (
+                  <>
+                    All latest releases are currently locked, so there is no
+                    active version. If you would like to view a locked release,
+                    please select it from{" "}
+                    <span className="font-bold text-slate-800">
+                      Choose version
+                    </span>{" "}
+                    dropdown above.
+                  </>
+                ) : (
+                  <>
+                    This project has no versions yet. Add a version from the
+                    project dashboard, then return to this link.
+                  </>
+                )}
+              </p>
             </div>
           </div>
-        </header>
-        <div id="feedback-capture-area" className="flex-1 min-h-0 mt-0 relative">
-          {!hasActiveVersion && !previewBuildUrl && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center p-6 bg-gradient-to-b from-slate-50/95 via-white/90 to-violet-50/40 backdrop-blur-[2px]">
-              <div className="max-w-lg w-full rounded-2xl border border-slate-200/80 bg-white/90 shadow-lg shadow-primary/30 p-8 text-center">
-                <h2 className="text-lg font-semibold text-primary mb-2">
-                  No active release
-                </h2>
-                <p className="text-sm text-slate-600 leading-relaxed">
-                  {hasAnyVersions ? (
-                    <>
-                      All latest releases are currently locked, so there is no active version. If you would like to view a locked release, please select it from {" "}
-                      <span className="font-bold text-slate-800">
-                        Choose version
-                      </span>{" "}
-                      dropdown above.
-                    </>
-                  ) : (
-                    <>
-                      This project has no versions yet. Add a version from the
-                      project dashboard, then return to this link.
-                    </>
-                  )}
-                </p>
-              </div>
-            </div>
-          )}
-          {iframeSrc ? (
-            <iframe
-              key={iframeSrc}
-              id="previewFrame"
-              src={iframeSrc}
-              width="100%"
-              height="100%"
-              className="block w-full h-full border-0"
-              allow="display-capture"
-              style={{ height: "100vh" }}
-              title="Build Preview"
-            />
-          ) : null}
-        </div>
+        )}
+        {iframeSrc ? (
+          <iframe
+            key={iframeSrc}
+            id="previewFrame"
+            src={iframeSrc}
+            title="Build Preview"
+            className="absolute inset-0 h-full w-full border-0"
+            allow="display-capture"
+          />
+        ) : null}
       </div>
-        <EmbeddedFeedbackWidget
-          projectId={String(publicProject.id)}
-          captureTarget="#feedback-capture-wrapper"
-          onSuccess={() => toast.success("Feedback submitted successfully")}
-          onError={(err) =>
-            toast.error(err?.message ?? "Failed to submit feedback")
-          }
-        />
+    </>
+  );
 
-      {chatEnabled && (
-        <>
-          <Sheet open={chatOpen} onOpenChange={setChatOpen}>
-            <SheetContent
-              side="right"
-              className="flex w-full max-w-[440px] flex-col border-l border-slate-200/80 bg-gradient-to-b from-white to-slate-50/95 p-0 sm:max-w-[440px]"
+  return (
+    <div className="flex min-h-screen w-full flex-1 flex-col overflow-hidden bg-slate-50">
+      {chatOpen && chatEnabled ? (
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="flex min-h-0 flex-1 w-full"
+        >
+          <ResizablePanel
+            defaultSize="75%"
+            minSize="25%"
+            className="flex min-h-0 min-w-0 flex-col"
+          >
+            {/* Screenshot target: header + preview only (chat stays outside this wrapper) */}
+            <div
+              id="feedback-capture-wrapper"
+              className="flex min-h-0 w-full flex-1 flex-col"
             >
-              <SheetHeader className="border-b border-slate-200/60 bg-gradient-to-r from-violet-600/10 to-emerald-600/10 px-4 py-4 text-left">
-                <SheetTitle className="flex items-center gap-2 text-lg text-slate-900">
-                  <Sparkles className="size-5 text-violet-600" />
-                  Request changes
-                </SheetTitle>
-                <SheetDescription className="text-slate-600">
-                  Messages are sent to the Cursor cloud agent. The preview updates after the
-                  build finishes (usually a few minutes).
-                </SheetDescription>
-              </SheetHeader>
-
-              <div className="flex flex-1 flex-col min-h-0">
-                <div className="shrink-0 space-y-2 border-b border-slate-100 px-4 py-3">
-                  {!canUseChat && effectiveChatReleaseId == null && (
-                    <p className="text-xs text-amber-800">
-                      Choose a version in the header dropdown so we know which release to
-                      update.
-                    </p>
-                  )}
-                  {isLocked && (
-                    <p className="text-xs text-red-600">This release is locked — changes are disabled.</p>
-                  )}
-                </div>
-
-                <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[200px]">
-                  {chatMessages.length === 0 && (
-                    <p className="text-sm text-slate-500">
-                      Describe the change you want (e.g. &quot;Make the hero button larger&quot;).
-                    </p>
-                  )}
-                  {chatMessages.map((msg, i) => (
-                    <div
-                      key={i}
-                      className={
-                        msg.role === "user"
-                          ? "ml-6 rounded-2xl rounded-tr-sm bg-gradient-to-br from-violet-600 to-indigo-600 px-3 py-2 text-sm text-white shadow-sm"
-                          : "mr-6 rounded-2xl rounded-tl-sm border border-slate-200/80 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm"
-                      }
-                    >
-                      {msg.text}
-                    </div>
-                  ))}
-                  {(chatSending || chatPolling) && (
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
-                      <Spinner className="size-4" />
-                      Applying changes…
-                    </div>
-                  )}
-                </div>
-
-                <div className="shrink-0 border-t border-slate-200/80 bg-white/90 px-4 py-3 space-y-2">
-                  <Textarea
-                    placeholder="Your change request…"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    disabled={!canUseChat || chatSending || chatPolling}
-                    className="min-h-[88px] resize-none rounded-xl border-slate-200 focus-visible:ring-violet-500/30"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        if (canUseChat && !chatSending && !chatPolling) void handleSendChat();
-                      }
-                    }}
-                  />
-                  <Button
-                    type="button"
-                    disabled={!canUseChat || chatSending || chatPolling}
-                    className="w-full rounded-xl bg-gradient-to-r from-violet-600 to-emerald-600 font-semibold text-white shadow-md hover:from-violet-700 hover:to-emerald-700"
-                    onClick={() => void handleSendChat()}
-                  >
-                    Send request
-                  </Button>
-                </div>
-              </div>
-            </SheetContent>
-          </Sheet>
-        </>
+              {clientLinkPreviewBody}
+            </div>
+          </ResizablePanel>
+          <ResizableHandle withHandle className="bg-border hover:bg-muted" />
+          <ResizablePanel
+            defaultSize="25%"
+            minSize="20%"
+            className="flex min-h-0 min-w-[280px] flex-col"
+          >
+            <ClientLinkChatPanel
+              projectSlug={projectSlug}
+              effectiveChatReleaseId={effectiveChatReleaseId}
+              isLocked={isLocked}
+              isOpen={chatOpen}
+              mergeTargetLabel={chatMergeTargetLabel}
+              onPreviewCommitApplied={handleChatPreviewCommitApplied}
+              onProjectReload={loadProject}
+              onResetPreview={handleChatResetPreview}
+              onCloseChat={() => setChatOpen(false)}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <div
+          id="feedback-capture-wrapper"
+          className="flex min-h-0 w-full flex-1 flex-col"
+        >
+          {clientLinkPreviewBody}
+        </div>
       )}
+      <EmbeddedFeedbackWidget
+        projectId={String(publicProject.id)}
+        captureTarget="#feedback-capture-wrapper"
+        onSuccess={() => toast.success("Feedback submitted successfully")}
+        onError={(err) =>
+          toast.error(err?.message ?? "Failed to submit feedback")
+        }
+      />
 
       <Dialog open={lockConfirmOpen} onOpenChange={setLockConfirmOpen}>
         <DialogContent showCloseButton={false} className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Lock this release?</DialogTitle>
             <DialogDescription>
-              Once this release is locked, it cannot be unlock. Are you sure you want to
-              lock it?
+              Once this release is locked, it cannot be unlock. Are you sure you
+              want to lock it?
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2 py-1">

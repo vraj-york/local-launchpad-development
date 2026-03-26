@@ -323,10 +323,10 @@ export const publicLockRelease = async (releaseId, lockedBy) => {
   }
 };
 
-/** Public client-link chat (routes under /api/p). No JWT. */
+/** Public client-link chat (routes under /api/chat). No JWT. */
 export const clientLinkSendFollowup = async (slug, releaseId, text) => {
   const enc = encodeURIComponent(String(slug).trim());
-  const response = await api.post(`/api/p/${enc}/q`, {
+  const response = await api.post(`/api/chat/${enc}/followup`, {
     r: Number(releaseId),
     t: text,
   });
@@ -335,9 +335,83 @@ export const clientLinkSendFollowup = async (slug, releaseId, text) => {
 
 export const clientLinkFetchAgentStatus = async (slug, releaseId) => {
   const enc = encodeURIComponent(String(slug).trim());
-  const response = await api.get(`/api/p/${enc}/st`, {
+  const response = await api.get(`/api/chat/${enc}/agent-status`, {
     params: { r: Number(releaseId) },
   });
+  return response.data;
+};
+
+/** Public: summary after agent finishes for the selected release. */
+export const clientLinkFetchExecutionSummary = async (slug, releaseId) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const response = await api.get(`/api/chat/${enc}/summary`, {
+    params: { r: Number(releaseId) },
+  });
+  return response.data;
+};
+
+/** Public: persisted chat messages for client-link release. */
+export const clientLinkFetchChatMessages = async (slug, releaseId) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const response = await api.get(`/api/chat/${enc}/messages`, {
+    params: { r: Number(releaseId) },
+  });
+  return response.data;
+};
+
+/** Public: merge Cursor agent branch to launchpad after user confirms. */
+export const clientLinkConfirmMerge = async (
+  slug,
+  releaseId,
+  commitSha,
+  messageId = null,
+) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const mid = Number(messageId);
+  const body = {
+    r: Number(releaseId),
+    sha: String(commitSha || "").trim(),
+  };
+  if (Number.isInteger(mid) && mid > 0) {
+    body.m = mid;
+  }
+  const response = await api.post(`/api/chat/${enc}/confirm-merge`, body);
+  return response.data;
+};
+
+/** Public: restore live site to a saved release version. */
+export const clientLinkRestoreLiveVersion = async (
+  slug,
+  releaseId,
+  versionId,
+) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const response = await api.post(`/api/chat/${enc}/restore-version`, {
+    r: Number(releaseId),
+    versionId: Number(versionId),
+  });
+  return response.data;
+};
+
+/** Public: build temporary preview at commit SHA (or parent commit). */
+export const clientLinkPreviewCommit = async (
+  slug,
+  releaseId,
+  commitSha,
+  before = false,
+  messageId = null,
+) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const mid = Number(messageId);
+  const body = {
+    r: Number(releaseId),
+    sha: String(commitSha || "").trim(),
+    before: Boolean(before),
+  };
+  if (Number.isInteger(mid) && mid > 0) {
+    body.m = mid;
+  }
+  const response = await api.post(`/api/chat/${enc}/preview-commit`, body);
   return response.data;
 };
 

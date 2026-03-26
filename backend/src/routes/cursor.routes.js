@@ -1,7 +1,13 @@
 import express from "express";
 import { PrismaClient, ReleaseStatus } from "@prisma/client";
 import { authenticateToken } from "../middleware/auth.middleware.js";
-import { cursorRequest, performMergeToLaunchpad, startAgentPolling } from "../services/cursor.service.js";
+import {
+  createAgentForProjectRelease,
+  cursorRequest,
+  getCursorAgentById,
+  postCursorAgentFollowup,
+  performMergeToLaunchpad,
+} from "../services/cursor.service.js";
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -65,44 +71,34 @@ router.post("/agents", authenticateToken, requireCursorKey, async (req, res) => 
   }
 
   try {
-    const { status, data } = await cursorRequest({
-      method: "POST",
-      path: "/v0/agents",
-      body: {
-        prompt: body.prompt,
-        model: body.model,
-        source: body.source,
-        target: body.target,
-        webhook: body.webhook,
-      },
+    const result = await createAgentForProjectRelease({
+      projectId,
+      releaseId,
+      attemptedById: userId,
+      prompt: body.prompt,
+      nodeCount,
+      source: body.source,
+      model: body.model,
+      target: body.target,
+      webhook: body.webhook,
     });
-    if (!data || !data.id) {
-      return res.status(status).json(data);
+    if (!result.ok) {
+      return res.status(result.status).json(result.data);
     }
-    const count = await prisma.figmaConversion.count({
-      where: { projectId, releaseId },
-    });
-    const attemptNumber = count + 1;
-    try {
-      await prisma.figmaConversion.create({
-        data: {
-          projectId,
-          releaseId,
-          agentId: data.id,
-          attemptedById: userId,
-          attemptNumber,
-          nodeCount: nodeCount != null && !Number.isNaN(nodeCount) ? nodeCount : null,
-          status: data.status || "CREATING",
-        },
-      });
-    } catch (dbErr) {
-      console.error("[cursor] FigmaConversion insert failed:", dbErr);
-    }
-    startAgentPolling(data.id);
-    return res.status(status).json(data);
+    return res.status(result.status).json(result.data);
   } catch (err) {
     if (err.code === "CURSOR_KEY_MISSING") {
       return res.status(503).json({ error: err.message });
+    }
+    if (
+      err.code === "GITHUB_NOT_CONFIGURED" ||
+      err.code === "REPO_UNRESOLVED" ||
+      err.code === "REPO_INACCESSIBLE"
+    ) {
+      return res.status(400).json({ error: err.message });
+    }
+    if (err.code === "PROJECT_NOT_FOUND") {
+      return res.status(404).json({ error: err.message });
     }
     return res.status(502).json({
       error: err.message || "Cursor API request failed",
@@ -152,14 +148,7 @@ router.post(
         agentIdPrefix: id.slice(0, 8),
         projectId: conversion.projectId,
       });
-      const { status, data } = await cursorRequest({
-        method: "POST",
-        path: `/v0/agents/${encodeURIComponent(id)}/followup`,
-        body: { prompt: body.prompt },
-      });
-      if (status >= 200 && status < 300) {
-        startAgentPolling(id);
-      }
+      const { status, data } = await postCursorAgentFollowup(id, body.prompt);
       return res.status(status).json(data);
     } catch (err) {
       if (err.code === "CURSOR_KEY_MISSING") {
@@ -208,10 +197,7 @@ router.get("/agents/:id", authenticateToken, requireCursorKey, async (req, res) 
   }
 
   try {
-    const { status, data } = await cursorRequest({
-      method: "GET",
-      path: `/v0/agents/${encodeURIComponent(id)}`,
-    });
+    const { status, data } = await getCursorAgentById(id);
     return res.status(status).json(data);
   } catch (err) {
     if (err.code === "CURSOR_KEY_MISSING") {
@@ -263,10 +249,7 @@ router.post(
 
     let agentData;
     try {
-      const { status, data } = await cursorRequest({
-        method: "GET",
-        path: `/v0/agents/${encodeURIComponent(id)}`,
-      });
+      const { status, data } = await getCursorAgentById(id);
       if (status !== 200 || !data) {
         return res.status(400).json({ error: "Could not fetch agent status" });
       }

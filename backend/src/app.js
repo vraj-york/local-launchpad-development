@@ -12,7 +12,7 @@ import roadmapRoutes from "./routes/roadmap.route.js";
 import feedbackRoutes from "./routes/feedback.routes.js";
 import figmaRoutes, { figmaPendingByWriteKey } from "./routes/figma.routes.js";
 import cursorRoutes from "./routes/cursor.routes.js";
-import clientLinkRoutes from "./routes/client-link.routes.js";
+import chatRoutes from "./routes/chat.routes.js";
 
 dotenv.config();
 
@@ -69,7 +69,7 @@ app.use("/api/auth", authRoutes);
 
 app.use("/api/figma", figmaRoutes);
 app.use("/api/cursor", cursorRoutes);
-app.use("/api/p", clientLinkRoutes);
+app.use("/api/chat", chatRoutes);
 app.use("/api/releases", releaseRoutes);
 app.use("/api/roadmaps", roadmapRoutes);
 app.use("/api/projects", projectRoutes);
