@@ -701,6 +701,7 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
     where: {
       projectId: project.id,
       releaseId: Number(releaseId),
+      role: { not: "system" },
     },
     orderBy: { createdAt: "asc" },
     take: Math.min(Math.max(Number(limit) || 200, 1), 500),
@@ -716,22 +717,6 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
     },
   });
 
-  const mergedByMessageId = new Set();
-  const mergedBySha = new Set();
-  for (const row of rows) {
-    const key = typeof row.msgKey === "string" ? row.msgKey.trim() : "";
-    if (!key) continue;
-    if (key.startsWith("merged:mid:")) {
-      const mid = Number(key.slice("merged:mid:".length));
-      if (Number.isInteger(mid) && mid > 0) mergedByMessageId.add(mid);
-      continue;
-    }
-    if (key.startsWith("merged:sha:")) {
-      const sha = key.slice("merged:sha:".length).trim().toLowerCase();
-      if (sha) mergedBySha.add(sha);
-    }
-  }
-
   return {
     messages: rows.map((r) => ({
       id: r.id,
@@ -740,12 +725,7 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
       text: r.text,
       msgKey: r.msgKey,
       appliedCommitSha: r.appliedCommitSha || null,
-      isMerged:
-        r.role === "user" &&
-        (Boolean(r.mergedAt) ||
-          (Number.isInteger(Number(r.id)) && mergedByMessageId.has(Number(r.id))) ||
-          (typeof r.appliedCommitSha === "string" &&
-            mergedBySha.has(String(r.appliedCommitSha).trim().toLowerCase()))),
+      isMerged: r.role === "user" && Boolean(r.mergedAt),
       mergedAt: r.mergedAt,
       createdAt: r.createdAt,
     })),
@@ -859,18 +839,6 @@ export async function clientLinkConfirmLaunchpadMerge({
     });
   }
 
-  await prisma.chatHistory.create({
-    data: {
-      projectId: project.id,
-      releaseId: Number(releaseId),
-      role: "system",
-      tone: "success",
-      msgKey:
-        msgId != null ? `merged:mid:${msgId}` : `merged:sha:${requestedSha.toLowerCase()}`,
-      text: "Changes merged to launchpad and the live preview was updated.",
-    },
-  });
-
   return { ok: true };
 }
 
@@ -923,16 +891,6 @@ export async function clientLinkRestoreVersion({ slug, releaseId, versionId }) {
       data: { isActive: true },
     }),
   ]);
-
-  await prisma.chatHistory.create({
-    data: {
-      projectId: project.id,
-      releaseId: Number(releaseId),
-      role: "system",
-      tone: "neutral",
-      text: `Live site restored to v${version.version} (${version.gitTag || deployed.tag || "build"}).`,
-    },
-  });
 
   return {
     ok: true,
