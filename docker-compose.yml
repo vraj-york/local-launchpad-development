@@ -67,6 +67,8 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       # --- Optional integrations (release upload, Cursor, S3) ---
       CURSOR_API_KEY: ${CURSOR_API_KEY:-}
+      # Optional: force Cursor agent source.ref (branch/tag); unset uses request ref or GitHub default_branch
+      CURSOR_AGENT_SOURCE_REF: ${CURSOR_AGENT_SOURCE_REF:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_USERNAME: ${GITHUB_USERNAME:-}
       AWS_REGION: ${AWS_REGION:-}

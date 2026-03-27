@@ -155,7 +155,6 @@ function generateHeader(type = 'project', data = {}) {
       if (!lockEmail || !String(lockEmail).trim()) {
         return;
       }
-
       extractFromUrl();
       if (!releaseId) return alert("Error: Release ID missing.");
 
@@ -166,7 +165,9 @@ function generateHeader(type = 'project', data = {}) {
         const response = await fetch(\`\${getApiUrl()}/api/releases/\${releaseId}/public-lock\`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lockedBy: String(lockEmail).trim().toLowerCase() })
+          body: JSON.stringify({
+            lockedBy: String(lockEmail).trim().toLowerCase(),
+          })
         });
 
         if (response.ok) {

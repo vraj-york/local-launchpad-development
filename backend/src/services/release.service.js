@@ -1652,6 +1652,12 @@ export const uploadReleaseVersionService = async (
           uploadedBy: userId,
         },
       });
+      await tx.project.update({
+        where: { id: project.id },
+        data: {
+          gitRepoPath: `github.com/${githubCreds.githubUsername}/${validatedProjectName}`,
+        },
+      });
     });
 
     return {
@@ -1712,7 +1718,7 @@ const PUBLIC_LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * Public lock a release (one-way). Clears isActive on all versions for this release only.
- * Unlock is not supported. No auth token — caller supplies `lockedBy` email.
+ * Unlock is not supported. Caller supplies `lockedBy` email.
  */
 export const publicLockReleaseService = async (releaseId, lockedBy) => {
   const email =
