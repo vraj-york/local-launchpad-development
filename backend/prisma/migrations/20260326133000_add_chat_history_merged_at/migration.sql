@@ -1,2 +1,0 @@
-ALTER TABLE "ChatHistory"
-ADD COLUMN "mergedAt" TIMESTAMP(3);

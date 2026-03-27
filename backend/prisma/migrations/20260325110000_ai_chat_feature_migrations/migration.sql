@@ -1,3 +1,15 @@
+-- AI chat feature migrations (squashed: client chat commit tracking, ChatHistory rename, mergedAt)
+
+-- Track chat-message → commit SHA for client-link revert previews.
+ALTER TABLE "FigmaConversion"
+ADD COLUMN "pendingClientChatMessageId" INTEGER;
+
+ALTER TABLE "ClientLinkChatMessage"
+ADD COLUMN "appliedCommitSha" TEXT;
+
+CREATE INDEX "ClientLinkChatMessage_projectId_releaseId_appliedCommitSha_idx"
+ON "ClientLinkChatMessage"("projectId", "releaseId", "appliedCommitSha");
+
 ALTER TABLE "ClientLinkChatMessage" RENAME TO "ChatHistory";
 
 DO $$
@@ -38,3 +50,6 @@ BEGIN
       RENAME TO "ChatHistory_id_seq";
   END IF;
 END $$;
+
+ALTER TABLE "ChatHistory"
+ADD COLUMN "mergedAt" TIMESTAMP(3);
