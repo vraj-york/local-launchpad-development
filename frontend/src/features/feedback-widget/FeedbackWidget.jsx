@@ -146,7 +146,11 @@ const FeedbackWidget = ({ config }) => {
 
   return (
     <div
-      className="feedback-widget-root"
+      className={
+        config.anchorToPreview
+          ? "feedback-widget-root feedback-widget-root--preview-panel"
+          : "feedback-widget-root"
+      }
       data-capturing={isCapturing ? "" : undefined}
     >
       {/* Floating Button - shows spinner while capturing (modal not open yet) */}

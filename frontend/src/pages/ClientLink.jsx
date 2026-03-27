@@ -440,6 +440,15 @@ export const ClientLink = () => {
             allow="display-capture"
           />
         ) : null}
+        <EmbeddedFeedbackWidget
+          projectId={String(publicProject.id)}
+          captureTarget="#feedback-capture-wrapper"
+          anchorToPreview
+          onSuccess={() => toast.success("Feedback submitted successfully")}
+          onError={(err) =>
+            toast.error(err?.message ?? "Failed to submit feedback")
+          }
+        />
       </div>
     </>
   );
@@ -491,14 +500,6 @@ export const ClientLink = () => {
           {clientLinkPreviewBody}
         </div>
       )}
-      <EmbeddedFeedbackWidget
-        projectId={String(publicProject.id)}
-        captureTarget="#feedback-capture-wrapper"
-        onSuccess={() => toast.success("Feedback submitted successfully")}
-        onError={(err) =>
-          toast.error(err?.message ?? "Failed to submit feedback")
-        }
-      />
 
       <Dialog open={lockConfirmOpen} onOpenChange={setLockConfirmOpen}>
         <DialogContent showCloseButton={false} className="sm:max-w-md">
