@@ -324,11 +324,12 @@ export const publicLockRelease = async (releaseId, lockedBy) => {
 };
 
 /** Public client-link chat (routes under /api/chat). No JWT. */
-export const clientLinkSendFollowup = async (slug, releaseId, text) => {
+export const clientLinkSendFollowup = async (slug, releaseId, text, clientEmail) => {
   const enc = encodeURIComponent(String(slug).trim());
   const response = await api.post(`/api/chat/${enc}/followup`, {
     r: Number(releaseId),
     t: text,
+    clientEmail: String(clientEmail || "").trim(),
   });
   return response.data;
 };
@@ -365,12 +366,14 @@ export const clientLinkConfirmMerge = async (
   releaseId,
   commitSha,
   messageId = null,
+  clientEmail = "",
 ) => {
   const enc = encodeURIComponent(String(slug).trim());
   const mid = Number(messageId);
   const body = {
     r: Number(releaseId),
     sha: String(commitSha || "").trim(),
+    clientEmail: String(clientEmail || "").trim(),
   };
   if (Number.isInteger(mid) && mid > 0) {
     body.m = mid;
@@ -384,11 +387,13 @@ export const clientLinkRestoreLiveVersion = async (
   slug,
   releaseId,
   versionId,
+  clientEmail = "",
 ) => {
   const enc = encodeURIComponent(String(slug).trim());
   const response = await api.post(`/api/chat/${enc}/restore-version`, {
     r: Number(releaseId),
     versionId: Number(versionId),
+    clientEmail: String(clientEmail || "").trim(),
   });
   return response.data;
 };
@@ -400,6 +405,7 @@ export const clientLinkPreviewCommit = async (
   commitSha,
   before = false,
   messageId = null,
+  clientEmail = "",
 ) => {
   const enc = encodeURIComponent(String(slug).trim());
   const mid = Number(messageId);
@@ -407,6 +413,7 @@ export const clientLinkPreviewCommit = async (
     r: Number(releaseId),
     sha: String(commitSha || "").trim(),
     before: Boolean(before),
+    clientEmail: String(clientEmail || "").trim(),
   };
   if (Number.isInteger(mid) && mid > 0) {
     body.m = mid;

@@ -1,5 +1,7 @@
 import { PrismaClient, ReleaseStatus } from "@prisma/client";
+import validator from "validator";
 import ApiError from "../utils/apiError.js";
+import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import {
   createAgentForProjectRelease,
   getCursorAgentById,
@@ -37,6 +39,7 @@ export async function resolveProjectBySlug(slug) {
       name: true,
       gitRepoPath: true,
       githubUsername: true,
+      stakeholderEmails: true,
     },
   });
   if (!project) {
@@ -64,6 +67,51 @@ function assertReleaseNotLocked(release) {
   if (release.status === ReleaseStatus.locked) {
     throw new ApiError(400, "Release is locked");
   }
+}
+
+/** Same rules as public release lock: stakeholders must be configured; email must be in the list. */
+function assertPublicClientStakeholderEmail(stakeholderCsv, clientEmailRaw) {
+  const email =
+    typeof clientEmailRaw === "string" ? clientEmailRaw.trim().toLowerCase() : "";
+  if (!email) {
+    throw new ApiError(400, "Client email is required.");
+  }
+  if (!validator.isEmail(email)) {
+    throw new ApiError(400, "Invalid email address.");
+  }
+  const stakeholderSet = parseStoredEmailListToSet(stakeholderCsv);
+  if (stakeholderSet.size === 0) {
+    throw new ApiError(
+      400,
+      "Public release lock is not available until project stakeholders are configured.",
+    );
+  }
+  if (!stakeholderSet.has(email)) {
+    throw new ApiError(
+      403,
+      "This email is not authorized to use this chat feature.",
+    );
+  }
+}
+
+const CURSOR_CHAT_ACCESS_DENIED_MESSAGE =
+  "Your email is not allowed to use this chat feature.";
+
+/**
+ * Cursor may return 401 + "Unauthorized request.: Follow-up blocked." — surface a single safe message to clients.
+ */
+function mapCursorChatErrorMessageForClient(httpStatus, rawError, fallback) {
+  const raw = typeof rawError === "string" ? rawError.trim() : "";
+  const fb = typeof fallback === "string" ? fallback : "Could not send message to agent";
+  if (!raw) return fb;
+  const lower = raw.toLowerCase();
+  if (/follow[- ]?up\s*blocked/.test(lower)) {
+    return CURSOR_CHAT_ACCESS_DENIED_MESSAGE;
+  }
+  if (httpStatus === 401 && /unauthorized/.test(lower) && /blocked/.test(lower)) {
+    return CURSOR_CHAT_ACCESS_DENIED_MESSAGE;
+  }
+  return raw;
 }
 
 function latestConversionForRelease(projectId, releaseId) {
@@ -318,8 +366,9 @@ async function createClientChatAgent({ project, releaseId, text }) {
 /**
  * POST follow-up prompt (public).
  */
-export async function clientLinkFollowup({ slug, releaseId, promptText }) {
+export async function clientLinkFollowup({ slug, releaseId, promptText, clientEmail }) {
   const project = await resolveProjectBySlug(slug);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -350,10 +399,13 @@ export async function clientLinkFollowup({ slug, releaseId, promptText }) {
         text,
       });
       if (!result.ok) {
-        const msg =
-          typeof result.data?.error === "string"
-            ? result.data.error
-            : "Could not start chat agent";
+        const rawStr =
+          typeof result.data?.error === "string" ? result.data.error : "";
+        const msg = mapCursorChatErrorMessageForClient(
+          result.status,
+          rawStr,
+          "Could not start chat agent",
+        );
         throw new ApiError(
           result.status >= 400 && result.status < 500 ? result.status : 502,
           msg,
@@ -418,11 +470,12 @@ export async function clientLinkFollowup({ slug, releaseId, promptText }) {
   }
 
   if (status < 200 || status >= 300) {
+    const rawErr =
+      typeof data?.error === "string" ? data.error : "Could not send message to agent";
+    const message = mapCursorChatErrorMessageForClient(status, rawErr, rawErr);
     throw new ApiError(
       status >= 400 && status < 500 ? status : 502,
-      typeof data?.error === "string"
-        ? data.error
-        : "Could not send message to agent",
+      message,
     );
   }
 
@@ -738,8 +791,10 @@ export async function clientLinkConfirmLaunchpadMerge({
   releaseId,
   commitSha = null,
   messageId = null,
+  clientEmail,
 }) {
   const project = await resolveProjectBySlug(slug);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -846,8 +901,14 @@ export async function clientLinkConfirmLaunchpadMerge({
  * Public: deploy a saved release version to the project folder and mark it active
  * (restore / roll back live site).
  */
-export async function clientLinkRestoreVersion({ slug, releaseId, versionId }) {
+export async function clientLinkRestoreVersion({
+  slug,
+  releaseId,
+  versionId,
+  clientEmail,
+}) {
   const project = await resolveProjectBySlug(slug);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -907,8 +968,10 @@ export async function clientLinkPreviewCommit({
   commitSha,
   before = false,
   messageId = null,
+  clientEmail,
 }) {
   const project = await resolveProjectBySlug(slug);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 

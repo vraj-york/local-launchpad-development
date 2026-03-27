@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   clientLinkConfirmMerge,
   clientLinkFetchAgentStatus,
@@ -16,20 +22,54 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import { RotateCcw, X } from "lucide-react";
+import {
+  getClientLinkVerifiedEmail,
+  setClientLinkVerifiedEmail,
+} from "@/lib/clientLinkVerifiedEmail";
+import { ArrowUp, Check, Plus, RotateCcw, User, X } from "lucide-react";
 import { toast } from "sonner";
 import logo from "../assets/fevicon.png";
 
 const USER_BUBBLE_CLASS =
-  "ml-6 rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground shadow-sm";
+  "ml-6 rounded-lg rounded-br-xs bg-primary px-3 py-2 text-sm text-primary-foreground shadow-xs";
 const SYSTEM_NEUTRAL_BUBBLE_CLASS =
-  "mr-6 rounded-2xl rounded-tl-sm border border-border bg-muted/60 px-3 py-2 text-sm text-foreground shadow-sm";
+  "mr-6 rounded-lg rounded-tl-xs border border-border bg-muted/60 px-3 py-2 text-sm text-foreground shadow-xs";
 const SYSTEM_SUCCESS_BUBBLE_CLASS =
-  "mr-6 rounded-2xl rounded-tl-sm border border-emerald-500/35 bg-emerald-500/5 px-3 py-2 text-sm text-foreground shadow-sm";
+  "mr-6 rounded-lg rounded-tl-xs border border-emerald-500/35 bg-emerald-500/5 px-3 py-2 text-sm text-foreground shadow-xs";
 const SYSTEM_ERROR_BUBBLE_CLASS =
-  "mr-6 rounded-2xl rounded-tl-sm border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-foreground shadow-sm";
+  "mr-6 rounded-lg rounded-tl-xs border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-foreground shadow-xs";
+
+const LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const CHAT_ACCESS_DENIED_USER_MESSAGE =
+  "Your email is not allowed to use this chat feature.";
+
+function extractChatHttpErrorMessage(err) {
+  return (
+    err?.response?.data?.error ||
+    err?.error ||
+    err?.message ||
+    ""
+  );
+}
+
+/** Cursor may return errors such as "Unauthorized request.: Follow-up blocked." */
+function mapChatSendErrorForUser(raw) {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (!s) return "";
+  const lower = s.toLowerCase();
+  if (/follow[- ]?up\s*blocked/.test(lower)) {
+    return CHAT_ACCESS_DENIED_USER_MESSAGE;
+  }
+  if (/\bunauthorized\b/.test(lower) && /\bblocked\b/.test(lower)) {
+    return CHAT_ACCESS_DENIED_USER_MESSAGE;
+  }
+  return s;
+}
 
 function isCursorAgentSuccessTerminal(status) {
   if (status == null || status === "") return false;
@@ -52,6 +92,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   chatHistoryLoading,
   revertingMessageKey,
   appliedMessageKey,
+  chatMayMutate,
   onApplyMessageChanges,
 }) {
   const rowKey = msg.id ?? msg.key ?? null;
@@ -59,6 +100,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   const isApplied = appliedMessageKey === rowKey;
   const isApplying = revertingMessageKey === rowKey;
   const disableApply =
+    !chatMayMutate ||
     isMerged ||
     chatSending ||
     chatPolling ||
@@ -87,7 +129,10 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
       : null;
 
   return (
-    <div key={msg.id ?? msg.key ?? `m-${index}`} className={msg.role === "user" ? USER_BUBBLE_CLASS : systemClass}>
+    <div
+      key={msg.id ?? msg.key ?? `m-${index}`}
+      className={msg.role === "user" ? USER_BUBBLE_CLASS : systemClass}
+    >
       {msg.text}
       {msg.role === "user" && msg.appliedCommitSha ? (
         <div className="mt-2 flex justify-end">
@@ -144,12 +189,78 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const [confirmMergeOpen, setConfirmMergeOpen] = useState(false);
   const [revertingMessageKey, setRevertingMessageKey] = useState(null);
   const [appliedMessageKey, setAppliedMessageKey] = useState(null);
+  const [verifyBump, setVerifyBump] = useState(0);
+  const [panelEmailInput, setPanelEmailInput] = useState("");
+  const [gateInlineError, setGateInlineError] = useState("");
+  const [composerEmailEditorOpen, setComposerEmailEditorOpen] =
+    useState(false);
+  const [composerEmailDraft, setComposerEmailDraft] = useState("");
+  const [composerEmailError, setComposerEmailError] = useState("");
 
   const autoApplyArmedRef = useRef({ releaseId: null, armed: false });
-  const lastAutoAppliedRef = useRef({ releaseId: null, messageId: null, sha: null });
-  const lastAgentSnapshotRef = useRef({ releaseId: null, status: null, activity: null });
+  const lastAutoAppliedRef = useRef({
+    releaseId: null,
+    messageId: null,
+    sha: null,
+  });
+  const lastAgentSnapshotRef = useRef({
+    releaseId: null,
+    status: null,
+    activity: null,
+  });
 
-  const canUseChat = Boolean(projectSlug?.trim()) && !isLocked && effectiveChatReleaseId != null;
+  const identityEmail = useMemo(
+    () => getClientLinkVerifiedEmail(),
+    [verifyBump, isOpen],
+  );
+  const identityLooksValid =
+    Boolean(identityEmail) && LOCK_EMAIL_RE.test(identityEmail);
+  const showMainChatUi = identityLooksValid;
+
+  const canViewChat =
+    Boolean(projectSlug?.trim()) && effectiveChatReleaseId != null;
+  const canMutateChat = canViewChat && !isLocked && identityLooksValid;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const s = getClientLinkVerifiedEmail();
+    setPanelEmailInput(s && LOCK_EMAIL_RE.test(s) ? s : "");
+    setGateInlineError("");
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) setComposerEmailEditorOpen(false);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !showMainChatUi || composerEmailEditorOpen) return;
+    const s = getClientLinkVerifiedEmail();
+    setComposerEmailDraft(s && LOCK_EMAIL_RE.test(s) ? s : "");
+    setComposerEmailError("");
+  }, [isOpen, showMainChatUi, verifyBump, composerEmailEditorOpen]);
+
+  const toggleComposerEmailEditor = useCallback(() => {
+    setComposerEmailEditorOpen((open) => {
+      const next = !open;
+      if (next) {
+        const s = getClientLinkVerifiedEmail();
+        setComposerEmailDraft(s && LOCK_EMAIL_RE.test(s) ? s : "");
+        setComposerEmailError("");
+      }
+      return next;
+    });
+  }, []);
+
+  const handleContinueEmail = useCallback(() => {
+    const email = panelEmailInput.trim().toLowerCase();
+    if (!LOCK_EMAIL_RE.test(email)) {
+      setGateInlineError("Please enter a valid email address.");
+      return;
+    }
+    setClientLinkVerifiedEmail(email);
+    setGateInlineError("");
+    setVerifyBump((b) => b + 1);
+  }, [panelEmailInput]);
 
   const addSystemMessageOnce = useCallback((msgKey, text, tone = "neutral") => {
     setChatMessages((prev) => {
@@ -185,6 +296,25 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     [effectiveChatReleaseId, mapChatRows, projectSlug],
   );
 
+  const handleSaveComposerEmail = useCallback(() => {
+    const email = composerEmailDraft.trim().toLowerCase();
+    if (!LOCK_EMAIL_RE.test(email)) {
+      setComposerEmailError("Please enter a valid email address.");
+      return;
+    }
+    const current = (getClientLinkVerifiedEmail() || "").trim().toLowerCase();
+    if (current === email) {
+      setComposerEmailError("");
+      setComposerEmailEditorOpen(false);
+      return;
+    }
+    setClientLinkVerifiedEmail(email);
+    setComposerEmailError("");
+    setVerifyBump((b) => b + 1);
+    void refreshChatMessages();
+    setComposerEmailEditorOpen(false);
+  }, [composerEmailDraft, refreshChatMessages]);
+
   const selectedAppliedMessage = useMemo(
     () =>
       chatMessages.find(
@@ -200,7 +330,10 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const applyMessageToPreview = useCallback(
     async (msg) => {
       if (!projectSlug?.trim() || effectiveChatReleaseId == null) return false;
-      const sha = typeof msg?.appliedCommitSha === "string" ? msg.appliedCommitSha.trim() : "";
+      const sha =
+        typeof msg?.appliedCommitSha === "string"
+          ? msg.appliedCommitSha.trim()
+          : "";
       if (!sha) {
         toast.error("No commit is recorded for this message yet.");
         return false;
@@ -215,28 +348,48 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           sha,
           false,
           msg?.id,
+          identityEmail,
         );
         const baseUrl = String(preview?.buildUrl || "").trim();
-        if (!baseUrl) throw new Error("Preview URL missing from server response.");
-        onPreviewCommitApplied?.({ buildUrl: baseUrl, releaseId: Number(effectiveChatReleaseId) });
+        if (!baseUrl)
+          throw new Error("Preview URL missing from server response.");
+        onPreviewCommitApplied?.({
+          buildUrl: baseUrl,
+          releaseId: Number(effectiveChatReleaseId),
+        });
         setAppliedMessageKey(key);
-        toast.success(`Applied commit ${String(preview?.commitSha || "").slice(0, 7)} to preview.`);
+        toast.success(
+          `Applied commit ${String(preview?.commitSha || "").slice(0, 7)} to preview.`,
+        );
         return true;
       } catch (e) {
         const msgText =
-          e?.response?.data?.error || e?.error || e?.message || "Could not preview this commit.";
+          e?.response?.data?.error ||
+          e?.error ||
+          e?.message ||
+          "Could not preview this commit.";
         toast.error(msgText);
         return false;
       } finally {
         setRevertingMessageKey(null);
       }
     },
-    [effectiveChatReleaseId, onPreviewCommitApplied, projectSlug],
+    [
+      effectiveChatReleaseId,
+      identityEmail,
+      onPreviewCommitApplied,
+      projectSlug,
+    ],
   );
 
   const autoApplyLatestChatCommit = useCallback(
     async (rows, rid) => {
-      if (!projectSlug?.trim() || rid == null || !Array.isArray(rows) || rows.length === 0) {
+      if (
+        !projectSlug?.trim() ||
+        rid == null ||
+        !Array.isArray(rows) ||
+        rows.length === 0
+      ) {
         return false;
       }
       const latestAppliedUser = [...rows]
@@ -253,10 +406,13 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       const mid = Number(latestAppliedUser.id);
       if (
         lastAutoAppliedRef.current.releaseId === Number(rid) &&
-        lastAutoAppliedRef.current.messageId === (Number.isInteger(mid) ? mid : null) &&
+        lastAutoAppliedRef.current.messageId ===
+          (Number.isInteger(mid) ? mid : null) &&
         lastAutoAppliedRef.current.sha === sha
       ) {
-        setAppliedMessageKey(latestAppliedUser.id ?? latestAppliedUser.key ?? sha);
+        setAppliedMessageKey(
+          latestAppliedUser.id ?? latestAppliedUser.key ?? sha,
+        );
         return true;
       }
 
@@ -281,12 +437,20 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
 
     try {
       while (Date.now() - start < maxMs) {
-        const st = await clientLinkFetchAgentStatus(projectSlug, effectiveChatReleaseId);
-        const raw = st?.status ? String(st.status).trim().toUpperCase().replace(/\s+/g, "_") : "";
+        const st = await clientLinkFetchAgentStatus(
+          projectSlug,
+          effectiveChatReleaseId,
+        );
+        const raw = st?.status
+          ? String(st.status).trim().toUpperCase().replace(/\s+/g, "_")
+          : "";
         const activity =
-          st?.activity && typeof st.activity === "string" ? st.activity.trim() : "";
+          st?.activity && typeof st.activity === "string"
+            ? st.activity.trim()
+            : "";
 
-        if (raw && !isCursorAgentSuccessTerminal(raw)) setMergeAwaitingConfirm(false);
+        if (raw && !isCursorAgentSuccessTerminal(raw))
+          setMergeAwaitingConfirm(false);
 
         const last = lastAgentSnapshotRef.current;
         if (
@@ -297,7 +461,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           if (raw) {
             addSystemMessageOnce(
               `status:${effectiveChatReleaseId}:${raw}`,
-              activity ? `Agent status: ${raw} - ${activity}` : `Agent status: ${raw}`,
+              activity
+                ? `Agent status: ${raw} - ${activity}`
+                : `Agent status: ${raw}`,
               "neutral",
             );
           } else if (activity) {
@@ -330,9 +496,13 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
               const rows = await refreshChatMessages(effectiveChatReleaseId);
               const canAutoApply =
                 autoApplyArmedRef.current.armed &&
-                autoApplyArmedRef.current.releaseId === Number(effectiveChatReleaseId);
+                autoApplyArmedRef.current.releaseId ===
+                  Number(effectiveChatReleaseId);
               if (canAutoApply) {
-                const applied = await autoApplyLatestChatCommit(rows, effectiveChatReleaseId);
+                const applied = await autoApplyLatestChatCommit(
+                  rows,
+                  effectiveChatReleaseId,
+                );
                 if (applied) {
                   autoApplyArmedRef.current = {
                     releaseId: Number(effectiveChatReleaseId),
@@ -362,7 +532,10 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
             onResetPreview?.();
 
             try {
-              const sum = await clientLinkFetchExecutionSummary(projectSlug, effectiveChatReleaseId);
+              const sum = await clientLinkFetchExecutionSummary(
+                projectSlug,
+                effectiveChatReleaseId,
+              );
               if (sum?.pendingMergeConfirmation) {
                 setMergeAwaitingConfirm(true);
                 addSystemMessageOnce(
@@ -390,7 +563,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
         }
         await new Promise((r) => setTimeout(r, 3000));
       }
-      toast.message("Still processing - you can close this panel and refresh the page later.");
+      toast.message(
+        "Still processing - you can close this panel and refresh the page later.",
+      );
     } catch (e) {
       toast.error(e?.error || e?.message || "Status check failed");
     } finally {
@@ -426,36 +601,67 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     try {
       setChatMessages((m) => [...m, { role: "user", text }]);
       setChatInput("");
-      await clientLinkSendFollowup(projectSlug, rid, text);
+      await clientLinkSendFollowup(projectSlug, rid, text, identityEmail);
       autoApplyArmedRef.current = { releaseId: rid, armed: true };
-      lastAgentSnapshotRef.current = { releaseId: rid, status: null, activity: null };
+      lastAgentSnapshotRef.current = {
+        releaseId: rid,
+        status: null,
+        activity: null,
+      };
       setChatMessages((m) => [
         ...m,
-        { role: "system", tone: "neutral", text: "Request sent. Applying changes on the server..." },
+        {
+          role: "system",
+          tone: "neutral",
+          text: "Request sent. Applying changes on the server...",
+        },
       ]);
       void pollUntilAgentSettles();
     } catch (e) {
-      toast.error(e?.error || e?.message || "Failed to send");
+      const rawMsg = extractChatHttpErrorMessage(e);
+      const mapped = mapChatSendErrorForUser(rawMsg);
+      const display = mapped || rawMsg || "Failed to send";
+      toast.error(display);
       setChatMessages((m) => [
         ...m,
-        { role: "system", tone: "error", text: e?.error || e?.message || "Request failed." },
+        {
+          role: "system",
+          tone: "error",
+          text: display,
+        },
       ]);
     } finally {
       setChatSending(false);
     }
-  }, [chatInput, effectiveChatReleaseId, isLocked, pollUntilAgentSettles, projectSlug]);
+  }, [
+    chatInput,
+    effectiveChatReleaseId,
+    identityEmail,
+    isLocked,
+    pollUntilAgentSettles,
+    projectSlug,
+  ]);
 
   const handleConfirmMerge = useCallback(async () => {
     if (!projectSlug?.trim() || effectiveChatReleaseId == null) return;
     const selected = selectedAppliedMessage;
-    const selectedSha = typeof selected?.appliedCommitSha === "string" ? selected.appliedCommitSha.trim() : "";
+    const selectedSha =
+      typeof selected?.appliedCommitSha === "string"
+        ? selected.appliedCommitSha.trim()
+        : "";
     if (!selectedSha) {
       toast.error("Apply a chat change first, then confirm merge.");
       return;
     }
     setConfirmingMerge(true);
     try {
-      await clientLinkConfirmMerge(projectSlug, effectiveChatReleaseId, selectedSha, selected?.id ?? null);
+      await clientLinkConfirmMerge(
+        projectSlug,
+        effectiveChatReleaseId,
+        selectedSha,
+        selected?.id ?? null,
+        identityEmail,
+      );
       setMergeAwaitingConfirm(false);
       setConfirmMergeOpen(false);
       toast.success("Changes merged to launchpad");
@@ -463,7 +669,11 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       onResetPreview?.();
       await refreshChatMessages(effectiveChatReleaseId);
     } catch (e) {
-      const msg = e?.response?.data?.error || e?.error || e?.message || "Could not merge to launchpad.";
+      const msg =
+        e?.response?.data?.error ||
+        e?.error ||
+        e?.message ||
+        "Could not merge to launchpad.";
       toast.error(msg);
     } finally {
       setConfirmingMerge(false);
@@ -475,10 +685,17 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     projectSlug,
     refreshChatMessages,
     selectedAppliedMessage,
+    identityEmail,
   ]);
 
   useEffect(() => {
-    if (!isOpen || effectiveChatReleaseId == null || !projectSlug?.trim()) return;
+    if (
+      !isOpen ||
+      effectiveChatReleaseId == null ||
+      !projectSlug?.trim() ||
+      !showMainChatUi
+    )
+      return;
     let cancelled = false;
     setChatHistoryLoading(true);
     (async () => {
@@ -495,29 +712,55 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [effectiveChatReleaseId, isOpen, projectSlug, refreshChatMessages]);
+  }, [
+    effectiveChatReleaseId,
+    isOpen,
+    projectSlug,
+    refreshChatMessages,
+    showMainChatUi,
+  ]);
 
   useEffect(() => {
-    if (!isOpen || effectiveChatReleaseId == null || !projectSlug?.trim()) return;
+    if (
+      !isOpen ||
+      effectiveChatReleaseId == null ||
+      !projectSlug?.trim() ||
+      !showMainChatUi
+    )
+      return;
     let cancelled = false;
     (async () => {
       try {
-        const st = await clientLinkFetchAgentStatus(projectSlug, effectiveChatReleaseId);
+        const st = await clientLinkFetchAgentStatus(
+          projectSlug,
+          effectiveChatReleaseId,
+        );
         if (cancelled) return;
-        const raw = st?.status ? String(st.status).trim().toUpperCase().replace(/\s+/g, "_") : "";
+        const raw = st?.status
+          ? String(st.status).trim().toUpperCase().replace(/\s+/g, "_")
+          : "";
         if (
           isCursorAgentSuccessTerminal(raw) &&
-          (st?.mergeConfirmationPending || st?.awaitingLaunchpadConfirmation || st?.deferLaunchpadMerge)
+          (st?.mergeConfirmationPending ||
+            st?.awaitingLaunchpadConfirmation ||
+            st?.deferLaunchpadMerge)
         ) {
           setMergeAwaitingConfirm(true);
           const rows = await refreshChatMessages(effectiveChatReleaseId);
           const canAutoApply =
             autoApplyArmedRef.current.armed &&
-            autoApplyArmedRef.current.releaseId === Number(effectiveChatReleaseId);
+            autoApplyArmedRef.current.releaseId ===
+              Number(effectiveChatReleaseId);
           if (canAutoApply) {
-            const applied = await autoApplyLatestChatCommit(rows, effectiveChatReleaseId);
+            const applied = await autoApplyLatestChatCommit(
+              rows,
+              effectiveChatReleaseId,
+            );
             if (applied) {
-              autoApplyArmedRef.current = { releaseId: Number(effectiveChatReleaseId), armed: false };
+              autoApplyArmedRef.current = {
+                releaseId: Number(effectiveChatReleaseId),
+                armed: false,
+              };
             }
           }
           addSystemMessageOnce(
@@ -538,6 +781,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     autoApplyLatestChatCommit,
     effectiveChatReleaseId,
     isOpen,
+    showMainChatUi,
     projectSlug,
     refreshChatMessages,
   ]);
@@ -545,7 +789,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   return (
     <>
       <div className="flex h-full min-h-0 flex-col border-l border-border bg-card text-card-foreground">
-        <div className="border-b border-border bg-muted/50 px-4 py-4">
+        <div className="border-b border-border bg-muted/50 px-4 py-2">
           <div className="flex items-center justify-between gap-2">
             <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
               <img src={logo} alt="launchpad logo" className="w-7 h-7" />
@@ -565,109 +809,259 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="shrink-0 space-y-2 border-b border-border px-4 py-3">
-            {!canUseChat && effectiveChatReleaseId == null && (
-              <p className="text-xs text-muted-foreground">
-                Choose a version in the header dropdown so we know which release to update.
-              </p>
-            )}
-            {isLocked && (
-              <p className="text-xs text-destructive">
-                This release is locked - changes are disabled.
-              </p>
-            )}
-          </div>
-
-          <div className="min-h-[200px] flex-1 space-y-3 overflow-y-auto px-4 py-3">
-            {chatMessages.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                Describe the change you want (e.g. &quot;Make the hero button larger&quot;).
-              </p>
-            )}
-            {chatMessages.map((msg, index) => (
-              <ChatMessageRow
-                key={msg.id ?? msg.key ?? `m-${index}`}
-                msg={msg}
-                index={index}
-                chatSending={chatSending}
-                chatPolling={chatPolling}
-                chatHistoryLoading={chatHistoryLoading}
-                revertingMessageKey={revertingMessageKey}
-                appliedMessageKey={appliedMessageKey}
-                onApplyMessageChanges={applyMessageToPreview}
-              />
-            ))}
-            {(chatSending || chatPolling) && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Spinner className="size-4" />
-                Applying changes...
-              </div>
-            )}
-            {chatHistoryLoading && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Spinner className="size-4" />
-                Loading conversation...
-              </div>
-            )}
-          </div>
-
-          <div className="shrink-0 space-y-2 border-t border-border bg-card px-4 py-3">
-            {mergeAwaitingConfirm && (
+            {!showMainChatUi && (
               <>
-                {!selectedAppliedMessage && (
+                <div className="space-y-3 px-4 py-3">
                   <p className="text-xs text-muted-foreground">
-                    Apply one chat change in preview first, then confirm merge.
+                    Enter your email to continue. Chat permissions are verified
+                    securely on the server.
                   </p>
-                )}
-                <Button
-                  type="button"
-                  disabled={
-                    !canUseChat ||
-                    chatSending ||
-                    chatPolling ||
-                    confirmingMerge ||
-                    chatHistoryLoading ||
-                    !selectedAppliedMessage
-                  }
-                  className="w-full rounded-xl bg-linear-to-r from-violet-600 to-indigo-600 font-semibold text-white shadow-md hover:from-violet-700 hover:to-indigo-700"
-                  onClick={() => setConfirmMergeOpen(true)}
-                >
-                  {confirmingMerge ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <Spinner className="size-4" />
-                      Merging...
-                    </span>
-                  ) : (
-                    "Confirm changes"
-                  )}
-                </Button>
+                  <div className="grid gap-2">
+                    <Label htmlFor="client-link-panel-chat-email">
+                      Your email
+                    </Label>
+                    <Input
+                      id="client-link-panel-chat-email"
+                      type="email"
+                      autoComplete="email"
+                      placeholder="you@company.com"
+                      value={panelEmailInput}
+                      onChange={(e) => {
+                        setPanelEmailInput(e.target.value);
+                        setGateInlineError("");
+                      }}
+                      className="rounded-lg border-input"
+                    />
+                    {gateInlineError ? (
+                      <p className="text-xs text-destructive">
+                        {gateInlineError}
+                      </p>
+                    ) : null}
+                    <Button
+                      type="button"
+                      className="w-full bg-linear-to-r from-violet-600 to-indigo-600 font-semibold text-white shadow-md hover:from-violet-700 hover:to-indigo-700"
+                      onClick={handleContinueEmail}
+                      disabled={
+                        !LOCK_EMAIL_RE.test(
+                          panelEmailInput.trim().toLowerCase(),
+                        )
+                      }
+                    >
+                      Continue
+                    </Button>
+                  </div>
+                </div>
               </>
             )}
-            <Textarea
-              placeholder="Your change request..."
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              disabled={!canUseChat || chatSending || chatPolling || chatHistoryLoading}
-              className="min-h-[88px] resize-none rounded-xl border-input bg-background focus-visible:ring-ring/50"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  if (canUseChat && !chatSending && !chatPolling && !chatHistoryLoading) {
-                    void handleSendChat();
-                  }
-                }
-              }}
-            />
-            <Button
-              type="button"
-              variant="default"
-              disabled={!canUseChat || chatSending || chatPolling || chatHistoryLoading}
-              className="w-full rounded-xl font-semibold shadow-sm"
-              onClick={() => void handleSendChat()}
-            >
-              Send request
-            </Button>
-          </div>
+            {showMainChatUi &&
+              !canViewChat &&
+              effectiveChatReleaseId == null && (
+                <p className="text-xs text-muted-foreground px-4py-3">
+                  Choose a version in the header dropdown so we know which
+                  release to update.
+                </p>
+              )}
+            {showMainChatUi && isLocked && (
+              <p className="rounded-lg border border-red-500 bg-red-50 px-3 py-3 text-xs leading-relaxed text-red-500">
+                This release is locked. please switch to an active release to
+                use chat.
+              </p>
+            )}
+
+          {showMainChatUi ? (
+            <>
+              <div className="min-h-[200px] flex-1 space-y-3 overflow-y-auto px-4 py-3">
+                {chatMessages.length === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Describe the change you want (e.g. &quot;Make the hero
+                    button larger&quot;).
+                  </p>
+                )}
+                {chatMessages.map((msg, index) => (
+                  <ChatMessageRow
+                    key={msg.id ?? msg.key ?? `m-${index}`}
+                    msg={msg}
+                    index={index}
+                    chatSending={chatSending}
+                    chatPolling={chatPolling}
+                    chatHistoryLoading={chatHistoryLoading}
+                    revertingMessageKey={revertingMessageKey}
+                    appliedMessageKey={appliedMessageKey}
+                    chatMayMutate={canMutateChat}
+                    onApplyMessageChanges={applyMessageToPreview}
+                  />
+                ))}
+                {(chatSending || chatPolling) && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Spinner className="size-4" />
+                    Applying changes...
+                  </div>
+                )}
+                {chatHistoryLoading && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Spinner className="size-4" />
+                    Loading conversation...
+                  </div>
+                )}
+              </div>
+
+              <div className="shrink-0 space-y-2 border-t border-border bg-card px-4 py-3">
+                {mergeAwaitingConfirm &&
+                  !selectedAppliedMessage &&
+                  !isLocked && (
+                    <>
+                      <p className="text-xs text-muted-foreground">
+                        Apply one chat change in preview first, then confirm
+                        merge.
+                      </p>
+                      <Button
+                        type="button"
+                        disabled={
+                          !canMutateChat ||
+                          chatSending ||
+                          chatPolling ||
+                          confirmingMerge ||
+                          chatHistoryLoading ||
+                          !selectedAppliedMessage
+                        }
+                        size="sm"
+                        className="w-full bg-linear-to-r from-violet-600 to-indigo-600 font-semibold text-white shadow-md hover:from-violet-700 hover:to-indigo-700"
+                        onClick={() => setConfirmMergeOpen(true)}
+                      >
+                        {confirmingMerge ? (
+                          <span className="flex items-center justify-center gap-2">
+                            <Spinner className="size-4" />
+                            Merging...
+                          </span>
+                        ) : (
+                          "Confirm changes"
+                        )}
+                      </Button>
+                    </>
+                  )}
+                <div className="rounded-lg border border-slate-200/90 bg-white shadow-sm dark:border-border dark:bg-card">
+                  <Textarea
+                    placeholder="Type here to reflect changes..."
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    disabled={
+                      !canMutateChat ||
+                      chatSending ||
+                      chatPolling ||
+                      chatHistoryLoading
+                    }
+                    className="resize-none border-0 bg-transparent px-3 pb-1 pt-3 text-sm shadow-none placeholder:tex focus-visible:ring-0 focus-visible:ring-offset-0 dark:placeholder:text-muted-foreground"
+                      onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        if (
+                          canMutateChat &&
+                          !chatSending &&
+                          !chatPolling &&
+                          !chatHistoryLoading
+                        ) {
+                          void handleSendChat();
+                        }
+                      }
+                    }}
+                  />
+                  <div className="flex items-end justify-between gap-2 px-2 pb-2 pt-0">
+                    <div
+                      className={`flex min-w-0 items-end gap-2 ${composerEmailEditorOpen ? "flex-1" : ""}`}
+                    >
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="icon"
+                        className="h-9 w-9 shrink-0 rounded-full"
+                        aria-expanded={composerEmailEditorOpen}
+                        aria-label={
+                          composerEmailEditorOpen
+                            ? "Close email editor"
+                            : "Edit chat email"
+                        }
+                        onClick={toggleComposerEmailEditor}
+                      >
+                        <User className="size-4" />
+                      </Button>
+                      {composerEmailEditorOpen ? (
+                        <div className="min-w-0 flex-1 space-y-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <Input
+                              id="client-link-composer-chat-email"
+                              type="email"
+                              name="email"
+                              autoComplete="email"
+                              placeholder="Your stakeholder email"
+                              value={composerEmailDraft}
+                              onChange={(e) => {
+                                setComposerEmailDraft(e.target.value);
+                                setComposerEmailError("");
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  handleSaveComposerEmail();
+                                }
+                              }}
+                              disabled={
+                                chatSending ||
+                                chatPolling ||
+                                chatHistoryLoading
+                              }
+                              className="h-9 min-w-0 flex-1 rounded-full border-slate-200/90 bg-white text-xs shadow-sm dark:border-border dark:bg-background"
+                            />
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="secondary"
+                              className="h-9 w-9 shrink-0 rounded-full"
+                              aria-label="Update chat email"
+                              disabled={
+                                chatSending ||
+                                chatPolling ||
+                                chatHistoryLoading ||
+                                !LOCK_EMAIL_RE.test(
+                                  composerEmailDraft.trim().toLowerCase(),
+                                )
+                              }
+                              onClick={handleSaveComposerEmail}
+                            >
+                              <Check className="size-4" />
+                            </Button>
+                          </div>
+                          {composerEmailError ? (
+                            <p className="px-1 text-[10px] leading-tight text-destructive">
+                              {composerEmailError}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    <Button
+                      type="button"
+                      size="icon"
+                      disabled={
+                        !canMutateChat ||
+                        chatSending ||
+                        chatPolling ||
+                        chatHistoryLoading
+                      }
+                      className="h-9 w-9 shrink-0 rounded-full disabled:opacity-40"
+                      aria-label="Send message"
+                      onClick={() => void handleSendChat()}
+                    >
+                      {chatSending || chatPolling ? (
+                        <Spinner className="size-4 text-white" />
+                      ) : (
+                        <ArrowUp className="size-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : null}
         </div>
       </div>
       <Dialog open={confirmMergeOpen} onOpenChange={setConfirmMergeOpen}>
@@ -675,15 +1069,18 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           <DialogHeader>
             <DialogTitle>Confirm changes?</DialogTitle>
             <DialogDescription>
-              These changes will be merged into Release <span className="font-medium text-foreground">{mergeTargetLabel || "the selected release/version"}</span> and update the live website.
+              These changes will be merged into Release{" "}
+              <span className="font-medium text-foreground">
+                {mergeTargetLabel || "the selected release/version"}
+              </span>{" "}
+              and update the live website.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">
-              Chat message
-            </p>
+            <p className="text-xs text-muted-foreground">Chat message</p>
             <div className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-foreground">
-              {selectedAppliedMessage?.text || "No applied chat message selected."}
+              {selectedAppliedMessage?.text ||
+                "No applied chat message selected."}
             </div>
           </div>
           <DialogFooter showCloseButton={false}>

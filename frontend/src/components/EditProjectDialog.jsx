@@ -2,8 +2,11 @@ import React, { useEffect, useState } from "react";
 import { updateProject, fetchExternalHubProjects } from "@/api";
 import {
   validateOptionalCommaSeparatedEmails,
-  uniqueEmailsFromHubProjects,
+  uniqueEmailsForHubProject,
+  emailsArrayToStorageString,
+  storageStringToEmailsArray,
 } from "@/utils/emailList";
+import { EmailMultiSelect } from "@/components/EmailMultiSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -95,8 +98,8 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const [jiraApiToken, setJiraApiToken] = useState("");
   const [jiraProjectKey, setJiraProjectKey] = useState("");
 
-  const [assignedUserEmails, setAssignedUserEmails] = useState("");
-  const [stakeholderEmails, setStakeholderEmails] = useState("");
+  const [assignedUserEmailTags, setAssignedUserEmailTags] = useState([]);
+  const [stakeholderEmailTags, setStakeholderEmailTags] = useState([]);
   const [hubProjectsForEmails, setHubProjectsForEmails] = useState([]);
 
   const [validationErrors, setValidationErrors] = useState({});
@@ -115,8 +118,12 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
     setJiraUsername(project.jiraUsername ?? "");
     setJiraProjectKey(project.jiraProjectKey ?? "");
     setJiraApiToken(project.jiraApiToken ?? "");
-    setAssignedUserEmails(project.assignedUserEmails ?? "");
-    setStakeholderEmails(project.stakeholderEmails ?? "");
+    setAssignedUserEmailTags(
+      storageStringToEmailsArray(project.assignedUserEmails),
+    );
+    setStakeholderEmailTags(
+      storageStringToEmailsArray(project.stakeholderEmails),
+    );
     setShowGithubToken(false);
     setShowJiraToken(false);
     setValidationErrors({});
@@ -164,12 +171,12 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
     }
 
     const assignedErr = validateOptionalCommaSeparatedEmails(
-      assignedUserEmails,
+      emailsArrayToStorageString(assignedUserEmailTags),
       "Assigned users",
     );
     if (assignedErr) errors.assignedUserEmails = assignedErr;
     const stakeholderErr = validateOptionalCommaSeparatedEmails(
-      stakeholderEmails,
+      emailsArrayToStorageString(stakeholderEmailTags),
       "Stakeholders",
     );
     if (stakeholderErr) errors.stakeholderEmails = stakeholderErr;
@@ -197,8 +204,8 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         jiraUsername,
         jiraProjectKey,
         jiraApiToken,
-        assignedUserEmails,
-        stakeholderEmails,
+        assignedUserEmails: emailsArrayToStorageString(assignedUserEmailTags),
+        stakeholderEmails: emailsArrayToStorageString(stakeholderEmailTags),
         project,
       });
 
@@ -207,8 +214,6 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         setSaving(false);
         return;
       }
-
-      console.log(payload, "project upload payload");
 
       await updateProject(project.id, payload);
       toast.success("Project updated successfully");
@@ -224,10 +229,17 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
 
   if (!project) return null;
 
+  const hubRowForProject = hubProjectsForEmails.find(
+    (p) => p.id === project.projectId,
+  );
+  const assignedHubSuggestions = hubRowForProject
+    ? uniqueEmailsForHubProject(hubRowForProject)
+    : [];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-3xl max-h-[min(90vh,880px)] overflow-y-auto border-border bg-background shadow-xl p-0 gap-0"
+        className="max-w-5xl max-h-[min(90vh,880px)] overflow-y-auto border-border bg-background shadow-xl p-0 gap-0"
         showCloseButton
       >
         <div className="px-6 pt-6 pb-2 border-b border-border bg-primary/10">
@@ -273,29 +285,17 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                     Assigned users (optional)
                   </Label>
                   <p className="text-xs text-muted-foreground">
-                    Comma-separated emails. Suggestions from Form hub when
-                    available; you can type any email.
+                    Hub emails for this workspace&apos;s linked project, or
+                    type addresses manually.
                   </p>
-                  <Input
+                  <EmailMultiSelect
                     id="edit-assigned-user-emails"
-                    list={`edit-assigned-user-emails-dl-${project.id}`}
-                    placeholder="e.g. dev@company.com"
-                    value={assignedUserEmails}
-                    onChange={(e) => setAssignedUserEmails(e.target.value)}
-                    className={
-                      validationErrors.assignedUserEmails
-                        ? "border-destructive"
-                        : ""
-                    }
-                    autoComplete="off"
+                    value={assignedUserEmailTags}
+                    onChange={setAssignedUserEmailTags}
+                    suggestions={assignedHubSuggestions}
+                    error={validationErrors.assignedUserEmails}
+                    placeholder="Email, then Enter"
                   />
-                  <datalist id={`edit-assigned-user-emails-dl-${project.id}`}>
-                    {uniqueEmailsFromHubProjects(hubProjectsForEmails).map(
-                      (e) => (
-                        <option key={e} value={e} />
-                      ),
-                    )}
-                  </datalist>
                   {validationErrors.assignedUserEmails && (
                     <p className="text-sm text-destructive">
                       {validationErrors.assignedUserEmails}
@@ -307,20 +307,16 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                     Stakeholders (optional)
                   </Label>
                   <p className="text-xs text-muted-foreground">
-                    Comma-separated. Only these emails can confirm a public
-                    release lock.
+                    Add manually. Only these emails can confirm a public release
+                    lock.
                   </p>
-                  <Textarea
+                  <EmailMultiSelect
                     id="edit-stakeholder-emails"
-                    placeholder="e.g. client@example.com"
-                    value={stakeholderEmails}
-                    onChange={(e) => setStakeholderEmails(e.target.value)}
-                    rows={3}
-                    className={
-                      validationErrors.stakeholderEmails
-                        ? "border-destructive resize-y min-h-[80px]"
-                        : "resize-y min-h-[80px]"
-                    }
+                    value={stakeholderEmailTags}
+                    onChange={setStakeholderEmailTags}
+                    suggestions={[]}
+                    error={validationErrors.stakeholderEmails}
+                    placeholder="Email, then Enter"
                   />
                   {validationErrors.stakeholderEmails && (
                     <p className="text-sm text-destructive">
