@@ -104,7 +104,7 @@ export const releaseController = {
                 .filter(id => !isNaN(id));
         }
 
-        const result = await uploadReleaseVersionService(releaseId, req.file, req.body.version, roadmapItemIds, req.user);
+        const result = await uploadReleaseVersionService(releaseId, req.file, roadmapItemIds, req.user);
 
         res.json(result);
     }),

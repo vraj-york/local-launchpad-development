@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/resizable";
 import { BotMessageSquare, FileText, Lock } from "lucide-react";
 import { ClientLinkChatPanel } from "../components/ClientLinkChatPanel";
+import { formatProjectVersionLabel } from "@/lib/utils";
 import {
   getClientLinkVerifiedEmail,
   setClientLinkVerifiedEmail,
@@ -263,7 +264,7 @@ export const ClientLink = () => {
     (activeRelease?.versions || []).find((v) => v?.isActive) ||
     activeRelease?.versions?.[0] ||
     null;
-  const chatMergeTargetLabel = `${String(activeRelease?.name || "Unknown release")} / ${activeVersion?.version}`;
+  const chatMergeTargetLabel = `${String(activeRelease?.name || "Unknown release")} / ${formatProjectVersionLabel(activeVersion?.version)}`;
 
   useEffect(() => {
     if (!showLockAndFeedback && chatOpen) {

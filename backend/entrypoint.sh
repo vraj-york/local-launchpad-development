@@ -84,6 +84,28 @@ else
   fi
 fi
 
+# ssl.conf proxies / to Compose hostname "frontend". Backend starts before frontend (frontend depends_on
+# backend); nginx resolves that name at startup, so without a wait you can get:
+#   nginx: [emerg] host not found in upstream "frontend"
+# UAT often avoids this by chance (slower starts / restarts); production EC2 commonly hits it on first boot.
+if [ -f /app/nginx-configs/ssl.conf ] && grep -q 'proxy_pass http://frontend:80' /app/nginx-configs/ssl.conf 2>/dev/null; then
+  echo "Waiting for Compose service 'frontend' (HTTPS reverse proxy to SPA)..."
+  i=0
+  ok=0
+  while [ "$i" -lt 120 ]; do
+    if wget -q -T 2 -O /dev/null http://frontend:80/ 2>/dev/null; then
+      ok=1
+      break
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  if [ "$ok" != 1 ]; then
+    echo "[ERROR] http://frontend:80 not reachable after 120s. Is the frontend service up and on the same Docker Compose network?"
+    exit 1
+  fi
+fi
+
 # Start nginx (daemon mode) then Node; project configs proxy to 127.0.0.1:<port>
 if command -v nginx >/dev/null 2>&1; then
   nginx

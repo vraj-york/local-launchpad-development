@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import RoadMapManagement from "@/components/RoadMapManagement";
 import { ExternalLink } from "lucide-react";
 import { useParams } from "react-router-dom";
+import { formatProjectVersionLabel } from "@/lib/utils";
 
 export const PublicProjectView = () => {
   const [publicProject, setPublicProject] = useState(null);
@@ -95,7 +96,8 @@ export const PublicProjectView = () => {
               View Live Project
             </Button>
             <p className="text-muted-foreground text-xs">
-              Active Version: {publicProject?.versions[0]?.version}
+              Active revision:{" "}
+              {formatProjectVersionLabel(publicProject?.versions[0]?.version)}
             </p>
           </div>
         </div>

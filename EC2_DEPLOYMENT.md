@@ -156,6 +156,22 @@ If you have a domain (e.g. `launchpad.yorkdevs.link`) and Let's Encrypt certs on
 
 Nginx in the backend will serve `https://<SSL_DOMAIN>/` (frontend) and `https://<SSL_DOMAIN>/api/` (API) using the certs from `/etc/letsencrypt`.
 
+### HTTPS: backend vs frontend startup (UAT vs production)
+
+Docker Compose starts **backend before frontend** (`frontend` has `depends_on: backend`). The generated HTTPS config proxies `/` to the hostname **`frontend`** inside the Compose network. Nginx resolves that name when it starts, so if nginx loaded **before** the frontend container existed, you could see:
+
+`nginx: [emerg] host not found in upstream "frontend"`
+
+**UAT** often still works because of timing (slower image pulls, manual restarts, or the frontend already running from a previous deploy). **Production EC2** cold starts are more likely to hit this race.
+
+The backend **entrypoint** waits until `http://frontend:80` responds (up to 120s) before starting nginx whenever `ssl.conf` proxies to the frontend service—so a normal `docker compose up -d --build` should succeed without a manual `docker compose restart backend`.
+
+If you run an **older image** without that wait and see the error above, run once after both containers are up:
+
+```bash
+docker compose restart backend
+```
+
 ---
 
 ## 8. Verify

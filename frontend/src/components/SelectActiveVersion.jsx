@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { cn } from "@/lib/utils";
+import { cn, formatProjectVersionLabel } from "@/lib/utils";
 import { Label } from "./ui/label";
 import {
   Dialog,
@@ -55,7 +55,9 @@ export function SelectActiveVersion({
     if (!versionId || !projectId) return;
     if (String(versionId) === String(activeVersionId)) return;
     const versionObj = getVersionById(versionId);
-    const versionLabel = versionObj ? `v${versionObj.version}` : "version";
+    const versionLabel = versionObj
+      ? formatProjectVersionLabel(versionObj.version)
+      : "version";
 
     if (isPublic) {
       try {
@@ -104,9 +106,8 @@ export function SelectActiveVersion({
     setSelectedValue(activeVersionId ? String(activeVersionId) : "");
   };
 
-  const getVersionLabel = (version) => {
-    return `v${version.version}`;
-  };
+  const getVersionLabel = (version) =>
+    formatProjectVersionLabel(version.version);
 
   const hasAnyVersions = releases.some(
     (r) => Array.isArray(r.versions) && r.versions.length > 0,
