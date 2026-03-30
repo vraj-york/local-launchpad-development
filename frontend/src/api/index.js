@@ -403,18 +403,10 @@ export const clientLinkPreviewCommit = async (
 };
 
 // Function to upload ZIP to a release
-export const uploadToRelease = async (
-  releaseId,
-  file,
-  version = null,
-  roadmapItemIds,
-) => {
+export const uploadToRelease = async (releaseId, file, roadmapItemIds) => {
   try {
     const formData = new FormData();
     formData.append("project", file);
-    if (version) {
-      formData.append("version", version);
-    }
     if (roadmapItemIds) {
       formData.append("roadmapItemIds", roadmapItemIds);
     }

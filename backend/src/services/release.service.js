@@ -1072,28 +1072,26 @@ export const updateReleaseService = async (releaseId, data, user) => {
 };
 
 /**
- * Generates the next semantic version for a release (e.g., 1.0.1 -> 1.0.2).
- * Bumps patch on the most recently created version for this release.
+ * Next upload revision for a release: R1, R2, R3, … (only R-prefixed rows count).
+ * Legacy semver rows (e.g. 1.0.0) are ignored for the counter.
  */
 export const autoGenerateVersion = async (releaseId) => {
-  const lastVersion = await prisma.projectVersion.findFirst({
+  const rows = await prisma.projectVersion.findMany({
     where: { releaseId },
-    orderBy: { createdAt: "desc" },
     select: { version: true },
   });
 
-  if (!lastVersion) {
-    return "1.0.0";
+  let maxN = 0;
+  const re = /^R(\d+)$/i;
+  for (const row of rows) {
+    const m = String(row.version || "").match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n) && n > maxN) maxN = n;
+    }
   }
 
-  const parts = lastVersion.version.split(".").map(Number);
-
-  if (parts.length === 3) {
-    parts[2] += 1;
-    return parts.join(".");
-  }
-
-  return `${lastVersion.version}.1`;
+  return `R${maxN + 1}`;
 };
 
 /**
@@ -1489,7 +1487,6 @@ export const reloadNginx = async () => {
 export const uploadReleaseVersionService = async (
   releaseId,
   file,
-  versionInput,
   roadmapItemIds,
   user,
 ) => {
@@ -1570,13 +1567,13 @@ export const uploadReleaseVersionService = async (
 
     const buildOutputPath = await runBuildSequence(sourceRoot);
 
-    /* -------------------- 4️⃣ Version -------------------- */
+    /* -------------------- 4️⃣ Revision (R1, R2, … server-only) -------------------- */
 
-    const version = versionInput || (await autoGenerateVersion(releaseId));
+    const version = await autoGenerateVersion(releaseId);
 
     /* -------------------- 5️⃣ Git: tag and push all data except .gitignore content -------------------- */
 
-    const tag = `proj-${project.id}-rel-${releaseId}-v${version}`;
+    const tag = `proj-${project.id}-rel-${releaseId}-${version}`;
 
     const githubCreds = getProjectGitHubCredentials(project);
     const validatedProjectName = projectRepoSlugFromDisplayName(project.name);

@@ -47,6 +47,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "./ui/collapsible";
+import { formatProjectVersionLabel } from "../lib/utils";
 import {
   Select,
   SelectContent,
@@ -248,7 +249,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [uploading, setUploading] = useState(false);
   const [selectedRelease, setSelectedRelease] = useState("");
   const [uploadFile, setUploadFile] = useState(null);
-  const [version, setVersion] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState("");
   const [uploadSuccessBuildUrl, setUploadSuccessBuildUrl] = useState(null);
@@ -370,17 +370,17 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     const payload = editDialog.isLocked
       ? { clientReleaseNote: noteTrimmed }
       : {
-          description: editDialog.description.trim() || null,
-          isMvp: editDialog.isMvp,
-          startDate: editDialog.startDate
-            ? format(editDialog.startDate, "yyyy-MM-dd")
-            : null,
-          releaseDate: editDialog.releaseDate
-            ? format(editDialog.releaseDate, "yyyy-MM-dd")
-            : null,
-          clientReleaseNote: noteTrimmed,
-          reason: editDialog.reason.trim(),
-        };
+        description: editDialog.description.trim() || null,
+        isMvp: editDialog.isMvp,
+        startDate: editDialog.startDate
+          ? format(editDialog.startDate, "yyyy-MM-dd")
+          : null,
+        releaseDate: editDialog.releaseDate
+          ? format(editDialog.releaseDate, "yyyy-MM-dd")
+          : null,
+        clientReleaseNote: noteTrimmed,
+        reason: editDialog.reason.trim(),
+      };
     try {
       setEditSaving(true);
       await patchRelease(editDialog.id, payload);
@@ -580,7 +580,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       const result = await uploadToRelease(
         selectedRelease,
         fileToUpload,
-        version || null,
         selectedRoadmapItemIds,
       );
 
@@ -589,19 +588,20 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       clearInterval(progressInterval);
       setUploadProgress(100);
 
-      const versionLabel = result?.version;
-      const buildUrlDisplay = result?.buildUrl ?? null;
+      const revisionLabel = formatProjectVersionLabel(result?.version);
+      const buildUrlDisplay = result?.url ?? result?.buildUrl ?? null;
       setUploadStatus(
-        `Upload successful! Version: ${versionLabel}${buildUrlDisplay ? " - Build URL: " : ""}`,
+        `Upload successful! Revision: ${revisionLabel}`,
       );
       setUploadSuccessBuildUrl(buildUrlDisplay);
       setUploadFile(null);
       setSelectedRelease("");
-      setVersion("");
       setSelectedRoadmapItemIds([]);
       if (uploadFileInputRef.current) uploadFileInputRef.current.value = "";
       await loadReleases();
-      toast.success(`Project uploaded successfully! Version: ${versionLabel}`);
+      toast.success(
+        `Project uploaded successfully! Revision: ${revisionLabel}`,
+      );
     } catch (err) {
       const errorMessage = err.error || err.message || "Upload failed";
       setUploadStatus(`Upload failed: ${errorMessage}`);
@@ -624,7 +624,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const resetUploadForm = () => {
     setSelectedRelease("");
     setUploadFile(null);
-    setVersion("");
     setSelectedRoadmapItemIds([]);
     setUploadStatus("");
     setUploadSuccessBuildUrl(null);
@@ -777,11 +776,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                   </span>
                                   {normalizeReleaseStatus(release) ===
                                     "active" && (
-                                    <Sparkles
-                                      className="size-3.5 shrink-0 text-emerald-600/80"
-                                      aria-hidden
-                                    />
-                                  )}
+                                      <Sparkles
+                                        className="size-3.5 shrink-0 text-emerald-600/80"
+                                        aria-hidden
+                                      />
+                                    )}
                                   {isReleaseLocked(release) && (
                                     <Lock
                                       className="size-3.5 shrink-0 text-rose-600/80"
@@ -923,8 +922,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                             </p>
                                           </div>
                                           {log.changes &&
-                                          typeof log.changes === "object" &&
-                                          Object.keys(log.changes).length >
+                                            typeof log.changes === "object" &&
+                                            Object.keys(log.changes).length >
                                             0 ? (
                                             <div className="border-t border-slate-100 px-2 py-2">
                                               <p className="px-1 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">
@@ -952,7 +951,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                                       const isDiff =
                                                         val &&
                                                         typeof val ===
-                                                          "object" &&
+                                                        "object" &&
                                                         "from" in val &&
                                                         "to" in val;
                                                       return (
@@ -968,17 +967,17 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                                           <td className="px-2 py-2 align-top text-slate-600">
                                                             {isDiff
                                                               ? formatChangelogScalar(
-                                                                  val.from,
-                                                                )
+                                                                val.from,
+                                                              )
                                                               : formatChangelogScalar(
-                                                                  val,
-                                                                )}
+                                                                val,
+                                                              )}
                                                           </td>
                                                           <td className="px-2 py-2 align-top text-slate-900">
                                                             {isDiff
                                                               ? formatChangelogScalar(
-                                                                  val.to,
-                                                                )
+                                                                val.to,
+                                                              )
                                                               : "—"}
                                                           </td>
                                                         </tr>
@@ -1134,13 +1133,15 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                   Revision history
                                 </span>
                                 <span className="text-sm text-slate-500">
-                                  {release.versions.length} version
+                                  {release.versions.length} revision
                                   {release.versions.length !== 1 ? "s" : ""}
                                 </span>
                                 <div className="text-sm">
                                   <span className="text-slate-400">Latest</span>
                                   <span className="ml-1.5 text-sm text-slate-700">
-                                    v{release.versions[0].version}
+                                    {formatProjectVersionLabel(
+                                      release.versions[0].version,
+                                    )}
                                   </span>
                                 </div>
                                 <ChevronDown className="size-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-180" />
@@ -1156,7 +1157,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                     <div className="flex flex-col gap-2">
                                       <div className="flex items-center gap-3">
                                         <span className="font-mono text-sm font-medium text-slate-700">
-                                          v{version.version}
+                                          {formatProjectVersionLabel(
+                                            version.version,
+                                          )}
                                         </span>
                                         <span className="text-xs text-slate-400">
                                           {new Date(
@@ -1275,15 +1278,15 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 className={cn(
                   "h-10 w-full border-slate-200 bg-white hover:bg-slate-50/90",
                   !newRelease.startDate &&
-                    !newRelease.releaseDate &&
-                    "text-muted-foreground",
+                  !newRelease.releaseDate &&
+                  "text-muted-foreground",
                 )}
                 date={
                   newRelease.startDate || newRelease.releaseDate
                     ? {
-                        from: newRelease.startDate ?? undefined,
-                        to: newRelease.releaseDate ?? undefined,
-                      }
+                      from: newRelease.startDate ?? undefined,
+                      to: newRelease.releaseDate ?? undefined,
+                    }
                     : undefined
                 }
                 setDate={(range) => {
@@ -1451,25 +1454,25 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   className={cn(
                     "h-10 w-full border-slate-200 bg-white hover:bg-slate-50/90",
                     !editDialog.startDate &&
-                      !editDialog.releaseDate &&
-                      "text-muted-foreground",
+                    !editDialog.releaseDate &&
+                    "text-muted-foreground",
                   )}
                   date={
                     editDialog.startDate || editDialog.releaseDate
                       ? {
-                          from: editDialog.startDate ?? undefined,
-                          to: editDialog.releaseDate ?? undefined,
-                        }
+                        from: editDialog.startDate ?? undefined,
+                        to: editDialog.releaseDate ?? undefined,
+                      }
                       : undefined
                   }
                   setDate={(range) => {
                     setEditDialog((prev) =>
                       prev
                         ? {
-                            ...prev,
-                            startDate: range?.from ?? null,
-                            releaseDate: range?.to ?? null,
-                          }
+                          ...prev,
+                          startDate: range?.from ?? null,
+                          releaseDate: range?.to ?? null,
+                        }
                         : prev,
                     );
                   }}
@@ -1484,10 +1487,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       setEditDialog((prev) =>
                         prev
                           ? {
-                              ...prev,
-                              startDate: null,
-                              releaseDate: null,
-                            }
+                            ...prev,
+                            startDate: null,
+                            releaseDate: null,
+                          }
                           : prev,
                       )
                     }
@@ -1512,7 +1515,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   MVP release
                 </Label>
               </div>
-              
+
               {!editDialog.isLocked ? (
                 <div className="space-y-2">
                   <Label htmlFor="edit-reason">Reason</Label>
@@ -1699,13 +1702,12 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
-                  className={`relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-all duration-200 ${
-                    isDragActive
+                  className={`relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-all duration-200 ${isDragActive
                       ? "border-primary bg-primary/5"
                       : uploadFile
                         ? "border-emerald-300 bg-emerald-50/50"
                         : "border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-slate-100/50"
-                  }`}
+                    }`}
                 >
                   {uploadFile ? (
                     <>
@@ -1727,11 +1729,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   ) : (
                     <>
                       <div
-                        className={`flex size-12 items-center justify-center rounded-full ${
-                          isDragActive
+                        className={`flex size-12 items-center justify-center rounded-full ${isDragActive
                             ? "bg-primary/10 text-primary"
                             : "bg-slate-200 text-slate-500"
-                        }`}
+                          }`}
                       >
                         <Upload className="size-6" />
                       </div>
@@ -1767,13 +1768,12 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
               {uploadStatus && (
                 <div
-                  className={`p-3 rounded-lg border text-sm ${
-                    uploadStatus.includes("Upload successful")
+                  className={`p-3 rounded-lg border text-sm ${uploadStatus.includes("Upload successful")
                       ? "bg-emerald-50 border-emerald-200 text-emerald-800"
                       : uploadStatus.includes("Upload failed")
                         ? "bg-red-50 border-red-200 text-red-800"
                         : "bg-blue-50 border-blue-200 text-blue-800"
-                  }`}
+                    }`}
                 >
                   {uploadStatus}
                   {uploadStatus.includes("Upload successful") &&
