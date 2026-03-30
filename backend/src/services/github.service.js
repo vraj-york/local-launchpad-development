@@ -22,6 +22,63 @@ export function parseGitRepoPath(gitRepoPath) {
 }
 
 /**
+ * GET /repos/:owner/:repo — verify token can read repo and get default_branch (for Cursor source.ref).
+ * @returns {Promise<{ ok: true, defaultBranch: string, fullName?: string } | { ok: false, status: number, message: string }>}
+ */
+export async function getRepositoryMetadata(owner, repo, token) {
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      message: typeof data?.message === "string" ? data.message : res.statusText,
+    };
+  }
+  const defaultBranch =
+    typeof data.default_branch === "string" && data.default_branch.trim()
+      ? data.default_branch.trim()
+      : "main";
+  return {
+    ok: true,
+    defaultBranch,
+    fullName: typeof data.full_name === "string" ? data.full_name : undefined,
+  };
+}
+
+/**
+ * Compare two refs (branch/tag/sha) and return changed files + commit summary.
+ * GET /repos/:owner/:repo/compare/:base...:head
+ * @returns {Promise<{ ok: true, status: number, data: object } | { ok: false, status: number, message: string }>}
+ */
+export async function compareRefs(owner, repo, baseRef, headRef, token) {
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/compare/${encodeURIComponent(baseRef)}...${encodeURIComponent(headRef)}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      message: typeof data?.message === "string" ? data.message : res.statusText,
+    };
+  }
+  return { ok: true, status: res.status, data };
+}
+
+/**
  * Get SHA of a branch. GET /repos/:owner/:repo/git/ref/heads/:branch
  * @returns {Promise<{ sha: string } | null>}
  */
@@ -38,6 +95,40 @@ export async function getBranchSha(owner, repo, branch, token) {
   const data = await res.json();
   const sha = data?.object?.sha;
   return sha ? { sha } : null;
+}
+
+/**
+ * Get commit SHA + parent SHAs for a ref or SHA.
+ * GET /repos/:owner/:repo/commits/:ref
+ * @returns {Promise<{ ok: true, sha: string, parents: string[] } | { ok: false, status: number, message: string }>}
+ */
+export async function getCommitInfo(owner, repo, ref, token) {
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(ref)}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      message: typeof data?.message === "string" ? data.message : res.statusText,
+    };
+  }
+  const sha = typeof data?.sha === "string" ? data.sha : null;
+  const parents = Array.isArray(data?.parents)
+    ? data.parents
+        .map((p) => (typeof p?.sha === "string" ? p.sha : null))
+        .filter(Boolean)
+    : [];
+  if (!sha) {
+    return { ok: false, status: 502, message: "GitHub commit response missing SHA." };
+  }
+  return { ok: true, sha, parents };
 }
 
 /**

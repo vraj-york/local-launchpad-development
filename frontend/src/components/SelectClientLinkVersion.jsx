@@ -65,10 +65,12 @@ export function SelectClientLinkVersion({
           position: "top-right",
         },
       );
+      const rel = getReleaseByVersionId(versionId);
       onSwitched?.({
         buildUrl: result?.buildUrl,
         version: result?.version,
         versionId: Number(versionId),
+        releaseId: rel?.id != null ? Number(rel.id) : null,
       });
     } catch (err) {
       toast.error(err?.error ?? "Failed to switch version");
