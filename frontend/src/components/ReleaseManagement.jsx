@@ -26,7 +26,6 @@ import {
   Sparkles,
   History,
   Pencil,
-  FileText,
 } from "lucide-react";
 import { Badge } from "./ui/badge";
 import {
@@ -276,9 +275,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [editDialog, setEditDialog] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
 
-  const [clientLinkDialog, setClientLinkDialog] = useState(null);
-  const [clientLinkSaving, setClientLinkSaving] = useState(false);
-
   const [changelogByRelease, setChangelogByRelease] = useState({});
   const [changelogLoadingId, setChangelogLoadingId] = useState(null);
 
@@ -303,6 +299,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       startDate: null,
       releaseDate: null,
       isMvp: false,
+      clientReleaseNote: "",
     });
     setShowCreateForm(true);
   };
@@ -359,64 +356,39 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       description: release.description ?? "",
       isMvp: !!release.isMvp,
       startDate: release.startDate ? new Date(release.startDate) : null,
-      releaseDate: release.releaseDate
-        ? new Date(release.releaseDate)
-        : null,
+      releaseDate: release.releaseDate ? new Date(release.releaseDate) : null,
+      clientReleaseNote: release.clientReleaseNote ?? "",
+      isLocked: isReleaseLocked(release),
       reason: "",
     });
-  };
-
-  const openClientLinkDialog = (release) => {
-    setClientLinkDialog({
-      id: release.id,
-      name: release.name ?? "",
-      clientReleaseNote: release.clientReleaseNote ?? "",
-    });
-  };
-
-  const saveClientLinkContent = async (e) => {
-    e.preventDefault();
-    if (!clientLinkDialog) return;
-    const note = clientLinkDialog.clientReleaseNote.trim();
-    try {
-      setClientLinkSaving(true);
-      await patchRelease(clientLinkDialog.id, {
-        clientReleaseNote: note || null,
-      });
-      toast.success("Client link content saved");
-      const rid = clientLinkDialog.id;
-      setClientLinkDialog(null);
-      await loadReleases();
-      setChangelogByRelease((prev) => {
-        const next = { ...prev };
-        delete next[rid];
-        return next;
-      });
-    } catch (err) {
-      toast.error(err.error || "Failed to save client link content");
-    } finally {
-      setClientLinkSaving(false);
-    }
   };
 
   const saveEditRelease = async (e) => {
     e.preventDefault();
     if (!editDialog) return;
-    const payload = {
-      description: editDialog.description.trim() || null,
-      isMvp: editDialog.isMvp,
-      startDate: editDialog.startDate
-        ? format(editDialog.startDate, "yyyy-MM-dd")
-        : null,
-      releaseDate: editDialog.releaseDate
-        ? format(editDialog.releaseDate, "yyyy-MM-dd")
-        : null,
-      reason: editDialog.reason.trim(),
-    };
+    const noteTrimmed = editDialog.clientReleaseNote.trim() || null;
+    const payload = editDialog.isLocked
+      ? { clientReleaseNote: noteTrimmed }
+      : {
+          description: editDialog.description.trim() || null,
+          isMvp: editDialog.isMvp,
+          startDate: editDialog.startDate
+            ? format(editDialog.startDate, "yyyy-MM-dd")
+            : null,
+          releaseDate: editDialog.releaseDate
+            ? format(editDialog.releaseDate, "yyyy-MM-dd")
+            : null,
+          clientReleaseNote: noteTrimmed,
+          reason: editDialog.reason.trim(),
+        };
     try {
       setEditSaving(true);
       await patchRelease(editDialog.id, payload);
-      toast.success("Release updated");
+      toast.success(
+        editDialog.isLocked
+          ? "Client link notes saved"
+          : "Release updated",
+      );
       const rid = editDialog.id;
       setEditDialog(null);
       await loadReleases();
@@ -777,10 +749,19 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       />
                       <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-5 sm:px-6 sm:py-5">
                         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
-                            <h4 className="min-w-0 max-w-full truncate text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">
-                              {release.name}
-                            </h4>
+                          <div className="flex flex-col items-start gap-2">
+                            <div className="flex min-w-0 max-w-full items-center gap-2">
+                              <h4 className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">
+                                {release.name}
+                              </h4>
+                              {release.isMvp ? (
+                                <Badge
+                                  className="bg-primary font-bold text-white"
+                                >
+                                  MVP
+                                </Badge>
+                              ) : null}
+                            </div>
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <button
@@ -796,11 +777,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                   </span>
                                   {normalizeReleaseStatus(release) ===
                                     "active" && (
-                                      <Sparkles
-                                        className="size-3.5 shrink-0 text-emerald-600/80"
-                                        aria-hidden
-                                      />
-                                    )}
+                                    <Sparkles
+                                      className="size-3.5 shrink-0 text-emerald-600/80"
+                                      aria-hidden
+                                    />
+                                  )}
                                   {isReleaseLocked(release) && (
                                     <Lock
                                       className="size-3.5 shrink-0 text-rose-600/80"
@@ -817,15 +798,12 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                               </TooltipContent>
                             </Tooltip>
                           </div>
-                          <div className="flex flex-col gap-2 border-t border-slate-100/80 pt-3 text-xs sm:ml-auto sm:shrink-0 sm:max-w-md sm:border-t-0 sm:pt-0">
-                            <div className="inline-flex flex-wrap items-center gap-2 rounded-lg bg-slate-100/70 px-2.5 py-1.5 text-slate-700 ring-1 ring-slate-200/60">
+                          <div className="flex flex-col items-start gap-2 border-t border-slate-100/80 pt-3 text-xs sm:ml-auto sm:shrink-0 sm:max-w-md sm:border-t-0 sm:pt-0">
+                            <div className="flex w-full items-center gap-2 rounded-lg bg-slate-100/70 px-2.5 py-1.5 text-slate-700 ring-1 ring-slate-200/60">
                               <CalendarDays
                                 className="size-3.5 shrink-0 text-slate-500"
                                 aria-hidden
                               />
-                              <span className="font-medium text-slate-600">
-                                Schedule
-                              </span>
                               <span className="min-w-0 font-semibold text-slate-900">
                                 <time dateTime={release.startDate ?? undefined}>
                                   {formatReadableDate(release.startDate)}
@@ -833,26 +811,40 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                 <span className="mx-1 font-normal text-slate-400">
                                   →
                                 </span>
-                                <time dateTime={release.releaseDate ?? undefined}>
+                                <time
+                                  dateTime={release.releaseDate ?? undefined}
+                                >
                                   {formatReadableDate(release.releaseDate)}
                                 </time>
                               </span>
                             </div>
-                            <span
-                              className="hidden h-3 w-px shrink-0 self-center bg-slate-200 sm:inline-block"
-                              aria-hidden
-                            />
-                            <span className="inline-flex min-w-0 max-w-full items-center gap-2 sm:max-w-44 md:max-w-52">
-                              <HubProfileAvatar
-                                email={release.creator?.email}
-                                alt={release.creator?.name ?? ""}
-                                className="size-5"
-                                fallbackClassName="rounded-md"
-                              />
-                              <span className="truncate">
-                                {release.creator?.name ?? "—"}
+                            <div className="flex gap-2">
+                              {canManageReleases && (
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="sm"
+                                  className="w-fit gap-2 bg-slate-100/70 text-slate-700 ring-1 ring-slate-200/60"
+                                  onClick={() => openEditRelease(release)}
+                                >
+                                  <Pencil className="size-3.5" />
+                                  {isReleaseLocked(release)
+                                    ? "Edit release (notes)"
+                                    : "Edit Release"}
+                                </Button>
+                              )}
+                              <span className="inline-flex min-w-0 max-w-full items-center gap-2 sm:max-w-44 md:max-w-52">
+                                <HubProfileAvatar
+                                  email={release.creator?.email}
+                                  alt={release.creator?.name ?? ""}
+                                  className="size-5"
+                                  fallbackClassName="rounded-md"
+                                />
+                                <span className="truncate">
+                                  {release.creator?.name ?? "—"}
+                                </span>
                               </span>
-                            </span>
+                            </div>
                           </div>
                         </div>
 
@@ -869,33 +861,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                               </span>
                             )}
                           </p>
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                          {canManageReleases && !isReleaseLocked(release) && (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="w-fit gap-2"
-                              onClick={() => openEditRelease(release)}
-                            >
-                              <Pencil className="size-3.5" />
-                              Edit details
-                            </Button>
-                          )}
-                          {canManageReleases && (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="w-fit gap-2"
-                              onClick={() => openClientLinkDialog(release)}
-                            >
-                              <FileText className="size-3.5" />
-                              Client link notes
-                            </Button>
-                          )}
                         </div>
 
                         {canManageReleases && (
@@ -958,8 +923,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                             </p>
                                           </div>
                                           {log.changes &&
-                                            typeof log.changes === "object" &&
-                                            Object.keys(log.changes).length > 0 ? (
+                                          typeof log.changes === "object" &&
+                                          Object.keys(log.changes).length >
+                                            0 ? (
                                             <div className="border-t border-slate-100 px-2 py-2">
                                               <p className="px-1 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">
                                                 What changed
@@ -986,7 +952,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                                       const isDiff =
                                                         val &&
                                                         typeof val ===
-                                                        "object" &&
+                                                          "object" &&
                                                         "from" in val &&
                                                         "to" in val;
                                                       return (
@@ -1002,17 +968,17 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                                           <td className="px-2 py-2 align-top text-slate-600">
                                                             {isDiff
                                                               ? formatChangelogScalar(
-                                                                val.from,
-                                                              )
+                                                                  val.from,
+                                                                )
                                                               : formatChangelogScalar(
-                                                                val,
-                                                              )}
+                                                                  val,
+                                                                )}
                                                           </td>
                                                           <td className="px-2 py-2 align-top text-slate-900">
                                                             {isDiff
                                                               ? formatChangelogScalar(
-                                                                val.to,
-                                                              )
+                                                                  val.to,
+                                                                )
                                                               : "—"}
                                                           </td>
                                                         </tr>
@@ -1309,15 +1275,15 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 className={cn(
                   "h-10 w-full border-slate-200 bg-white hover:bg-slate-50/90",
                   !newRelease.startDate &&
-                  !newRelease.releaseDate &&
-                  "text-muted-foreground",
+                    !newRelease.releaseDate &&
+                    "text-muted-foreground",
                 )}
                 date={
                   newRelease.startDate || newRelease.releaseDate
                     ? {
-                      from: newRelease.startDate ?? undefined,
-                      to: newRelease.releaseDate ?? undefined,
-                    }
+                        from: newRelease.startDate ?? undefined,
+                        to: newRelease.releaseDate ?? undefined,
+                      }
                     : undefined
                 }
                 setDate={(range) => {
@@ -1369,15 +1335,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               </div>
             </div>
 
-            <div className="space-y-3 rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-3">
-              <p className="text-xs font-medium text-emerald-900">
-                Client link (optional)
-              </p>
-              <p className="text-xs text-slate-600">
-                Shown on the public client URL for this release (e.g. what to
-                skip testing or scope). Git change summary loads there
-                automatically from the project repo.
-              </p>
+            <div className="space-y-3 rounded-lg">
               <div className="space-y-2">
                 <Label htmlFor="new-client-release-note">Notes for clients</Label>
                 <Textarea
@@ -1425,8 +1383,20 @@ const ReleaseManagement = ({ projectId, projectName }) => {
           <DialogHeader>
             <DialogTitle>Edit release</DialogTitle>
             <DialogDescription>
-              Release name cannot be changed. Other updates are saved with an
-              audit entry when something actually changes (reason required then).
+              {editDialog?.isLocked ? (
+                <>
+                  This release is <strong>locked</strong>. You can only update
+                  notes shown on the public client link. Git change summary on
+                  that page still comes from the repo automatically.
+                </>
+              ) : (
+                <>
+                  Release name cannot be changed. Other updates are saved with an
+                  audit entry when something actually changes (reason required
+                  when updating description, schedule, MVP, or dates—not for
+                  client link notes alone).
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           {editDialog ? (
@@ -1447,14 +1417,24 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   id="edit-release-desc"
                   rows={3}
                   value={editDialog.description}
+                  disabled={editDialog.isLocked}
                   onChange={(e) =>
                     setEditDialog((prev) =>
                       prev ? { ...prev, description: e.target.value } : prev,
                     )
                   }
+                  className={
+                    editDialog.isLocked ? "cursor-not-allowed bg-slate-50" : ""
+                  }
                 />
               </div>
-              <div className="space-y-2">
+              <div
+                className={
+                  editDialog.isLocked
+                    ? "pointer-events-none space-y-2 opacity-60"
+                    : "space-y-2"
+                }
+              >
                 <Label>Schedule (start → target release)</Label>
                 <p className="text-xs text-slate-500">
                   Same as create: pick start, then target. Stored as{" "}
@@ -1471,25 +1451,25 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   className={cn(
                     "h-10 w-full border-slate-200 bg-white hover:bg-slate-50/90",
                     !editDialog.startDate &&
-                    !editDialog.releaseDate &&
-                    "text-muted-foreground",
+                      !editDialog.releaseDate &&
+                      "text-muted-foreground",
                   )}
                   date={
                     editDialog.startDate || editDialog.releaseDate
                       ? {
-                        from: editDialog.startDate ?? undefined,
-                        to: editDialog.releaseDate ?? undefined,
-                      }
+                          from: editDialog.startDate ?? undefined,
+                          to: editDialog.releaseDate ?? undefined,
+                        }
                       : undefined
                   }
                   setDate={(range) => {
                     setEditDialog((prev) =>
                       prev
                         ? {
-                          ...prev,
-                          startDate: range?.from ?? null,
-                          releaseDate: range?.to ?? null,
-                        }
+                            ...prev,
+                            startDate: range?.from ?? null,
+                            releaseDate: range?.to ?? null,
+                          }
                         : prev,
                     );
                   }}
@@ -1504,10 +1484,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       setEditDialog((prev) =>
                         prev
                           ? {
-                            ...prev,
-                            startDate: null,
-                            releaseDate: null,
-                          }
+                              ...prev,
+                              startDate: null,
+                              releaseDate: null,
+                            }
                           : prev,
                       )
                     }
@@ -1520,6 +1500,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 <Checkbox
                   id="edit-is-mvp"
                   checked={editDialog.isMvp}
+                  disabled={editDialog.isLocked}
                   onCheckedChange={(checked) =>
                     setEditDialog((prev) =>
                       prev ? { ...prev, isMvp: checked === true } : prev,
@@ -1531,21 +1512,45 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   MVP release
                 </Label>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-reason">Reason</Label>
-                <Textarea
-                  id="edit-reason"
-                  rows={2}
-                  placeholder="Required if you change any field above"
-                  value={editDialog.reason}
-                  onChange={(e) =>
-                    setEditDialog((prev) =>
-                      prev ? { ...prev, reason: e.target.value } : prev,
-                    )
-                  }
-                />
+              
+              {!editDialog.isLocked ? (
+                <div className="space-y-2">
+                  <Label htmlFor="edit-reason">Reason</Label>
+                  <Textarea
+                    id="edit-reason"
+                    rows={2}
+                    placeholder="Required if you change description, schedule, MVP, or dates"
+                    value={editDialog.reason}
+                    onChange={(e) =>
+                      setEditDialog((prev) =>
+                        prev ? { ...prev, reason: e.target.value } : prev,
+                      )
+                    }
+                  />
+                </div>
+              ) : null}
+              <div className="space-y-3 rounded-lg">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-client-release-note">
+                    Notes for clients (optional)
+                  </Label>
+                  <Textarea
+                    id="edit-client-release-note"
+                    rows={3}
+                    placeholder="e.g. Do not test billing — out of scope for this build."
+                    value={editDialog.clientReleaseNote}
+                    onChange={(e) =>
+                      setEditDialog((prev) =>
+                        prev
+                          ? { ...prev, clientReleaseNote: e.target.value }
+                          : prev,
+                      )
+                    }
+                    className="resize-y min-h-[72px]"
+                  />
+                </div>
               </div>
-              <DialogFooter className="gap-2 sm:gap-0">
+              <DialogFooter className="gap-2">
                 <Button
                   type="button"
                   variant="outline"
@@ -1554,73 +1559,12 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" className="text-white" disabled={editSaving}>
-                  {editSaving ? (
-                    <>
-                      <Spinner /> Saving
-                    </>
-                  ) : (
-                    "Save"
-                  )}
-                </Button>
-              </DialogFooter>
-            </form>
-          ) : null}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={!!clientLinkDialog}
-        onOpenChange={(open) => {
-          if (!open && !clientLinkSaving) setClientLinkDialog(null);
-        }}
-      >
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Client link content</DialogTitle>
-            <DialogDescription>
-              Shown on the public client URL for release{" "}
-              <span className="font-medium text-slate-800">
-                {clientLinkDialog?.name ?? ""}
-              </span>
-              . Git change summary is loaded automatically on that page (API).
-              You can update this note even when the release is locked.
-            </DialogDescription>
-          </DialogHeader>
-          {clientLinkDialog ? (
-            <form onSubmit={saveClientLinkContent} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="client-link-note">Notes for clients</Label>
-                <p className="text-xs text-muted-foreground">
-                  e.g. areas out of scope, what not to test, or messages for
-                  stakeholders.
-                </p>
-                <Textarea
-                  id="client-link-note"
-                  rows={4}
-                  value={clientLinkDialog.clientReleaseNote}
-                  onChange={(e) =>
-                    setClientLinkDialog((prev) =>
-                      prev
-                        ? { ...prev, clientReleaseNote: e.target.value }
-                        : prev,
-                    )
-                  }
-                  placeholder="Optional"
-                  className="resize-y min-h-[96px]"
-                />
-              </div>
-              <DialogFooter className="gap-2 sm:gap-0">
                 <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setClientLinkDialog(null)}
-                  disabled={clientLinkSaving}
+                  type="submit"
+                  className="text-white"
+                  disabled={editSaving}
                 >
-                  Cancel
-                </Button>
-                <Button type="submit" className="text-white" disabled={clientLinkSaving}>
-                  {clientLinkSaving ? (
+                  {editSaving ? (
                     <>
                       <Spinner /> Saving
                     </>
@@ -1755,12 +1699,13 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
-                  className={`relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-all duration-200 ${isDragActive
-                    ? "border-primary bg-primary/5"
-                    : uploadFile
-                      ? "border-emerald-300 bg-emerald-50/50"
-                      : "border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-slate-100/50"
-                    }`}
+                  className={`relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-all duration-200 ${
+                    isDragActive
+                      ? "border-primary bg-primary/5"
+                      : uploadFile
+                        ? "border-emerald-300 bg-emerald-50/50"
+                        : "border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-slate-100/50"
+                  }`}
                 >
                   {uploadFile ? (
                     <>
@@ -1782,10 +1727,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   ) : (
                     <>
                       <div
-                        className={`flex size-12 items-center justify-center rounded-full ${isDragActive
-                          ? "bg-primary/10 text-primary"
-                          : "bg-slate-200 text-slate-500"
-                          }`}
+                        className={`flex size-12 items-center justify-center rounded-full ${
+                          isDragActive
+                            ? "bg-primary/10 text-primary"
+                            : "bg-slate-200 text-slate-500"
+                        }`}
                       >
                         <Upload className="size-6" />
                       </div>
@@ -1821,12 +1767,13 @@ const ReleaseManagement = ({ projectId, projectName }) => {
 
               {uploadStatus && (
                 <div
-                  className={`p-3 rounded-lg border text-sm ${uploadStatus.includes("Upload successful")
-                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                    : uploadStatus.includes("Upload failed")
-                      ? "bg-red-50 border-red-200 text-red-800"
-                      : "bg-blue-50 border-blue-200 text-blue-800"
-                    }`}
+                  className={`p-3 rounded-lg border text-sm ${
+                    uploadStatus.includes("Upload successful")
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                      : uploadStatus.includes("Upload failed")
+                        ? "bg-red-50 border-red-200 text-red-800"
+                        : "bg-blue-50 border-blue-200 text-blue-800"
+                  }`}
                 >
                   {uploadStatus}
                   {uploadStatus.includes("Upload successful") &&
@@ -1905,12 +1852,15 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 </p>
                 {statusConfirm?.toStatus === "locked" && (
                   <p className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-amber-950/90">
-                    Once you lock this release, the Upload and Status Change options will be disabled.
+                    Once you lock this release, the Upload and Status Change
+                    options will be disabled.
                   </p>
                 )}
                 {statusConfirm?.toStatus === "skip" && (
                   <p className="rounded-lg border border-violet-200/80 bg-linear-to-br from-violet-50/90 to-indigo-50/80 px-3 py-2 text-indigo-950/90">
-                    Any other active release in this project becomes draft, and this release is marked skipped. The client link updates to reflect the new active build.
+                    Any other active release in this project becomes draft, and
+                    this release is marked skipped. The client link updates to
+                    reflect the new active build.
                   </p>
                 )}
                 {statusConfirm?.toStatus === "active" &&
@@ -1940,7 +1890,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   )}
                 {statusConfirm?.toStatus !== "locked" ? (
                   <div className="space-y-2 pt-2">
-                    <Label htmlFor="status-change-reason">Reason for change</Label>
+                    <Label htmlFor="status-change-reason">
+                      Reason for change
+                    </Label>
                     <Textarea
                       id="status-change-reason"
                       rows={3}
@@ -1948,7 +1900,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       value={statusConfirm?.statusReason ?? ""}
                       onChange={(e) =>
                         setStatusConfirm((prev) =>
-                          prev ? { ...prev, statusReason: e.target.value } : prev,
+                          prev
+                            ? { ...prev, statusReason: e.target.value }
+                            : prev,
                         )
                       }
                       disabled={statusConfirmSubmitting}
