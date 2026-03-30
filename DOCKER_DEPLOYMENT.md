@@ -111,6 +111,10 @@ To use your **existing** Postgres (same DB as when you run the app normally) so 
 
 For production, set `VITE_API_URL` and `VITE_FRONTEND_URL`, and optionally Hub-related `VITE_HUB_*` vars (including `VITE_HUB_PROFILE_PIC_API_KEY` if you use Hub avatars), **before** building the frontend image (e.g. in `.env` when running `docker compose build --no-cache frontend`). `VITE_MODE` defaults to `production` in compose.
 
+### HTTPS (`SSL_DOMAIN`) and `host not found in upstream "frontend"`
+
+When Let’s Encrypt certs exist and `SSL_DOMAIN` is set, the backend entrypoint writes `ssl.conf` so nginx on **443** proxies `/` to the Compose service **`frontend`**. Because **backend starts first**, nginx used to sometimes start before Docker DNS could resolve `frontend`, which broke HTTPS on fresh production deploys (UAT could still appear fine depending on timing). The backend **entrypoint** now waits until `http://frontend:80` is reachable before starting nginx. On older deployments, `docker compose restart backend` after `up` was the manual workaround—see [EC2_DEPLOYMENT.md](./EC2_DEPLOYMENT.md).
+
 ## Nginx only inside backend (no separate nginx service)
 
 There is **no** standalone `nginx` service and **no** nginx in the **frontend** image. The **backend** image installs nginx and starts it in the entrypoint; it listens on **port 80** and includes **`/app/nginx-configs/*.conf`** (same volume the app writes when you create projects). Project static servers run in the same container on `127.0.0.1:<port>`, so `proxy_pass` stays `http://localhost:<port>`.

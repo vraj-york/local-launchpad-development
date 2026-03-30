@@ -62,6 +62,19 @@
   white-space: nowrap;
 }
 
+/* Client link: pin floating controls to the preview frame area (positioned parent), not the viewport */
+.feedback-widget-root--preview-panel .feedback-widget-button {
+  position: absolute;
+  z-index: 20;
+}
+
+.feedback-widget-root--preview-panel .feedback-widget-capture-error {
+  position: absolute;
+  bottom: 72px;
+  right: 20px;
+  z-index: 21;
+}
+
 /* Capture error toast (when getDisplayMedia fails or user cancels) */
 .feedback-widget-capture-error {
   position: fixed;

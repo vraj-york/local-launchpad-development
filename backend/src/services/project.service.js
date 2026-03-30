@@ -5,7 +5,7 @@ import ApiError from "../utils/apiError.js";
 import { createRoadmapWithItems } from "./roadmap.service.js";
 import { fetchProjectJiraTickets } from "../utils/jiraIntegration.js";
 import config from "../config/index.js";
-import { getBackendRoot, getProjectsDir, getNginxConfigsDir, getNginxBaseDomain, getNginxUpstreamHost } from "../utils/instanceRoot.js";
+import { getBackendRoot, getProjectsDir, getNginxConfigsDir, getNginxBaseDomain, getNginxUpstreamHost, getProjectLiveAbsolutePath } from "../utils/instanceRoot.js";
 import axios from "axios";
 import path from "path";
 import { exec } from "child_process";
@@ -13,7 +13,6 @@ import { promisify } from "util";
 import { execSync, execFileSync } from "child_process";
 import fsExtra from "fs-extra";
 import os from 'os';
-import { execa } from "execa";
 import fs from "fs-extra";
 import { startProjectServer } from "../projectServers.js";
 import {
@@ -26,6 +25,7 @@ import {
 } from "./release.service.js";
 import { parseGitRepoPath } from "./github.service.js";
 import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
+import { normalizeOptionalEmailListString } from "../utils/emailList.utils.js";
 
 /**
  * Allocate a unique slug for Project.slug (DB unique). Tries base, then base-2, base-3, ...
@@ -266,6 +266,15 @@ export const createProjectService = async ({ userId, body }) => {
     githubUsername,
     githubToken,
   } = body;
+
+  let assignedUserEmailsDb = null;
+  let stakeholderEmailsDb = null;
+  try {
+    assignedUserEmailsDb = normalizeOptionalEmailListString(body.assignedUserEmails);
+    stakeholderEmailsDb = normalizeOptionalEmailListString(body.stakeholderEmails);
+  } catch (e) {
+    throw new ApiError(400, e.message);
+  }
   const isLinux = os.platform() === 'linux';
   const nginxBinary = isLinux ? '/usr/sbin/nginx' : '/opt/homebrew/bin/nginx';
 
@@ -411,10 +420,12 @@ export const createProjectService = async ({ userId, body }) => {
           port,
           projectPath: relativeProjectPath,
           projectId: hubProjectId,
+          assignedUserEmails: assignedUserEmailsDb,
+          stakeholderEmails: stakeholderEmailsDb,
           // Remote clone URL when GitHub repo was created; else local .git path for legacy
           gitRepoPath:
             gitRepoUrl || path.join(relativeProjectPath, ".git"),
-          nginxConfigPath: path.join('nginx-configs', configFileName)
+          nginxConfigPath: path.join('nginx-configs', configFileName),
         },
       });
     });
@@ -619,6 +630,7 @@ export const getProjectByIdService = async (
       buildUrl: true,
       createdAt: true,
       isActive: true,
+      releaseId: true,
     },
   };
 
@@ -629,6 +641,7 @@ export const getProjectByIdService = async (
       name: true,
       status: true,
       lockedBy: true,
+      clientReleaseNote: true,
       versions: {
         orderBy: { id: "desc" },
         select: {
@@ -637,6 +650,7 @@ export const getProjectByIdService = async (
           buildUrl: true,
           isActive: true,
           createdAt: true,
+          releaseId: true,
         },
       },
     },
@@ -669,7 +683,6 @@ export const getProjectByIdService = async (
     },
   });
 };
-
 
 /**
  * Checkout tag, build, copy build output into projects/{projectPath}, reload nginx, update version buildUrl.
@@ -1050,6 +1063,8 @@ const PROJECT_UPDATE_KEYS = [
   "jiraApiToken",
   "githubUsername",
   "githubToken",
+  "assignedUserEmails",
+  "stakeholderEmails",
 ];
 
 export const updateProjectDetailsService = async ({ projectId, user, body }) => {
@@ -1078,6 +1093,20 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
           );
         } else {
           throw new ApiError(400, "slug must be a string or null");
+        }
+        continue;
+      }
+      if (key === "assignedUserEmails" || key === "stakeholderEmails") {
+        if (raw === null || raw === "") {
+          data[key] = null;
+        } else if (typeof raw === "string") {
+          try {
+            data[key] = normalizeOptionalEmailListString(raw);
+          } catch (e) {
+            throw new ApiError(400, e.message);
+          }
+        } else {
+          throw new ApiError(400, `${key} must be a string or null`);
         }
         continue;
       }
@@ -1435,5 +1464,112 @@ export const switchProjectVersion = async (
     );
   }
 };
+
+/**
+ * Build and serve a temporary preview from a git ref (commit SHA / branch / tag).
+ * Does not change live deployment; writes build output under _preview/project_<id>/serve.
+ */
+export async function buildProjectPreviewFromGitRef({ projectId, gitRef, label = null }) {
+  const ref = typeof gitRef === "string" ? gitRef.trim() : "";
+  if (!ref) {
+    throw new ApiError(400, "Git ref is required");
+  }
+  if (!/^[A-Za-z0-9._/-]+$/.test(ref)) {
+    throw new ApiError(400, "Invalid git ref format");
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id: Number(projectId) },
+    select: { id: true, port: true, gitRepoPath: true, githubToken: true },
+  });
+  if (!project) throw new ApiError(404, "Project not found");
+  if (!project.port) throw new ApiError(400, "Project has no port; cannot serve preview.");
+  if (!project.githubToken?.trim() || !project.gitRepoPath?.trim()) {
+    throw new ApiError(400, "Project is missing GitHub credentials for preview.");
+  }
+
+  const parsed = parseGitRepoPath(project.gitRepoPath.trim());
+  if (!parsed) throw new ApiError(400, "Invalid gitRepoPath; cannot build preview from ref.");
+
+  const backendRoot = getBackendRoot();
+  const previewDir = path.join(backendRoot, "_preview", `project_${project.id}`);
+  const previewRepo = path.join(previewDir, "repo");
+  const previewServe = path.join(previewDir, "serve");
+  const metaPath = path.join(previewDir, PREVIEW_META_FILE);
+  const metaRef = ref.toLowerCase();
+
+  try {
+    if (await fs.pathExists(previewServe)) {
+      const serveEntries = await fs.readdir(previewServe).catch(() => []);
+      if (serveEntries.length > 0 && (await fs.pathExists(metaPath))) {
+        const meta = JSON.parse(await fs.readFile(metaPath, "utf8"));
+        if (meta && meta.ref === metaRef) {
+          await fs.writeFile(
+            metaPath,
+            JSON.stringify({ createdAt: Date.now(), ref: metaRef }),
+            "utf8",
+          );
+          const domain = config.getBuildUrlHost();
+          const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
+          return {
+            message: "Preview ready (cached).",
+            buildUrl: `${projectUrl}?preview=1`,
+            cached: true,
+            ref,
+            label: label || ref,
+          };
+        }
+      }
+    }
+  } catch (_) {
+    // Cache read failures should not block a fresh preview build.
+  }
+
+  try {
+    await cleanupStalePreviews();
+    await fs.remove(previewDir).catch(() => { });
+    await fs.ensureDir(previewDir);
+
+    const token = project.githubToken.trim();
+    const cloneUrl = `https://x-access-token:${token}@github.com/${parsed.owner}/${parsed.repo}.git`;
+    runCommand(`git clone --no-checkout "${cloneUrl}" "${previewRepo}"`, backendRoot);
+    try {
+      runCommand(`git -C "${previewRepo}" fetch --depth 1 origin "${ref}"`, backendRoot);
+      runCommand(`git -C "${previewRepo}" checkout --detach FETCH_HEAD`, backendRoot);
+    } catch {
+      runCommand(`git -C "${previewRepo}" checkout --detach "${ref}"`, backendRoot);
+    }
+
+    const sourceRoot = findProjectRoot(previewRepo);
+    const buildOutputPath = await runBuildSequence(sourceRoot, { fastInstall: true });
+    await fs.ensureDir(previewServe);
+    await fs.emptyDir(previewServe);
+    await fs.copy(buildOutputPath, previewServe);
+
+    await fs.writeFile(
+      metaPath,
+      JSON.stringify({ createdAt: Date.now(), ref: metaRef }),
+      "utf8",
+    );
+
+    await fs.remove(previewRepo).catch(() => { });
+    const domain = config.getBuildUrlHost();
+    const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
+    return {
+      message: "Temporary preview ready.",
+      buildUrl: `${projectUrl}?preview=1`,
+      cached: false,
+      ref,
+      label: label || ref,
+    };
+  } catch (err) {
+    await fs.remove(previewDir).catch(() => { });
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      500,
+      err?.message || "Failed to build preview from git ref.",
+    );
+  }
+}
 
 

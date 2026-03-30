@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { cn } from "@/lib/utils";
+import { cn, formatProjectVersionLabel } from "@/lib/utils";
 import { Label } from "./ui/label";
 import { Lock, Unlock } from "lucide-react";
 
@@ -48,7 +48,9 @@ export function SelectClientLinkVersion({
   const handleValueChange = async (versionId) => {
     if (!versionId || !projectId) return;
     const versionObj = getVersionById(versionId);
-    const versionLabel = versionObj ? `v${versionObj.version}` : "version";
+    const versionLabel = versionObj
+      ? formatProjectVersionLabel(versionObj.version)
+      : "version";
 
     try {
       setSwitching(true);
@@ -59,15 +61,19 @@ export function SelectClientLinkVersion({
         false,
       );
       toast.success(
-        (result?.version ? `v${result.version}` : versionLabel) +
-          " preview ready",
+        (result?.version
+          ? formatProjectVersionLabel(result.version)
+          : versionLabel) + " preview ready",
         {
           position: "top-right",
         },
       );
+      const rel = getReleaseByVersionId(versionId);
       onSwitched?.({
         buildUrl: result?.buildUrl,
         version: result?.version,
+        versionId: Number(versionId),
+        releaseId: rel?.id != null ? Number(rel.id) : null,
       });
     } catch (err) {
       toast.error(err?.error ?? "Failed to switch version");
@@ -77,9 +83,8 @@ export function SelectClientLinkVersion({
     }
   };
 
-  const getVersionLabel = (version) => {
-    return `v${version.version}`;
-  };
+  const getVersionLabel = (version) =>
+    formatProjectVersionLabel(version.version);
 
   const hasAnyVersions = releases.some(
     (r) => Array.isArray(r.versions) && r.versions.length > 0,

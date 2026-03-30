@@ -104,7 +104,7 @@ export const releaseController = {
                 .filter(id => !isNaN(id));
         }
 
-        const result = await uploadReleaseVersionService(releaseId, req.file, req.body.version, roadmapItemIds, req.user);
+        const result = await uploadReleaseVersionService(releaseId, req.file, roadmapItemIds, req.user);
 
         res.json(result);
     }),
@@ -123,7 +123,7 @@ export const releaseController = {
      */
     publicLock: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
-        const { lockedBy } = req.body;
+        const { lockedBy } = req.body || {};
         const result = await publicLockReleaseService(releaseId, lockedBy);
         res.json(result);
     }),

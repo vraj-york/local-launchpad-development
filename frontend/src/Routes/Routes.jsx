@@ -10,7 +10,6 @@ import AuthCallbackPage from "../pages/AuthCallbackPage";
 import { MainLayout } from "@/layouts/MainLayout";
 import ProjectDetails from "@/pages/ProjectDetails";
 import Dashboard from "@/pages/Dashboard";
-import GitDiff from "@/pages/GitDiff";
 import Projects from "@/pages/Projects";
 import CreateProject from "@/pages/CreateProject";
 import { ClientLink } from "@/pages/ClientLink";
@@ -32,7 +31,6 @@ export const Routes = () => {
     { path: "/projects", element: <Projects /> },
     { path: "/projects/new", element: <CreateProject /> },
     { path: "/projects/details/:projectId", element: <ProjectDetails /> },
-    { path: "/projects/:projectId(\\d+)/diff", element: <GitDiff /> },
   ];
 
   if (loading) {

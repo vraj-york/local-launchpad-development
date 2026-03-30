@@ -2,6 +2,7 @@
 import html2canvas from 'html2canvas-pro';
 
 const LOG = '[feedback-capture]';
+const console = { log: () => {}, warn: () => {}, error: () => {} };
 
 function iframeDiagnostics(iframe) {
   const info = {

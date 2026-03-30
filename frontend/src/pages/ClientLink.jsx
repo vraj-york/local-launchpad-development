@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { fetchPublicProjectBySlug, publicLockRelease } from "@/api";
+import {
+  fetchPublicProjectBySlug,
+  publicLockRelease,
+} from "@/api";
 import { useParams } from "react-router-dom";
-// import { SelectActiveVersion } from "@/components/SelectActiveVersion";
 import { Button } from "@/components/ui/button";
-import { Lock } from "lucide-react";
 import { toast } from "sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { EmbeddedFeedbackWidget } from "@/features/feedback-widget";
@@ -23,9 +24,18 @@ import {
 import { SelectClientLinkVersion } from "@/components/SelectClientLinkVersion";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
-/** Remember lock-confirmation email on this device for client link pages. */
-const CLIENT_LINK_LOCK_EMAIL_KEY = "release_lock_email";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { BotMessageSquare, FileText, Lock } from "lucide-react";
+import { ClientLinkChatPanel } from "../components/ClientLinkChatPanel";
+import { formatProjectVersionLabel } from "@/lib/utils";
+import {
+  getClientLinkVerifiedEmail,
+  setClientLinkVerifiedEmail,
+} from "@/lib/clientLinkVerifiedEmail";
 
 const LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -36,45 +46,12 @@ export const ClientLink = () => {
   const [lockConfirmOpen, setLockConfirmOpen] = useState(false);
   const [lockEmail, setLockEmail] = useState("");
   const [previewBuildUrl, setPreviewBuildUrl] = useState(null);
+  const [previewContextReleaseId, setPreviewContextReleaseId] = useState(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  /** Version selected for iframe preview (may differ from live active). */
+  const [previewMeta, setPreviewMeta] = useState(null);
+  const [releaseNoteOpen, setReleaseNoteOpen] = useState(false);
   const { projectSlug } = useParams();
-
-  const loadProject = useCallback(async () => {
-    if (!projectSlug?.trim()) {
-      setPublicProject(null);
-      setLoading(false);
-      return;
-    }
-    try {
-      setLoading(true);
-      setPreviewBuildUrl(null);
-      const data = await fetchPublicProjectBySlug(projectSlug);
-      setPublicProject(data);
-    } catch (error) {
-      console.error("Failed to load project:", error);
-      setPublicProject(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [projectSlug]);
-
-  useEffect(() => {
-    loadProject();
-  }, [loadProject]);
-
-  useEffect(() => {
-    if (!lockConfirmOpen) return;
-    try {
-      const stored = localStorage.getItem(CLIENT_LINK_LOCK_EMAIL_KEY);
-      setLockEmail(typeof stored === "string" ? stored : "");
-    } catch {
-      setLockEmail("");
-    }
-  }, [lockConfirmOpen]);
-
-  const lockEmailValid = React.useMemo(() => {
-    const e = lockEmail.trim().toLowerCase();
-    return LOCK_EMAIL_RE.test(e);
-  }, [lockEmail]);
 
   /**
    * Public API returns root `versions` as the active build(s) but often omits `isActive`
@@ -87,6 +64,14 @@ export const ClientLink = () => {
       .filter((id) => id != null);
     return new Set(ids);
   }, [publicProject?.versions]);
+
+  const rootReleaseIdFromActiveVersion = React.useMemo(() => {
+    const v =
+      publicProject?.versions?.find(
+        (x) => x.isActive || activeVersionIds.has(x.id),
+      ) ?? publicProject?.versions?.[0];
+    return v?.releaseId != null ? Number(v.releaseId) : null;
+  }, [publicProject?.versions, activeVersionIds]);
 
   const releases = React.useMemo(() => {
     if (!publicProject) return [];
@@ -107,8 +92,7 @@ export const ClientLink = () => {
       versions: (r.versions || []).map((v) => ({
         ...v,
         isActive:
-          Boolean(v.isActive) ||
-          (v.id != null && activeVersionIds.has(v.id)),
+          Boolean(v.isActive) || (v.id != null && activeVersionIds.has(v.id)),
       })),
     }));
   }, [publicProject, activeVersionIds]);
@@ -116,9 +100,83 @@ export const ClientLink = () => {
   const activeRelease =
     releases.find((r) => (r.versions || []).some((v) => v.isActive)) ||
     releases[0];
+
   const selectedReleaseId = publicProject?.releases?.length
     ? activeRelease?.id
     : null;
+
+  const effectiveChatReleaseId =
+    previewContextReleaseId != null
+      ? previewContextReleaseId
+      : selectedReleaseId != null
+        ? selectedReleaseId
+        : rootReleaseIdFromActiveVersion;
+
+  const effectiveReleaseForChat = React.useMemo(() => {
+    const rid = effectiveChatReleaseId;
+    if (rid == null) return null;
+    return (
+      releases.find((r) => Number(r.id) === Number(rid)) ?? null
+    );
+  }, [releases, effectiveChatReleaseId]);
+
+  const effectiveReleaseLocked =
+    String(effectiveReleaseForChat?.status ?? "").toLowerCase() === "locked";
+
+  const loadProject = useCallback(async () => {
+    if (!projectSlug?.trim()) {
+      setPublicProject(null);
+      setLoading(false);
+      return;
+    }
+    try {
+      setLoading(true);
+      setPreviewBuildUrl(null);
+      setPreviewContextReleaseId(null);
+      setPreviewMeta(null);
+      const data = await fetchPublicProjectBySlug(projectSlug);
+      setPublicProject(data);
+    } catch (error) {
+      console.error("Failed to load project:", error);
+      setPublicProject(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [projectSlug]);
+
+  useEffect(() => {
+    loadProject();
+  }, [loadProject]);
+
+  useEffect(() => {
+    if (!lockConfirmOpen) return;
+    setLockEmail(getClientLinkVerifiedEmail());
+  }, [lockConfirmOpen]);
+
+  const lockEmailValid = React.useMemo(() => {
+    const e = lockEmail.trim().toLowerCase();
+    return LOCK_EMAIL_RE.test(e);
+  }, [lockEmail]);
+
+  const liveActiveVersionId = React.useMemo(() => {
+    for (const r of releases) {
+      const v = (r.versions || []).find((x) => x.isActive);
+      if (v?.id != null) return Number(v.id);
+    }
+    return null;
+  }, [releases]);
+
+  const displayRelease = React.useMemo(() => {
+    if (previewMeta?.releaseId != null) {
+      const rel = releases.find(
+        (r) => Number(r.id) === Number(previewMeta.releaseId),
+      );
+      if (rel) return rel;
+    }
+    return activeRelease;
+  }, [releases, activeRelease, previewMeta]);
+
+  const clientNote = displayRelease?.clientReleaseNote?.trim() || "";
 
   const activeReleaseLocked =
     String(activeRelease?.status ?? "").toLowerCase() === "locked";
@@ -146,18 +204,12 @@ export const ClientLink = () => {
     try {
       setLocking(true);
       const res = await publicLockRelease(selectedReleaseId, email);
-      try {
-        localStorage.setItem(CLIENT_LINK_LOCK_EMAIL_KEY, email);
-      } catch {
-        /* storage unavailable */
-      }
+      setClientLinkVerifiedEmail(email);
       setLockConfirmOpen(false);
       toast.success(res?.message ?? "Release locked successfully");
       await loadProject();
     } catch (err) {
-      toast.error(
-        err?.error || err?.message || "Failed to lock release",
-      );
+      toast.error(err?.error || err?.message || "Failed to lock release");
     } finally {
       setLocking(false);
     }
@@ -190,6 +242,35 @@ export const ClientLink = () => {
     () => toProxyUrl(rawBuildUrl),
     [rawBuildUrl, toProxyUrl],
   );
+
+  const handleChatPreviewCommitApplied = useCallback(
+    ({ buildUrl, releaseId }) => {
+      const baseUrl = String(buildUrl || "").trim();
+      if (!baseUrl) return;
+      const separator = baseUrl.includes("?") ? "&" : "?";
+      setPreviewBuildUrl(`${baseUrl}${separator}chatPreview=${Date.now()}`);
+      setPreviewMeta(null);
+      if (releaseId != null) setPreviewContextReleaseId(Number(releaseId));
+    },
+    [],
+  );
+
+  const handleChatResetPreview = useCallback(() => {
+    setPreviewBuildUrl(null);
+    setPreviewMeta(null);
+  }, []);
+
+  const activeVersion =
+    (activeRelease?.versions || []).find((v) => v?.isActive) ||
+    activeRelease?.versions?.[0] ||
+    null;
+  const chatMergeTargetLabel = `${String(activeRelease?.name || "Unknown release")} / ${formatProjectVersionLabel(activeVersion?.version)}`;
+
+  useEffect(() => {
+    if (!showLockAndFeedback && chatOpen) {
+      setChatOpen(false);
+    }
+  }, [showLockAndFeedback, chatOpen]);
 
   if (loading) {
     return (
@@ -237,34 +318,69 @@ export const ClientLink = () => {
 
   const isLocked = activeReleaseLocked;
 
-  return (
-    <div className="flex-1 flex flex-col min-h-screen bg-slate-50 w-full overflow-hidden">
-      {/* Wrapper so screenshot includes header + iframe (same-origin via /preview proxy) */}
-      <div
-        id="feedback-capture-wrapper"
-        className="flex flex-col flex-1 w-full min-h-0"
-      >
-        <header className="shrink-0 flex items-center gap-3 px-4 py-2 bg-accent border-b border-slate-200/60 shadow-sm">
-          <div className="flex flex-1 items-center justify-between gap-3 min-w-0">
-            {publicProject?.name && (
-              <h1 className="text-md font-semibold text-slate-800 truncate max-w-[200px] sm:max-w-[280px] shrink-0">
-                {publicProject.name}
-              </h1>
-            )}
-            <div className="flex min-w-0 flex-1 justify-center px-2">
-              <SelectClientLinkVersion
-                release={releases}
-                projectId={publicProject?.id}
-                onActivated={loadProject}
-                isPublic={true}
-                onSwitched={({ buildUrl }) => setPreviewBuildUrl(buildUrl)}
-                compact
-                darkTrigger
-                selectLabel="Choose Version :"
-              />
-            </div>
+  const chatShellEnabled = showLockAndFeedback && Boolean(publicProject);
+  const showRestoreLive =
+    previewMeta?.versionId != null &&
+    previewMeta?.releaseId != null &&
+    liveActiveVersionId != null &&
+    Number(previewMeta.versionId) !== Number(liveActiveVersionId) &&
+    !activeReleaseLocked;
 
-            <div className="shrink-0">
+  const clientLinkPreviewBody = (
+    <>
+      <header className="shrink-0 flex items-center gap-3 border-b border-slate-200/60 bg-accent px-4 py-2 shadow-sm">
+        <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+          {publicProject?.name && (
+            <h1 className="text-md max-w-[200px] shrink-0 truncate font-semibold text-slate-800 sm:max-w-[280px]">
+              {publicProject.name}
+            </h1>
+          )}
+          <div className="flex min-w-0 flex-1 justify-center px-2">
+            <SelectClientLinkVersion
+              release={releases}
+              projectId={publicProject?.id}
+              onSwitched={({ buildUrl, releaseId: rid, versionId }) => {
+                const vid = versionId != null ? Number(versionId) : null;
+                if (
+                  vid != null &&
+                  liveActiveVersionId != null &&
+                  vid === liveActiveVersionId
+                ) {
+                  setPreviewBuildUrl(null);
+                  if (rid != null) setPreviewContextReleaseId(Number(rid));
+                  setPreviewMeta(null);
+                  return;
+                }
+                setPreviewBuildUrl(buildUrl);
+                if (rid != null) setPreviewContextReleaseId(rid);
+                if (versionId != null && rid != null) {
+                  setPreviewMeta({
+                    versionId: Number(versionId),
+                    releaseId: Number(rid),
+                  });
+                } else {
+                  setPreviewMeta(null);
+                }
+              }}
+              compact
+              darkTrigger
+              selectLabel="Choose Version :"
+            />
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 gap-1.5 border-slate-300 bg-white/80 px-2.5 hover:bg-white sm:px-3"
+              onClick={() => setReleaseNoteOpen(true)}
+            >
+              <FileText className="size-4 shrink-0" />
+              <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
+                Release note
+              </span>
+            </Button>
             {showLockAndFeedback &&
               (isLocked ? (
                 <Tooltip>
@@ -274,7 +390,7 @@ export const ClientLink = () => {
                         type="button"
                         variant="secondary"
                         disabled
-                        className="h-8 shrink-0 whitespace-nowrap px-3 rounded-md font-bold text-sm bg-red-500 text-white border-0 shadow-sm opacity-70 cursor-not-allowed w-auto"
+                        className="h-8 w-auto shrink-0 cursor-not-allowed rounded-md border-0 bg-red-500 px-3 text-sm font-bold text-white opacity-70 shadow-sm"
                       >
                         <span className="flex items-center gap-2">
                           <Lock className="size-4" />
@@ -294,10 +410,10 @@ export const ClientLink = () => {
               ) : (
                 <Button
                   type="button"
-                  variant="secondary"
+                  variant="primary"
                   disabled={locking}
                   onClick={handleLock}
-                  className="h-8 shrink-0 whitespace-nowrap px-3 rounded-md font-bold text-sm bg-green-600 hover:bg-green-700 text-white border-0 shadow-sm disabled:opacity-70 disabled:cursor-not-allowed w-auto"
+                  className="h-8 w-auto border-0 px-3 text-sm bg-primary font-bold text-white disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {locking ? (
                     <span className="flex items-center gap-2">
@@ -312,65 +428,131 @@ export const ClientLink = () => {
                   )}
                 </Button>
               ))}
+            {showLockAndFeedback && !chatOpen && (
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={() => setChatOpen(true)}
+                className="h-8 shrink-0 px-3 font-bold"
+                aria-expanded={chatOpen}
+                aria-label="Open change requests"
+              >
+                <span className="flex items-center gap-2">
+                  <BotMessageSquare className="size-5 shrink-0" />
+                  AI Chat
+                </span>
+              </Button>
+            )}
+          </div>
+        </div>
+      </header>
+      <div id="feedback-capture-area" className="relative mt-0 min-h-0 flex-1">
+        {!hasActiveVersion && !previewBuildUrl && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-gradient-to-b from-slate-50/95 via-white/90 to-violet-50/40 p-6 backdrop-blur-[2px]">
+            <div className="w-full max-w-lg rounded-2xl border border-slate-200/80 bg-white/90 p-8 text-center shadow-lg shadow-primary/30">
+              <h2 className="mb-2 text-lg font-semibold text-primary">
+                No active release
+              </h2>
+              <p className="text-sm leading-relaxed text-slate-600">
+                {hasAnyVersions ? (
+                  <>
+                    All latest releases are currently locked, so there is no
+                    active version. If you would like to view a locked release,
+                    please select it from{" "}
+                    <span className="font-bold text-slate-800">
+                      Choose version
+                    </span>{" "}
+                    dropdown above.
+                  </>
+                ) : (
+                  <>
+                    This project has no versions yet. Add a version from the
+                    project dashboard, then return to this link.
+                  </>
+                )}
+              </p>
             </div>
           </div>
-        </header>
-        <div id="feedback-capture-area" className="flex-1 min-h-0 mt-0 relative">
-          {!hasActiveVersion && !previewBuildUrl && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center p-6 bg-gradient-to-b from-slate-50/95 via-white/90 to-violet-50/40 backdrop-blur-[2px]">
-              <div className="max-w-lg w-full rounded-2xl border border-slate-200/80 bg-white/90 shadow-lg shadow-primary/30 p-8 text-center">
-                <h2 className="text-lg font-semibold text-primary mb-2">
-                  No active release
-                </h2>
-                <p className="text-sm text-slate-600 leading-relaxed">
-                  {hasAnyVersions ? (
-                    <>
-                      All latest releases are currently locked, so there is no active version. If you would like to view a locked release, please select it from {" "}
-                      <span className="font-bold text-slate-800">
-                        Choose version
-                      </span>{" "}
-                      dropdown above.
-                    </>
-                  ) : (
-                    <>
-                      This project has no versions yet. Add a version from the
-                      project dashboard, then return to this link.
-                    </>
-                  )}
-                </p>
-              </div>
-            </div>
-          )}
-          {iframeSrc ? (
-            <iframe
-              key={iframeSrc}
-              id="previewFrame"
-              src={iframeSrc}
-              width="100%"
-              height="100%"
-              className="block w-full h-full border-0"
-              allow="display-capture"
-              style={{ height: "100vh" }}
-              title="Build Preview"
-            />
-          ) : null}
-        </div>
-      </div>
+        )}
+        {iframeSrc ? (
+          <iframe
+            key={iframeSrc}
+            id="previewFrame"
+            src={iframeSrc}
+            title="Build Preview"
+            className="absolute inset-0 h-full w-full border-0"
+            allow="display-capture"
+          />
+        ) : null}
         <EmbeddedFeedbackWidget
           projectId={String(publicProject.id)}
           captureTarget="#feedback-capture-wrapper"
+          anchorToPreview
           onSuccess={() => toast.success("Feedback submitted successfully")}
           onError={(err) =>
             toast.error(err?.message ?? "Failed to submit feedback")
           }
         />
+      </div>
+    </>
+  );
+
+  return (
+    <div className="flex min-h-screen w-full flex-1 flex-col overflow-hidden bg-slate-50">
+      {chatOpen && chatShellEnabled ? (
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="flex min-h-0 flex-1 w-full"
+        >
+          <ResizablePanel
+            defaultSize="75%"
+            minSize="25%"
+            className="flex min-h-0 min-w-0 flex-col"
+          >
+            {/* Screenshot target: header + preview only (chat stays outside this wrapper) */}
+            <div
+              id="feedback-capture-wrapper"
+              className="flex min-h-0 w-full flex-1 flex-col"
+            >
+              {clientLinkPreviewBody}
+            </div>
+          </ResizablePanel>
+          <ResizableHandle withHandle className="bg-border hover:bg-muted" />
+          <ResizablePanel
+            defaultSize="25%"
+            minSize="20%"
+            className="flex min-h-0 min-w-[280px] flex-col"
+          >
+            <ClientLinkChatPanel
+              projectSlug={projectSlug}
+              effectiveChatReleaseId={effectiveChatReleaseId}
+              isLocked={effectiveReleaseLocked}
+              isOpen={chatOpen}
+              mergeTargetLabel={chatMergeTargetLabel}
+              onPreviewCommitApplied={handleChatPreviewCommitApplied}
+              onProjectReload={loadProject}
+              onResetPreview={handleChatResetPreview}
+              onCloseChat={() => setChatOpen(false)}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <div
+          id="feedback-capture-wrapper"
+          className="flex min-h-0 w-full flex-1 flex-col"
+        >
+          {clientLinkPreviewBody}
+        </div>
+      )}
+
       <Dialog open={lockConfirmOpen} onOpenChange={setLockConfirmOpen}>
         <DialogContent showCloseButton={false} className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Lock this release?</DialogTitle>
             <DialogDescription>
-              Once this release is locked, it cannot be unlock. Are you sure you want to
-              lock it?
+              Once this release is locked, it cannot be unlock. Are you sure you
+              want to lock it?
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2 py-1">
@@ -413,6 +595,29 @@ export const ClientLink = () => {
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={releaseNoteOpen} onOpenChange={setReleaseNoteOpen}>
+        <DialogContent className="max-h-[85vh] sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Release note</DialogTitle>
+            <DialogDescription>
+              {displayRelease?.name
+                ? `Release ${displayRelease.name}`
+                : "Current release"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[55vh] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
+            {clientNote ? (
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                {clientNote}
+              </p>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No release note available for this release.
+              </p>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

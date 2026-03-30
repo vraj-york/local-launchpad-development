@@ -50,6 +50,11 @@ model Project {
   gitRepoPath       String?
   nginxConfigPath   String?
   projectId String?  
+  /// Optional comma-separated list of assignee emails (external / hub); validated as emails.
+  assignedUserEmails  String?
+  /// Optional comma-separated stakeholder emails; public release lock only allowed for these addresses.
+  stakeholderEmails   String?
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -59,7 +64,8 @@ model Project {
   versions          ProjectVersion[]
   releases          Release[]
   roadmaps          Roadmap[]
-    figmaConversions  FigmaConversion[]
+  figmaConversions  FigmaConversion[]
+  chatHistory ChatHistory[]
 
 }
 
@@ -89,7 +95,7 @@ model ProjectVersion {
   release     Release? @relation(fields: [releaseId], references: [id], onDelete: Cascade)
   uploader    User     @relation("VersionUploader", fields: [uploadedBy], references: [id])
   roadmapItems  RoadmapItem[] @relation("VersionRoadmapItems")
-    figmaConversions FigmaConversion[]
+  figmaConversions FigmaConversion[]
 
 
 }
@@ -116,6 +122,8 @@ model Release {
   isMvp       Boolean  @default(false)
   /// Email of the user who locked via the public lock API (set only when status is locked).
   lockedBy    String?
+  /// Optional notes for stakeholders on the client link (e.g. what not to test, scope).
+  clientReleaseNote    String?
 
   createdBy   Int
   createdAt   DateTime @default(now())
@@ -126,6 +134,7 @@ model Release {
   versions    ProjectVersion[]
   figmaConversions FigmaConversion[]
   changeLogs  ReleaseChangeLog[]
+  chatHistory ChatHistory[]
 
 }
 
@@ -156,6 +165,11 @@ model FigmaConversion {
   status           String?
   targetBranchName String?
   projectVersionId Int?
+  /// User chat message waiting for this agent turn's commit SHA.
+  pendingClientChatMessageId Int?
+  /// When true (client-link flows), agent FINISHED does not auto-merge; user must confirm.
+  deferLaunchpadMerge           Boolean  @default(false)
+  awaitingLaunchpadConfirmation Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -163,6 +177,26 @@ model FigmaConversion {
   release        Release         @relation(fields: [releaseId], references: [id], onDelete: Cascade)
   attemptedBy    User            @relation("FigmaConversionAttemptedBy", fields: [attemptedById], references: [id])
   projectVersion ProjectVersion? @relation(fields: [projectVersionId], references: [id], onDelete: SetNull)
+}
+
+/// Public client-link chat history per release (persists across sessions).
+model ChatHistory {
+  id        Int      @id @default(autoincrement())
+  projectId Int
+  releaseId Int
+  role      String
+  tone      String?
+  text      String   @db.Text
+  msgKey    String?
+  appliedCommitSha String?
+  mergedAt  DateTime?
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  release Release @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, releaseId, createdAt])
+  @@index([projectId, releaseId, appliedCommitSha])
 }
 
 

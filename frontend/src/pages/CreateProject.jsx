@@ -1,5 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { createProject, fetchManagers, fetchExternalHubProjects } from "../api";
+import {
+  validateOptionalCommaSeparatedEmails,
+  uniqueEmailsForHubProject,
+  emailsArrayToStorageString,
+} from "@/utils/emailList";
+import { EmailMultiSelect } from "@/components/EmailMultiSelect";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +57,9 @@ const CreateProject = () => {
   const [jiraUsername, setJiraUsername] = useState("");
   const [jiraApiToken, setJiraApiToken] = useState("");
   const [jiraProjectKey, setJiraProjectKey] = useState("");
+
+  const [assignedUserEmailTags, setAssignedUserEmailTags] = useState([]);
+  const [stakeholderEmailTags, setStakeholderEmailTags] = useState([]);
 
   // UI State
   const [error, setError] = useState("");
@@ -143,6 +152,17 @@ const CreateProject = () => {
     if (!jiraProjectKey.trim())
       errors.jiraProjectKey = "Jira Project Key is required";
 
+    const assignedErr = validateOptionalCommaSeparatedEmails(
+      emailsArrayToStorageString(assignedUserEmailTags),
+      "Assigned users",
+    );
+    if (assignedErr) errors.assignedUserEmails = assignedErr;
+    const stakeholderErr = validateOptionalCommaSeparatedEmails(
+      emailsArrayToStorageString(stakeholderEmailTags),
+      "Stakeholders",
+    );
+    if (stakeholderErr) errors.stakeholderEmails = stakeholderErr;
+
     // Roadmap is optional; validate only when user has added roadmaps
     // if (roadmaps.length > 0) {
     //   roadmaps.forEach((roadmap) => {
@@ -225,6 +245,10 @@ const CreateProject = () => {
         jiraProjectKey: jiraProjectKey,
         jiraUsername: jiraUsername,
         jiraApiToken: jiraApiToken,
+        assignedUserEmails:
+          emailsArrayToStorageString(assignedUserEmailTags) || undefined,
+        stakeholderEmails:
+          emailsArrayToStorageString(stakeholderEmailTags) || undefined,
       };
 
       if (user?.role === "admin") {
@@ -245,6 +269,17 @@ const CreateProject = () => {
       setLoading(false);
     }
   };
+
+  const selectedHubProject = useMemo(
+    () =>
+      externalHubProjects.find((p) => p.id === selectedHubProjectId) ?? null,
+    [externalHubProjects, selectedHubProjectId],
+  );
+  const assignedHubSuggestions = useMemo(
+    () =>
+      selectedHubProject ? uniqueEmailsForHubProject(selectedHubProject) : [],
+    [selectedHubProject],
+  );
 
   return (
     <div className="container mx-auto">
@@ -389,6 +424,51 @@ const CreateProject = () => {
                   rows={4}
                   className="resize-y min-h-[100px]"
                 />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="assigned-user-emails">
+                    Assigned users (optional)
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Pick team emails or type addresses manually.
+                  </p>
+                  <EmailMultiSelect
+                    id="assigned-user-emails"
+                    value={assignedUserEmailTags}
+                    onChange={setAssignedUserEmailTags}
+                    suggestions={assignedHubSuggestions}
+                    error={validationErrors.assignedUserEmails}
+                    placeholder="Email, then Enter"
+                  />
+                  {validationErrors.assignedUserEmails && (
+                    <p className="text-sm text-destructive mt-1">
+                      {validationErrors.assignedUserEmails}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="stakeholder-emails">
+                    Stakeholders (optional)
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Only these emails can use lock release, report issues and AI chat feature.
+                  </p>
+                  <EmailMultiSelect
+                    id="stakeholder-emails"
+                    value={stakeholderEmailTags}
+                    onChange={setStakeholderEmailTags}
+                    suggestions={[]}
+                    error={validationErrors.stakeholderEmails}
+                    placeholder="Email, then Enter"
+                  />
+                  {validationErrors.stakeholderEmails && (
+                    <p className="text-sm text-destructive mt-1">
+                      {validationErrors.stakeholderEmails}
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           </CardContent>

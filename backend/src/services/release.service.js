@@ -12,7 +12,7 @@ import {
   toDate,
   assertReleaseNameIsNextIncrement,
 } from "../utils/projectValidation.utils.js";
-import { generateReleaseHeader } from "../utils/headerUtils.js";
+import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import { promisify } from "util";
 import os from "os";
 import { execa } from "execa";
@@ -55,10 +55,6 @@ async function appendReleaseChangeLog(tx, {
     },
   });
 }
-
-// Environment variables
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const GITHUB_USERNAME = process.env.GITHUB_USERNAME;
 
 // Project locks to prevent concurrent uploads
 const projectLocks = new Map();
@@ -180,16 +176,16 @@ function checkRateLimit() {
 }
 
 /**
- * Resolve GitHub credentials for a project: use project's githubUsername/githubToken when both set, else env.
- * @param {Object} project - Project with optional githubUsername, githubToken
+ * Resolve GitHub credentials for a project from stored project fields only.
+ * @param {Object} project - Project with githubUsername, githubToken
  * @returns {{ githubUsername: string, githubToken: string }}
  */
 function getProjectGitHubCredentials(project) {
-  const username = project?.githubUsername?.trim() || GITHUB_USERNAME;
-  const token = project?.githubToken?.trim() || GITHUB_TOKEN;
+  const username = project?.githubUsername?.trim();
+  const token = project?.githubToken?.trim();
   if (!username || !token) {
     throw new ApiError(
-      "GitHub credentials not configured. Set project GitHub (githubUsername, githubToken) or env GITHUB_USERNAME and GITHUB_TOKEN.",
+      "GitHub credentials not configured. Set githubUsername and githubToken on the project.",
     );
   }
   return { githubUsername: username, githubToken: token };
@@ -198,12 +194,12 @@ function getProjectGitHubCredentials(project) {
 export async function createGithubRepo(repoName, credentials = {}) {
   checkRateLimit();
 
-  const username = credentials.githubUsername || GITHUB_USERNAME;
-  const token = credentials.githubToken || GITHUB_TOKEN;
+  const username = credentials.githubUsername?.trim();
+  const token = credentials.githubToken?.trim();
 
   if (!token || !username) {
     throw new ApiError(
-      "GitHub credentials not configured. Please set GITHUB_TOKEN and GITHUB_USERNAME environment variables or project GitHub details.",
+      "GitHub credentials not configured. Set githubUsername and githubToken on the project.",
     );
   }
 
@@ -270,7 +266,7 @@ export async function createGithubRepo(repoName, credentials = {}) {
   }
   if (response.status === 401) {
     throw new ApiError(
-      "GitHub authentication failed. Please check your GITHUB_TOKEN.",
+      "GitHub authentication failed. Check the project's githubToken.",
     );
   }
   if (response.status === 403) {
@@ -348,8 +344,8 @@ export async function addGithubCollaborator(
 export async function checkRepoExists(repoName, credentials = {}) {
   checkRateLimit();
 
-  const username = credentials.githubUsername || GITHUB_USERNAME;
-  const token = credentials.githubToken || GITHUB_TOKEN;
+  const username = credentials.githubUsername?.trim();
+  const token = credentials.githubToken?.trim();
 
   const response = await fetch(
     `https://api.github.com/repos/${username}/${repoName}`,
@@ -513,6 +509,7 @@ export const createReleaseService = async (data, user) => {
     isMvp,
     releaseDate: releaseDateInput,
     startDate: startDateInput,
+    clientReleaseNote: clientNoteInput,
   } = data;
   const { id: userId, role } = user;
 
@@ -572,6 +569,11 @@ export const createReleaseService = async (data, user) => {
       ? toDate(startDateInput, "startDate")
       : null;
 
+  const clientReleaseNote =
+    typeof clientNoteInput === "string" && clientNoteInput.trim()
+      ? clientNoteInput.trim()
+      : null;
+
   return prisma.$transaction(async (tx) => {
     const release = await tx.release.create({
       data: {
@@ -582,6 +584,7 @@ export const createReleaseService = async (data, user) => {
         isMvp: Boolean(isMvp),
         releaseDate: shipDate,
         startDate,
+        clientReleaseNote,
         createdBy: userId,
       },
       include: {
@@ -878,8 +881,9 @@ export const lockReleaseService = async (releaseId, locked, user) => {
 };
 
 /**
- * Partial update: name, description, isMvp, releaseDate, startDate. Blocked when release is locked.
- * Requires non-empty reason when any persisted field actually changes.
+ * Partial update: name, description, isMvp, releaseDate, startDate, clientReleaseNote.
+ * Locked releases may only update clientReleaseNote for the public client link.
+ * Requires non-empty reason when any non–client-facing field actually changes.
  */
 export const updateReleaseService = async (releaseId, data, user) => {
   const { id: userId, role } = user;
@@ -890,6 +894,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
     releaseDate: releaseDateInput,
     startDate: startDateInput,
     reason: reasonRaw,
+    clientReleaseNote: clientNoteInput,
   } = data;
 
   const current = await prisma.release.findUnique({
@@ -903,6 +908,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
       isMvp: true,
       releaseDate: true,
       startDate: true,
+      clientReleaseNote: true,
       project: { select: { assignedManagerId: true } },
     },
   });
@@ -913,25 +919,43 @@ export const updateReleaseService = async (releaseId, data, user) => {
     (role === "manager" && current.project.assignedManagerId === userId);
   if (!hasPermission) throw new ApiError(403, "Forbidden");
 
-  if (current.status === ReleaseStatus.locked) {
-    throw new ApiError(400, "Cannot update a locked release.");
-  }
+  const locked = current.status === ReleaseStatus.locked;
 
-  const hasFieldInput =
+  const wantsClientNote = clientNoteInput !== undefined;
+  const wantsOther =
     name !== undefined ||
     description !== undefined ||
     isMvp !== undefined ||
     releaseDateInput !== undefined ||
     startDateInput !== undefined;
 
-  if (!hasFieldInput) {
+  if (!wantsClientNote && !wantsOther) {
     throw new ApiError(400, "No updatable fields provided");
+  }
+
+  if (locked && wantsOther) {
+    throw new ApiError(
+      400,
+      "Cannot update a locked release except the client release note (client URL).",
+    );
   }
 
   const updateData = {};
   const changes = {};
 
-  if (name !== undefined) {
+  if (wantsClientNote) {
+    const next =
+      clientNoteInput == null || clientNoteInput === ""
+        ? null
+        : String(clientNoteInput).trim() || null;
+    const prev = current.clientReleaseNote ?? null;
+    if (next !== prev) {
+      updateData.clientReleaseNote = next;
+      changes.clientReleaseNote = { from: prev, to: next };
+    }
+  }
+
+  if (!locked && name !== undefined) {
     const releaseNameTrimmed =
       name && typeof name === "string" ? name.trim() : "";
     if (!releaseNameTrimmed) {
@@ -957,7 +981,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
     }
   }
 
-  if (description !== undefined) {
+  if (!locked && description !== undefined) {
     const nextDesc =
       description == null || description === ""
         ? null
@@ -969,7 +993,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
     }
   }
 
-  if (isMvp !== undefined) {
+  if (!locked && isMvp !== undefined) {
     const nextMvp = Boolean(isMvp);
     if (nextMvp !== current.isMvp) {
       updateData.isMvp = nextMvp;
@@ -977,7 +1001,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
     }
   }
 
-  if (releaseDateInput !== undefined) {
+  if (!locked && releaseDateInput !== undefined) {
     const nextDate =
       releaseDateInput === null || releaseDateInput === ""
         ? null
@@ -991,7 +1015,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
     }
   }
 
-  if (startDateInput !== undefined) {
+  if (!locked && startDateInput !== undefined) {
     const nextStart =
       startDateInput === null || startDateInput === ""
         ? null
@@ -1016,9 +1040,18 @@ export const updateReleaseService = async (releaseId, data, user) => {
 
   const reasonTrim =
     typeof reasonRaw === "string" ? reasonRaw.trim() : "";
-  if (!reasonTrim) {
+  const onlyClientChanges =
+    Object.keys(changes).length > 0 &&
+    Object.keys(changes).every((k) => k === "clientReleaseNote");
+  if (!onlyClientChanges && !reasonTrim) {
     throw new ApiError(400, "reason is required when changing release fields.");
   }
+
+  const logReason =
+    reasonTrim ||
+    (onlyClientChanges
+      ? "Updated client release note (client link)"
+      : reasonTrim);
 
   return prisma.$transaction(async (tx) => {
     const row = await tx.release.update({
@@ -1030,7 +1063,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
     });
     await appendReleaseChangeLog(tx, {
       releaseId,
-      reason: reasonTrim,
+      reason: logReason,
       changedById: userId,
       changes,
     });
@@ -1039,28 +1072,26 @@ export const updateReleaseService = async (releaseId, data, user) => {
 };
 
 /**
- * Generates the next semantic version for a release (e.g., 1.0.1 -> 1.0.2).
- * Bumps patch on the most recently created version for this release.
+ * Next upload revision for a release: R1, R2, R3, … (only R-prefixed rows count).
+ * Legacy semver rows (e.g. 1.0.0) are ignored for the counter.
  */
 export const autoGenerateVersion = async (releaseId) => {
-  const lastVersion = await prisma.projectVersion.findFirst({
+  const rows = await prisma.projectVersion.findMany({
     where: { releaseId },
-    orderBy: { createdAt: "desc" },
     select: { version: true },
   });
 
-  if (!lastVersion) {
-    return "1.0.0";
+  let maxN = 0;
+  const re = /^R(\d+)$/i;
+  for (const row of rows) {
+    const m = String(row.version || "").match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n) && n > maxN) maxN = n;
+    }
   }
 
-  const parts = lastVersion.version.split(".").map(Number);
-
-  if (parts.length === 3) {
-    parts[2] += 1;
-    return parts.join(".");
-  }
-
-  return `${lastVersion.version}.1`;
+  return `R${maxN + 1}`;
 };
 
 /**
@@ -1456,7 +1487,6 @@ export const reloadNginx = async () => {
 export const uploadReleaseVersionService = async (
   releaseId,
   file,
-  versionInput,
   roadmapItemIds,
   user,
 ) => {
@@ -1537,13 +1567,13 @@ export const uploadReleaseVersionService = async (
 
     const buildOutputPath = await runBuildSequence(sourceRoot);
 
-    /* -------------------- 4️⃣ Version -------------------- */
+    /* -------------------- 4️⃣ Revision (R1, R2, … server-only) -------------------- */
 
-    const version = versionInput || (await autoGenerateVersion(releaseId));
+    const version = await autoGenerateVersion(releaseId);
 
     /* -------------------- 5️⃣ Git: tag and push all data except .gitignore content -------------------- */
 
-    const tag = `proj-${project.id}-rel-${releaseId}-v${version}`;
+    const tag = `proj-${project.id}-rel-${releaseId}-${version}`;
 
     const githubCreds = getProjectGitHubCredentials(project);
     const validatedProjectName = projectRepoSlugFromDisplayName(project.name);
@@ -1651,6 +1681,12 @@ export const uploadReleaseVersionService = async (
           uploadedBy: userId,
         },
       });
+      await tx.project.update({
+        where: { id: project.id },
+        data: {
+          gitRepoPath: `github.com/${githubCreds.githubUsername}/${validatedProjectName}`,
+        },
+      });
     });
 
     return {
@@ -1711,7 +1747,7 @@ const PUBLIC_LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * Public lock a release (one-way). Clears isActive on all versions for this release only.
- * Unlock is not supported. No auth token — caller supplies `lockedBy` email.
+ * Unlock is not supported. Caller supplies `lockedBy` email.
  */
 export const publicLockReleaseService = async (releaseId, lockedBy) => {
   const email =
@@ -1730,6 +1766,7 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
         select: {
           id: true,
           name: true,
+          stakeholderEmails: true,
         },
       },
     },
@@ -1737,6 +1774,22 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
 
   if (!release) {
     throw new ApiError(404, "Release not found");
+  }
+
+  const stakeholderSet = parseStoredEmailListToSet(
+    release.project?.stakeholderEmails,
+  );
+  if (stakeholderSet.size === 0) {
+    throw new ApiError(
+      403,
+      "Public release lock is not available until project stakeholders are configured.",
+    );
+  }
+  if (!stakeholderSet.has(email)) {
+    throw new ApiError(
+      403,
+      "This email is not authorized",
+    );
   }
 
   if (release.status === ReleaseStatus.locked) {

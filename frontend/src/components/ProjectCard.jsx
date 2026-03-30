@@ -11,6 +11,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Calendar, Hash, ExternalLink } from "lucide-react";
 import config from "@/config";
+import { formatProjectVersionLabel } from "@/lib/utils";
 
 const ProjectCard = ({ project }) => {
   const navigate = useNavigate();
@@ -75,7 +76,7 @@ const ProjectCard = ({ project }) => {
                 <span>
                   Release:{" "}
                   <span className="text-slate-700 font-medium">
-                    {activeVersionNumber}
+                    {formatProjectVersionLabel(activeVersionNumber)}
                   </span>
                 </span>
               </div>

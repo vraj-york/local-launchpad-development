@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { updateProject } from "@/api";
+import { updateProject, fetchExternalHubProjects } from "@/api";
+import {
+  validateOptionalCommaSeparatedEmails,
+  uniqueEmailsForHubProject,
+  emailsArrayToStorageString,
+  storageStringToEmailsArray,
+} from "@/utils/emailList";
+import { EmailMultiSelect } from "@/components/EmailMultiSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,6 +30,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+function normEmailListField(v) {
+  if (v == null || String(v).trim() === "") return null;
+  return String(v).trim();
+}
+
 function buildUpdatePayload({
   description,
   githubUsername,
@@ -31,6 +43,9 @@ function buildUpdatePayload({
   jiraUsername,
   jiraProjectKey,
   jiraApiToken,
+  assignedUserEmails,
+  stakeholderEmails,
+  project,
 }) {
   const payload = {};
 
@@ -57,6 +72,19 @@ function buildUpdatePayload({
   const jTok = jiraApiToken.trim();
   if (jTok) payload.jiraApiToken = jTok;
 
+  if (
+    normEmailListField(assignedUserEmails) !==
+    normEmailListField(project?.assignedUserEmails)
+  ) {
+    payload.assignedUserEmails = normEmailListField(assignedUserEmails);
+  }
+  if (
+    normEmailListField(stakeholderEmails) !==
+    normEmailListField(project?.stakeholderEmails)
+  ) {
+    payload.stakeholderEmails = normEmailListField(stakeholderEmails);
+  }
+
   return payload;
 }
 
@@ -69,6 +97,10 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const [jiraUsername, setJiraUsername] = useState("");
   const [jiraApiToken, setJiraApiToken] = useState("");
   const [jiraProjectKey, setJiraProjectKey] = useState("");
+
+  const [assignedUserEmailTags, setAssignedUserEmailTags] = useState([]);
+  const [stakeholderEmailTags, setStakeholderEmailTags] = useState([]);
+  const [hubProjectsForEmails, setHubProjectsForEmails] = useState([]);
 
   const [validationErrors, setValidationErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -86,10 +118,32 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
     setJiraUsername(project.jiraUsername ?? "");
     setJiraProjectKey(project.jiraProjectKey ?? "");
     setJiraApiToken(project.jiraApiToken ?? "");
+    setAssignedUserEmailTags(
+      storageStringToEmailsArray(project.assignedUserEmails),
+    );
+    setStakeholderEmailTags(
+      storageStringToEmailsArray(project.stakeholderEmails),
+    );
     setShowGithubToken(false);
     setShowJiraToken(false);
     setValidationErrors({});
   }, [open, project]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchExternalHubProjects();
+        if (!cancelled) setHubProjectsForEmails(Array.isArray(list) ? list : []);
+      } catch {
+        if (!cancelled) setHubProjectsForEmails([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const validateForm = () => {
     const errors = {};
@@ -116,6 +170,17 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         "Jira API Token is required (stored credentials missing; add a token to save)";
     }
 
+    const assignedErr = validateOptionalCommaSeparatedEmails(
+      emailsArrayToStorageString(assignedUserEmailTags),
+      "Assigned users",
+    );
+    if (assignedErr) errors.assignedUserEmails = assignedErr;
+    const stakeholderErr = validateOptionalCommaSeparatedEmails(
+      emailsArrayToStorageString(stakeholderEmailTags),
+      "Stakeholders",
+    );
+    if (stakeholderErr) errors.stakeholderEmails = stakeholderErr;
+
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -139,6 +204,9 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         jiraUsername,
         jiraProjectKey,
         jiraApiToken,
+        assignedUserEmails: emailsArrayToStorageString(assignedUserEmailTags),
+        stakeholderEmails: emailsArrayToStorageString(stakeholderEmailTags),
+        project,
       });
 
       if (Object.keys(payload).length === 0) {
@@ -146,8 +214,6 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         setSaving(false);
         return;
       }
-
-      console.log(payload, "project upload payload");
 
       await updateProject(project.id, payload);
       toast.success("Project updated successfully");
@@ -163,10 +229,17 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
 
   if (!project) return null;
 
+  const hubRowForProject = hubProjectsForEmails.find(
+    (p) => p.id === project.projectId,
+  );
+  const assignedHubSuggestions = hubRowForProject
+    ? uniqueEmailsForHubProject(hubRowForProject)
+    : [];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-3xl max-h-[min(90vh,880px)] overflow-y-auto border-border bg-background shadow-xl p-0 gap-0"
+        className="max-w-5xl max-h-[min(90vh,880px)] overflow-y-auto border-border bg-background shadow-xl p-0 gap-0"
         showCloseButton
       >
         <div className="px-6 pt-6 pb-2 border-b border-border bg-primary/10">
@@ -204,6 +277,53 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   rows={4}
                   className="resize-y min-h-[100px]"
                 />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-assigned-user-emails">
+                    Assigned users (optional)
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Hub emails for this workspace&apos;s linked project, or
+                    type addresses manually.
+                  </p>
+                  <EmailMultiSelect
+                    id="edit-assigned-user-emails"
+                    value={assignedUserEmailTags}
+                    onChange={setAssignedUserEmailTags}
+                    suggestions={assignedHubSuggestions}
+                    error={validationErrors.assignedUserEmails}
+                    placeholder="Email, then Enter"
+                  />
+                  {validationErrors.assignedUserEmails && (
+                    <p className="text-sm text-destructive">
+                      {validationErrors.assignedUserEmails}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-stakeholder-emails">
+                    Stakeholders (optional)
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Add manually. Only these emails can confirm a public release
+                    lock.
+                  </p>
+                  <EmailMultiSelect
+                    id="edit-stakeholder-emails"
+                    value={stakeholderEmailTags}
+                    onChange={setStakeholderEmailTags}
+                    suggestions={[]}
+                    error={validationErrors.stakeholderEmails}
+                    placeholder="Email, then Enter"
+                  />
+                  {validationErrors.stakeholderEmails && (
+                    <p className="text-sm text-destructive">
+                      {validationErrors.stakeholderEmails}
+                    </p>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>

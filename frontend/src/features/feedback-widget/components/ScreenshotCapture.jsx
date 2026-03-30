@@ -16,60 +16,30 @@ const ScreenshotCapture = ({ onCapture, onBack, captureTarget }) => {
 
     const runCapture = async () => {
       try {
-        const captureMethod = captureTarget ? 'captureTargetArea' : 'captureWithDisplayMedia';
-        console.log("[feedback-capture] ScreenshotCapture — Step 1/6: starting", {
-          captureMethod,
-          captureTarget: captureTarget ?? "(none)",
-          currentUrl: window.location.href,
-          phase: 'selecting',
-        });
-
-        console.log("[feedback-capture] ScreenshotCapture — Step 2/6: calling", captureMethod);
-        const t0 = performance.now();
         const canvas = captureTarget
           ? await captureTargetArea(captureTarget)
           : await captureWithDisplayMedia();
-        const elapsed = Math.round(performance.now() - t0);
 
         if (cancelled) {
-          console.warn("[feedback-capture] ScreenshotCapture — Step 2/6: cancelled after capture returned");
           return;
         }
-        console.log("[feedback-capture] ScreenshotCapture — Step 3/6: canvas received", {
-          width: canvas?.width,
-          height: canvas?.height,
-          captureTimeMs: elapsed,
-        });
 
         processingStartRef.current = Date.now();
         setPhase('processing');
-        console.log("[feedback-capture] ScreenshotCapture — Step 4/6: phase → processing, showing brief loader");
 
         const elapsedSinceProcessing = Date.now() - processingStartRef.current;
         const remaining = Math.max(0, MIN_CAPTURE_SCREEN_MS - elapsedSinceProcessing);
-        console.log("[feedback-capture] ScreenshotCapture — Step 4/6: waiting", { remainingMs: remaining });
         await new Promise((r) => setTimeout(r, remaining));
 
         if (cancelled) {
-          console.warn("[feedback-capture] ScreenshotCapture — Step 5/6: cancelled after processing delay");
           return;
         }
 
-        console.log("[feedback-capture] ScreenshotCapture — Step 5/6: converting canvas to dataUrl");
         const dataUrl = canvasToDataURL(canvas);
-        console.log("[feedback-capture] ScreenshotCapture — Step 5/6: dataUrl ready", {
-          dataUrlLength: dataUrl?.length,
-        });
 
-        console.log("[feedback-capture] ScreenshotCapture — Step 6/6: calling onCapture callback");
         onCapture(canvas, dataUrl);
       } catch (err) {
         if (!cancelled) {
-          console.error("[feedback-capture] ScreenshotCapture — FAILED", {
-            error: err?.message,
-            name: err?.name,
-            stack: err?.stack?.split('\n').slice(0, 5).join(' | '),
-          });
           setError(err?.message || 'Capture failed');
           setPhase('selecting');
         }
@@ -78,7 +48,6 @@ const ScreenshotCapture = ({ onCapture, onBack, captureTarget }) => {
 
     runCapture();
     return () => {
-      console.log("[feedback-capture] ScreenshotCapture — effect cleanup: cancelled=true");
       cancelled = true;
     };
   }, []);

@@ -47,6 +47,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "./ui/collapsible";
+import { formatProjectVersionLabel } from "../lib/utils";
 import {
   Select,
   SelectContent,
@@ -72,6 +73,7 @@ const CHANGELOG_FIELD_LABELS = {
   description: "Description",
   isMvp: "MVP",
   lockedBy: "Locked by",
+  clientReleaseNote: "Client release note",
 };
 
 function formatReadableDate(value) {
@@ -247,7 +249,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [uploading, setUploading] = useState(false);
   const [selectedRelease, setSelectedRelease] = useState("");
   const [uploadFile, setUploadFile] = useState(null);
-  const [version, setVersion] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState("");
   const [uploadSuccessBuildUrl, setUploadSuccessBuildUrl] = useState(null);
@@ -268,6 +269,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     startDate: null,
     releaseDate: null,
     isMvp: false,
+    clientReleaseNote: "",
   });
 
   const [editDialog, setEditDialog] = useState(null);
@@ -297,6 +299,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       startDate: null,
       releaseDate: null,
       isMvp: false,
+      clientReleaseNote: "",
     });
     setShowCreateForm(true);
   };
@@ -353,9 +356,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       description: release.description ?? "",
       isMvp: !!release.isMvp,
       startDate: release.startDate ? new Date(release.startDate) : null,
-      releaseDate: release.releaseDate
-        ? new Date(release.releaseDate)
-        : null,
+      releaseDate: release.releaseDate ? new Date(release.releaseDate) : null,
+      clientReleaseNote: release.clientReleaseNote ?? "",
+      isLocked: isReleaseLocked(release),
       reason: "",
     });
   };
@@ -363,21 +366,29 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const saveEditRelease = async (e) => {
     e.preventDefault();
     if (!editDialog) return;
-    const payload = {
-      description: editDialog.description.trim() || null,
-      isMvp: editDialog.isMvp,
-      startDate: editDialog.startDate
-        ? format(editDialog.startDate, "yyyy-MM-dd")
-        : null,
-      releaseDate: editDialog.releaseDate
-        ? format(editDialog.releaseDate, "yyyy-MM-dd")
-        : null,
-      reason: editDialog.reason.trim(),
-    };
+    const noteTrimmed = editDialog.clientReleaseNote.trim() || null;
+    const payload = editDialog.isLocked
+      ? { clientReleaseNote: noteTrimmed }
+      : {
+        description: editDialog.description.trim() || null,
+        isMvp: editDialog.isMvp,
+        startDate: editDialog.startDate
+          ? format(editDialog.startDate, "yyyy-MM-dd")
+          : null,
+        releaseDate: editDialog.releaseDate
+          ? format(editDialog.releaseDate, "yyyy-MM-dd")
+          : null,
+        clientReleaseNote: noteTrimmed,
+        reason: editDialog.reason.trim(),
+      };
     try {
       setEditSaving(true);
       await patchRelease(editDialog.id, payload);
-      toast.success("Release updated");
+      toast.success(
+        editDialog.isLocked
+          ? "Client link notes saved"
+          : "Release updated",
+      );
       const rid = editDialog.id;
       setEditDialog(null);
       await loadReleases();
@@ -429,6 +440,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
           ? format(newRelease.releaseDate, "yyyy-MM-dd")
           : null,
         isMvp: newRelease.isMvp,
+        clientReleaseNote: newRelease.clientReleaseNote.trim() || null,
       };
       await createRelease(releaseData);
       setNewRelease({
@@ -437,6 +449,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
         startDate: null,
         releaseDate: null,
         isMvp: false,
+        clientReleaseNote: "",
       });
       setShowCreateForm(false);
       await loadReleases();
@@ -567,7 +580,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       const result = await uploadToRelease(
         selectedRelease,
         fileToUpload,
-        version || null,
         selectedRoadmapItemIds,
       );
 
@@ -576,19 +588,20 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       clearInterval(progressInterval);
       setUploadProgress(100);
 
-      const versionLabel = result?.version;
-      const buildUrlDisplay = result?.buildUrl ?? null;
+      const revisionLabel = formatProjectVersionLabel(result?.version);
+      const buildUrlDisplay = result?.url ?? result?.buildUrl ?? null;
       setUploadStatus(
-        `Upload successful! Version: ${versionLabel}${buildUrlDisplay ? " - Build URL: " : ""}`,
+        `Upload successful! Revision: ${revisionLabel}`,
       );
       setUploadSuccessBuildUrl(buildUrlDisplay);
       setUploadFile(null);
       setSelectedRelease("");
-      setVersion("");
       setSelectedRoadmapItemIds([]);
       if (uploadFileInputRef.current) uploadFileInputRef.current.value = "";
       await loadReleases();
-      toast.success(`Project uploaded successfully! Version: ${versionLabel}`);
+      toast.success(
+        `Project uploaded successfully! Revision: ${revisionLabel}`,
+      );
     } catch (err) {
       const errorMessage = err.error || err.message || "Upload failed";
       setUploadStatus(`Upload failed: ${errorMessage}`);
@@ -611,7 +624,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const resetUploadForm = () => {
     setSelectedRelease("");
     setUploadFile(null);
-    setVersion("");
     setSelectedRoadmapItemIds([]);
     setUploadStatus("");
     setUploadSuccessBuildUrl(null);
@@ -736,10 +748,19 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       />
                       <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-5 sm:px-6 sm:py-5">
                         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
-                            <h4 className="min-w-0 max-w-full truncate text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">
-                              {release.name}
-                            </h4>
+                          <div className="flex flex-col items-start gap-2">
+                            <div className="flex min-w-0 max-w-full items-center gap-2">
+                              <h4 className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">
+                                {release.name}
+                              </h4>
+                              {release.isMvp ? (
+                                <Badge
+                                  className="bg-primary font-bold text-white"
+                                >
+                                  MVP
+                                </Badge>
+                              ) : null}
+                            </div>
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <button
@@ -776,15 +797,12 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                               </TooltipContent>
                             </Tooltip>
                           </div>
-                          <div className="flex flex-col gap-2 border-t border-slate-100/80 pt-3 text-xs sm:ml-auto sm:shrink-0 sm:max-w-md sm:border-t-0 sm:pt-0">
-                            <div className="inline-flex flex-wrap items-center gap-2 rounded-lg bg-slate-100/70 px-2.5 py-1.5 text-slate-700 ring-1 ring-slate-200/60">
+                          <div className="flex flex-col items-start gap-2 border-t border-slate-100/80 pt-3 text-xs sm:ml-auto sm:shrink-0 sm:max-w-md sm:border-t-0 sm:pt-0">
+                            <div className="flex w-full items-center gap-2 rounded-lg bg-slate-100/70 px-2.5 py-1.5 text-slate-700 ring-1 ring-slate-200/60">
                               <CalendarDays
                                 className="size-3.5 shrink-0 text-slate-500"
                                 aria-hidden
                               />
-                              <span className="font-medium text-slate-600">
-                                Schedule
-                              </span>
                               <span className="min-w-0 font-semibold text-slate-900">
                                 <time dateTime={release.startDate ?? undefined}>
                                   {formatReadableDate(release.startDate)}
@@ -792,26 +810,40 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                 <span className="mx-1 font-normal text-slate-400">
                                   →
                                 </span>
-                                <time dateTime={release.releaseDate ?? undefined}>
+                                <time
+                                  dateTime={release.releaseDate ?? undefined}
+                                >
                                   {formatReadableDate(release.releaseDate)}
                                 </time>
                               </span>
                             </div>
-                            <span
-                              className="hidden h-3 w-px shrink-0 self-center bg-slate-200 sm:inline-block"
-                              aria-hidden
-                            />
-                            <span className="inline-flex min-w-0 max-w-full items-center gap-2 sm:max-w-44 md:max-w-52">
-                              <HubProfileAvatar
-                                email={release.creator?.email}
-                                alt={release.creator?.name ?? ""}
-                                className="size-5"
-                                fallbackClassName="rounded-md"
-                              />
-                              <span className="truncate">
-                                {release.creator?.name ?? "—"}
+                            <div className="flex gap-2">
+                              {canManageReleases && (
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="sm"
+                                  className="w-fit gap-2 bg-slate-100/70 text-slate-700 ring-1 ring-slate-200/60"
+                                  onClick={() => openEditRelease(release)}
+                                >
+                                  <Pencil className="size-3.5" />
+                                  {isReleaseLocked(release)
+                                    ? "Edit release (notes)"
+                                    : "Edit Release"}
+                                </Button>
+                              )}
+                              <span className="inline-flex min-w-0 max-w-full items-center gap-2 sm:max-w-44 md:max-w-52">
+                                <HubProfileAvatar
+                                  email={release.creator?.email}
+                                  alt={release.creator?.name ?? ""}
+                                  className="size-5"
+                                  fallbackClassName="rounded-md"
+                                />
+                                <span className="truncate">
+                                  {release.creator?.name ?? "—"}
+                                </span>
                               </span>
-                            </span>
+                            </div>
                           </div>
                         </div>
 
@@ -829,19 +861,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                             )}
                           </p>
                         </div>
-
-                        {canManageReleases && !isReleaseLocked(release) && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="w-fit gap-2"
-                            onClick={() => openEditRelease(release)}
-                          >
-                            <Pencil className="size-3.5" />
-                            Edit details
-                          </Button>
-                        )}
 
                         {canManageReleases && (
                           <Collapsible
@@ -904,7 +923,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                           </div>
                                           {log.changes &&
                                             typeof log.changes === "object" &&
-                                            Object.keys(log.changes).length > 0 ? (
+                                            Object.keys(log.changes).length >
+                                            0 ? (
                                             <div className="border-t border-slate-100 px-2 py-2">
                                               <p className="px-1 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">
                                                 What changed
@@ -1113,13 +1133,15 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                   Revision history
                                 </span>
                                 <span className="text-sm text-slate-500">
-                                  {release.versions.length} version
+                                  {release.versions.length} revision
                                   {release.versions.length !== 1 ? "s" : ""}
                                 </span>
                                 <div className="text-sm">
                                   <span className="text-slate-400">Latest</span>
                                   <span className="ml-1.5 text-sm text-slate-700">
-                                    v{release.versions[0].version}
+                                    {formatProjectVersionLabel(
+                                      release.versions[0].version,
+                                    )}
                                   </span>
                                 </div>
                                 <ChevronDown className="size-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-180" />
@@ -1135,7 +1157,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                     <div className="flex flex-col gap-2">
                                       <div className="flex items-center gap-3">
                                         <span className="font-mono text-sm font-medium text-slate-700">
-                                          v{version.version}
+                                          {formatProjectVersionLabel(
+                                            version.version,
+                                          )}
                                         </span>
                                         <span className="text-xs text-slate-400">
                                           {new Date(
@@ -1314,55 +1338,24 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               </div>
             </div>
 
-            {/* <div className="space-y-2">
-              <Label>Roadmaps (for reference)</Label>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full justify-between gap-2 p-2 hover:bg-transparent"
-                    disabled={roadmapsLoading || roadmaps.length === 0}
-                  >
-                    {roadmapsLoading ? (
-                      "Loading roadmaps..."
-                    ) : roadmaps.length === 0 ? (
-                      "No roadmaps found"
-                    ) : (
-                      "View roadmap items"
-                    )}
-                    <ChevronDown className="h-4 w-4 text-slate-500" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-80 max-h-[320px] overflow-y-auto">
-                  <DropdownMenuLabel>Roadmaps</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {roadmaps.map((roadmap) => (
-                    <div key={roadmap.id} className="py-1">
-                      <DropdownMenuLabel className="text-primary font-medium">
-                        {roadmap.title}
-                      </DropdownMenuLabel>
-                      {roadmap.items?.length ? (
-                        <ul className="list-none pl-3 space-y-1 mt-1">
-                          {roadmap.items.map((item) => (
-                            <li
-                              key={item.id}
-                              className="text-sm"
-                            >
-                              {item.title}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <div className="px-2 py-1.5 text-sm text-slate-500">
-                          No items found for this roadmap.
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div> */}
+            <div className="space-y-3 rounded-lg">
+              <div className="space-y-2">
+                <Label htmlFor="new-client-release-note">Notes for clients</Label>
+                <Textarea
+                  id="new-client-release-note"
+                  rows={3}
+                  placeholder="e.g. Do not test billing — out of scope for this build."
+                  value={newRelease.clientReleaseNote}
+                  onChange={(e) =>
+                    setNewRelease((prev) => ({
+                      ...prev,
+                      clientReleaseNote: e.target.value,
+                    }))
+                  }
+                  className="resize-y min-h-[72px]"
+                />
+              </div>
+            </div>
 
             <DialogFooter className="gap-2 sm:gap-0">
               <Button
@@ -1393,8 +1386,20 @@ const ReleaseManagement = ({ projectId, projectName }) => {
           <DialogHeader>
             <DialogTitle>Edit release</DialogTitle>
             <DialogDescription>
-              Release name cannot be changed. Other updates are saved with an
-              audit entry when something actually changes (reason required then).
+              {editDialog?.isLocked ? (
+                <>
+                  This release is <strong>locked</strong>. You can only update
+                  notes shown on the public client link. Git change summary on
+                  that page still comes from the repo automatically.
+                </>
+              ) : (
+                <>
+                  Release name cannot be changed. Other updates are saved with an
+                  audit entry when something actually changes (reason required
+                  when updating description, schedule, MVP, or dates—not for
+                  client link notes alone).
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           {editDialog ? (
@@ -1415,14 +1420,24 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   id="edit-release-desc"
                   rows={3}
                   value={editDialog.description}
+                  disabled={editDialog.isLocked}
                   onChange={(e) =>
                     setEditDialog((prev) =>
                       prev ? { ...prev, description: e.target.value } : prev,
                     )
                   }
+                  className={
+                    editDialog.isLocked ? "cursor-not-allowed bg-slate-50" : ""
+                  }
                 />
               </div>
-              <div className="space-y-2">
+              <div
+                className={
+                  editDialog.isLocked
+                    ? "pointer-events-none space-y-2 opacity-60"
+                    : "space-y-2"
+                }
+              >
                 <Label>Schedule (start → target release)</Label>
                 <p className="text-xs text-slate-500">
                   Same as create: pick start, then target. Stored as{" "}
@@ -1488,6 +1503,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 <Checkbox
                   id="edit-is-mvp"
                   checked={editDialog.isMvp}
+                  disabled={editDialog.isLocked}
                   onCheckedChange={(checked) =>
                     setEditDialog((prev) =>
                       prev ? { ...prev, isMvp: checked === true } : prev,
@@ -1499,21 +1515,45 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   MVP release
                 </Label>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-reason">Reason</Label>
-                <Textarea
-                  id="edit-reason"
-                  rows={2}
-                  placeholder="Required if you change any field above"
-                  value={editDialog.reason}
-                  onChange={(e) =>
-                    setEditDialog((prev) =>
-                      prev ? { ...prev, reason: e.target.value } : prev,
-                    )
-                  }
-                />
+
+              {!editDialog.isLocked ? (
+                <div className="space-y-2">
+                  <Label htmlFor="edit-reason">Reason</Label>
+                  <Textarea
+                    id="edit-reason"
+                    rows={2}
+                    placeholder="Required if you change description, schedule, MVP, or dates"
+                    value={editDialog.reason}
+                    onChange={(e) =>
+                      setEditDialog((prev) =>
+                        prev ? { ...prev, reason: e.target.value } : prev,
+                      )
+                    }
+                  />
+                </div>
+              ) : null}
+              <div className="space-y-3 rounded-lg">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-client-release-note">
+                    Notes for clients (optional)
+                  </Label>
+                  <Textarea
+                    id="edit-client-release-note"
+                    rows={3}
+                    placeholder="e.g. Do not test billing — out of scope for this build."
+                    value={editDialog.clientReleaseNote}
+                    onChange={(e) =>
+                      setEditDialog((prev) =>
+                        prev
+                          ? { ...prev, clientReleaseNote: e.target.value }
+                          : prev,
+                      )
+                    }
+                    className="resize-y min-h-[72px]"
+                  />
+                </div>
               </div>
-              <DialogFooter className="gap-2 sm:gap-0">
+              <DialogFooter className="gap-2">
                 <Button
                   type="button"
                   variant="outline"
@@ -1522,7 +1562,11 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" className="text-white" disabled={editSaving}>
+                <Button
+                  type="submit"
+                  className="text-white"
+                  disabled={editSaving}
+                >
                   {editSaving ? (
                     <>
                       <Spinner /> Saving
@@ -1659,10 +1703,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                   className={`relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-all duration-200 ${isDragActive
-                    ? "border-primary bg-primary/5"
-                    : uploadFile
-                      ? "border-emerald-300 bg-emerald-50/50"
-                      : "border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-slate-100/50"
+                      ? "border-primary bg-primary/5"
+                      : uploadFile
+                        ? "border-emerald-300 bg-emerald-50/50"
+                        : "border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-slate-100/50"
                     }`}
                 >
                   {uploadFile ? (
@@ -1686,8 +1730,8 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                     <>
                       <div
                         className={`flex size-12 items-center justify-center rounded-full ${isDragActive
-                          ? "bg-primary/10 text-primary"
-                          : "bg-slate-200 text-slate-500"
+                            ? "bg-primary/10 text-primary"
+                            : "bg-slate-200 text-slate-500"
                           }`}
                       >
                         <Upload className="size-6" />
@@ -1725,10 +1769,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               {uploadStatus && (
                 <div
                   className={`p-3 rounded-lg border text-sm ${uploadStatus.includes("Upload successful")
-                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                    : uploadStatus.includes("Upload failed")
-                      ? "bg-red-50 border-red-200 text-red-800"
-                      : "bg-blue-50 border-blue-200 text-blue-800"
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                      : uploadStatus.includes("Upload failed")
+                        ? "bg-red-50 border-red-200 text-red-800"
+                        : "bg-blue-50 border-blue-200 text-blue-800"
                     }`}
                 >
                   {uploadStatus}
@@ -1808,12 +1852,15 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 </p>
                 {statusConfirm?.toStatus === "locked" && (
                   <p className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-amber-950/90">
-                    Once you lock this release, the Upload and Status Change options will be disabled.
+                    Once you lock this release, the Upload and Status Change
+                    options will be disabled.
                   </p>
                 )}
                 {statusConfirm?.toStatus === "skip" && (
                   <p className="rounded-lg border border-violet-200/80 bg-linear-to-br from-violet-50/90 to-indigo-50/80 px-3 py-2 text-indigo-950/90">
-                    Any other active release in this project becomes draft, and this release is marked skipped. The client link updates to reflect the new active build.
+                    Any other active release in this project becomes draft, and
+                    this release is marked skipped. The client link updates to
+                    reflect the new active build.
                   </p>
                 )}
                 {statusConfirm?.toStatus === "active" &&
@@ -1843,7 +1890,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                   )}
                 {statusConfirm?.toStatus !== "locked" ? (
                   <div className="space-y-2 pt-2">
-                    <Label htmlFor="status-change-reason">Reason for change</Label>
+                    <Label htmlFor="status-change-reason">
+                      Reason for change
+                    </Label>
                     <Textarea
                       id="status-change-reason"
                       rows={3}
@@ -1851,7 +1900,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                       value={statusConfirm?.statusReason ?? ""}
                       onChange={(e) =>
                         setStatusConfirm((prev) =>
-                          prev ? { ...prev, statusReason: e.target.value } : prev,
+                          prev
+                            ? { ...prev, statusReason: e.target.value }
+                            : prev,
                         )
                       }
                       disabled={statusConfirmSubmitting}
