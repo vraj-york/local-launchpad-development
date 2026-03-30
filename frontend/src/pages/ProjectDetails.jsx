@@ -32,7 +32,6 @@ const ProjectDetails = () => {
   const [loading, setLoading] = useState(!location.state?.project);
   // const [roadmap, setRoadmap] = useState(null);
   // const [loading, setLoading] = useState(false);
-  const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("releases");
   const [editProjectOpen, setEditProjectOpen] = useState(false);
 

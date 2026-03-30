@@ -29,7 +29,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { BotMessageSquare, Lock, MessageCircle } from "lucide-react";
+import { BotMessageSquare, FileText, Lock } from "lucide-react";
 import { ClientLinkChatPanel } from "../components/ClientLinkChatPanel";
 import {
   getClientLinkVerifiedEmail,
@@ -49,6 +49,7 @@ export const ClientLink = () => {
   const [chatOpen, setChatOpen] = useState(false);
   /** Version selected for iframe preview (may differ from live active). */
   const [previewMeta, setPreviewMeta] = useState(null);
+  const [releaseNoteOpen, setReleaseNoteOpen] = useState(false);
   const { projectSlug } = useParams();
 
   /**
@@ -130,6 +131,8 @@ export const ClientLink = () => {
     try {
       setLoading(true);
       setPreviewBuildUrl(null);
+      setPreviewContextReleaseId(null);
+      setPreviewMeta(null);
       const data = await fetchPublicProjectBySlug(projectSlug);
       setPublicProject(data);
     } catch (error) {
@@ -161,6 +164,18 @@ export const ClientLink = () => {
     }
     return null;
   }, [releases]);
+
+  const displayRelease = React.useMemo(() => {
+    if (previewMeta?.releaseId != null) {
+      const rel = releases.find(
+        (r) => Number(r.id) === Number(previewMeta.releaseId),
+      );
+      if (rel) return rel;
+    }
+    return activeRelease;
+  }, [releases, activeRelease, previewMeta]);
+
+  const clientNote = displayRelease?.clientReleaseNote?.trim() || "";
 
   const activeReleaseLocked =
     String(activeRelease?.status ?? "").toLowerCase() === "locked";
@@ -324,6 +339,17 @@ export const ClientLink = () => {
               release={releases}
               projectId={publicProject?.id}
               onSwitched={({ buildUrl, releaseId: rid, versionId }) => {
+                const vid = versionId != null ? Number(versionId) : null;
+                if (
+                  vid != null &&
+                  liveActiveVersionId != null &&
+                  vid === liveActiveVersionId
+                ) {
+                  setPreviewBuildUrl(null);
+                  if (rid != null) setPreviewContextReleaseId(Number(rid));
+                  setPreviewMeta(null);
+                  return;
+                }
                 setPreviewBuildUrl(buildUrl);
                 if (rid != null) setPreviewContextReleaseId(rid);
                 if (versionId != null && rid != null) {
@@ -342,6 +368,18 @@ export const ClientLink = () => {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 gap-1.5 border-slate-300 bg-white/80 px-2.5 hover:bg-white sm:px-3"
+              onClick={() => setReleaseNoteOpen(true)}
+            >
+              <FileText className="size-4 shrink-0" />
+              <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
+                Release note
+              </span>
+            </Button>
             {showLockAndFeedback &&
               (isLocked ? (
                 <Tooltip>
@@ -556,6 +594,29 @@ export const ClientLink = () => {
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={releaseNoteOpen} onOpenChange={setReleaseNoteOpen}>
+        <DialogContent className="max-h-[85vh] sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Release note</DialogTitle>
+            <DialogDescription>
+              {displayRelease?.name
+                ? `Release ${displayRelease.name}`
+                : "Current release"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[55vh] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
+            {clientNote ? (
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                {clientNote}
+              </p>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No release note available for this release.
+              </p>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

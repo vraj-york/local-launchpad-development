@@ -23,6 +23,20 @@ export function getProjectsDir() {
   return path.join(getBackendRoot(), "projects");
 }
 
+/**
+ * Absolute path to the live deployed project folder (static build + optional `.git`).
+ * Prefer DB `projectPath` (e.g. `projects/my-slug`); otherwise legacy `projects/{id}`.
+ * @param {{ id?: number|string, projectPath?: string|null }} project
+ */
+export function getProjectLiveAbsolutePath(project) {
+  const backendRoot = getBackendRoot();
+  const rel = project?.projectPath?.trim();
+  if (rel) {
+    return path.join(backendRoot, rel);
+  }
+  return path.join(backendRoot, "projects", String(project?.id ?? ""));
+}
+
 /** Resolved path to nginx-configs: backend/nginx-configs (or /app/nginx-configs in Docker). */
 export function getNginxConfigsDir() {
   return path.join(getBackendRoot(), "nginx-configs");

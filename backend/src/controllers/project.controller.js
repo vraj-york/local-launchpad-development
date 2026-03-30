@@ -7,7 +7,7 @@ import {
     activateProjectVersionService,
     updateProjectDetailsService,
     deleteProjectService,
-    switchProjectVersion
+    switchProjectVersion,
 } from "../services/project.service.js";
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
@@ -132,8 +132,7 @@ export const projectController = {
             throw new ApiError(404, 'Project not found');
         }
         res.json(project);
-    })
-    ,
+    }),
     switchVersion: asyncHandler(async (req, res) => {
         const { projectId } = req.params;
         const { versionId, isPermanent } = req.body;

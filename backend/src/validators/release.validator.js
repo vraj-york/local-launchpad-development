@@ -43,6 +43,10 @@ export const createReleaseValidation = [
       return !Number.isNaN(t);
     })
     .withMessage("startDate must be a valid date"),
+  body("clientReleaseNote")
+    .optional({ nullable: true })
+    .isString()
+    .withMessage("clientReleaseNote must be a string"),
 ];
 
 export const updateReleaseValidation = [
@@ -85,6 +89,10 @@ export const updateReleaseValidation = [
     .optional({ nullable: true })
     .isString()
     .withMessage("reason must be a string"),
+  body("clientReleaseNote")
+    .optional({ nullable: true })
+    .isString()
+    .withMessage("clientReleaseNote must be a string"),
 ];
 
 export const setReleaseStatusValidation = [

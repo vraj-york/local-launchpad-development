@@ -5,7 +5,7 @@ import ApiError from "../utils/apiError.js";
 import { createRoadmapWithItems } from "./roadmap.service.js";
 import { fetchProjectJiraTickets } from "../utils/jiraIntegration.js";
 import config from "../config/index.js";
-import { getBackendRoot, getProjectsDir, getNginxConfigsDir, getNginxBaseDomain, getNginxUpstreamHost } from "../utils/instanceRoot.js";
+import { getBackendRoot, getProjectsDir, getNginxConfigsDir, getNginxBaseDomain, getNginxUpstreamHost, getProjectLiveAbsolutePath } from "../utils/instanceRoot.js";
 import axios from "axios";
 import path from "path";
 import { exec } from "child_process";
@@ -13,7 +13,6 @@ import { promisify } from "util";
 import { execSync, execFileSync } from "child_process";
 import fsExtra from "fs-extra";
 import os from 'os';
-import { execa } from "execa";
 import fs from "fs-extra";
 import { startProjectServer } from "../projectServers.js";
 import {
@@ -642,6 +641,7 @@ export const getProjectByIdService = async (
       name: true,
       status: true,
       lockedBy: true,
+      clientReleaseNote: true,
       versions: {
         orderBy: { id: "desc" },
         select: {
@@ -683,7 +683,6 @@ export const getProjectByIdService = async (
     },
   });
 };
-
 
 /**
  * Checkout tag, build, copy build output into projects/{projectPath}, reload nginx, update version buildUrl.

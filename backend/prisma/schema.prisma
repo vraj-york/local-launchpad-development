@@ -122,6 +122,8 @@ model Release {
   isMvp       Boolean  @default(false)
   /// Email of the user who locked via the public lock API (set only when status is locked).
   lockedBy    String?
+  /// Optional notes for stakeholders on the client link (e.g. what not to test, scope).
+  clientReleaseNote    String?
 
   createdBy   Int
   createdAt   DateTime @default(now())
