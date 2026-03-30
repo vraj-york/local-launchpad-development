@@ -29,11 +29,12 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { Lock, MessageCircle } from "lucide-react";
+import { BotMessageSquare, Lock, MessageCircle } from "lucide-react";
 import { ClientLinkChatPanel } from "../components/ClientLinkChatPanel";
-
-/** Remember lock-confirmation email on this device for client link pages. */
-const CLIENT_LINK_LOCK_EMAIL_KEY = "release_lock_email";
+import {
+  getClientLinkVerifiedEmail,
+  setClientLinkVerifiedEmail,
+} from "@/lib/clientLinkVerifiedEmail";
 
 const LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -109,6 +110,17 @@ export const ClientLink = () => {
         ? selectedReleaseId
         : rootReleaseIdFromActiveVersion;
 
+  const effectiveReleaseForChat = React.useMemo(() => {
+    const rid = effectiveChatReleaseId;
+    if (rid == null) return null;
+    return (
+      releases.find((r) => Number(r.id) === Number(rid)) ?? null
+    );
+  }, [releases, effectiveChatReleaseId]);
+
+  const effectiveReleaseLocked =
+    String(effectiveReleaseForChat?.status ?? "").toLowerCase() === "locked";
+
   const loadProject = useCallback(async () => {
     if (!projectSlug?.trim()) {
       setPublicProject(null);
@@ -134,12 +146,7 @@ export const ClientLink = () => {
 
   useEffect(() => {
     if (!lockConfirmOpen) return;
-    try {
-      const stored = localStorage.getItem(CLIENT_LINK_LOCK_EMAIL_KEY);
-      setLockEmail(typeof stored === "string" ? stored : "");
-    } catch {
-      setLockEmail("");
-    }
+    setLockEmail(getClientLinkVerifiedEmail());
   }, [lockConfirmOpen]);
 
   const lockEmailValid = React.useMemo(() => {
@@ -181,11 +188,7 @@ export const ClientLink = () => {
     try {
       setLocking(true);
       const res = await publicLockRelease(selectedReleaseId, email);
-      try {
-        localStorage.setItem(CLIENT_LINK_LOCK_EMAIL_KEY, email);
-      } catch {
-        /* storage unavailable */
-      }
+      setClientLinkVerifiedEmail(email);
       setLockConfirmOpen(false);
       toast.success(res?.message ?? "Release locked successfully");
       await loadProject();
@@ -247,6 +250,12 @@ export const ClientLink = () => {
     null;
   const chatMergeTargetLabel = `${String(activeRelease?.name || "Unknown release")} / ${activeVersion?.version}`;
 
+  useEffect(() => {
+    if (!showLockAndFeedback && chatOpen) {
+      setChatOpen(false);
+    }
+  }, [showLockAndFeedback, chatOpen]);
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] text-slate-500">
@@ -293,8 +302,7 @@ export const ClientLink = () => {
 
   const isLocked = activeReleaseLocked;
 
-  /** Chat FAB whenever the client link loaded a project (no server flag required). */
-  const chatEnabled = Boolean(publicProject);
+  const chatShellEnabled = showLockAndFeedback && Boolean(publicProject);
   const showRestoreLive =
     previewMeta?.versionId != null &&
     previewMeta?.releaseId != null &&
@@ -363,10 +371,10 @@ export const ClientLink = () => {
               ) : (
                 <Button
                   type="button"
-                  variant="secondary"
+                  variant="primary"
                   disabled={locking}
                   onClick={handleLock}
-                  className="h-8 w-auto shrink-0 rounded-md border-0 bg-green-600 px-3 text-sm font-bold text-white shadow-sm hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-70"
+                  className="h-8 w-auto border-0 px-3 text-sm bg-primary font-bold text-white disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {locking ? (
                     <span className="flex items-center gap-2">
@@ -381,21 +389,19 @@ export const ClientLink = () => {
                   )}
                 </Button>
               ))}
-            {chatEnabled && !chatOpen && (
+            {showLockAndFeedback && !chatOpen && (
               <Button
                 type="button"
                 variant="default"
                 size="sm"
-                onClick={() => setChatOpen((open) => !open)}
-                className="h-8 shrink-0 px-3 font-bold shadow-sm"
+                onClick={() => setChatOpen(true)}
+                className="h-8 shrink-0 px-3 font-bold"
                 aria-expanded={chatOpen}
-                aria-label={
-                  chatOpen ? "Close change requests" : "Open change requests"
-                }
+                aria-label="Open change requests"
               >
                 <span className="flex items-center gap-2">
-                  <MessageCircle className="size-4 shrink-0" />
-                  Chat
+                  <BotMessageSquare className="size-5 shrink-0" />
+                  AI Chat
                 </span>
               </Button>
             )}
@@ -455,7 +461,7 @@ export const ClientLink = () => {
 
   return (
     <div className="flex min-h-screen w-full flex-1 flex-col overflow-hidden bg-slate-50">
-      {chatOpen && chatEnabled ? (
+      {chatOpen && chatShellEnabled ? (
         <ResizablePanelGroup
           orientation="horizontal"
           className="flex min-h-0 flex-1 w-full"
@@ -482,7 +488,7 @@ export const ClientLink = () => {
             <ClientLinkChatPanel
               projectSlug={projectSlug}
               effectiveChatReleaseId={effectiveChatReleaseId}
-              isLocked={isLocked}
+              isLocked={effectiveReleaseLocked}
               isOpen={chatOpen}
               mergeTargetLabel={chatMergeTargetLabel}
               onPreviewCommitApplied={handleChatPreviewCommitApplied}

@@ -20,6 +20,12 @@ function readReleaseId(body, query) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+function readClientEmail(body) {
+  const raw = body?.clientEmail ?? body?.e ?? body?.lockedBy;
+  if (typeof raw !== "string") return "";
+  return raw.trim();
+}
+
 /** POST /api/chat/:slug/followup — send chat / follow-up */
 router.post("/:slug/followup", async (req, res) => {
   const slug = req.params.slug;
@@ -40,6 +46,7 @@ router.post("/:slug/followup", async (req, res) => {
       slug,
       releaseId,
       promptText: t,
+      clientEmail: readClientEmail(req.body),
     });
     return res.json(result);
   } catch (err) {
@@ -122,6 +129,7 @@ router.post("/:slug/confirm-merge", async (req, res) => {
       commitSha: sha,
       messageId:
         Number.isInteger(messageId) && messageId > 0 ? messageId : null,
+      clientEmail: readClientEmail(req.body),
     });
     return res.json(result);
   } catch (err) {
@@ -143,6 +151,7 @@ router.post("/:slug/restore-version", async (req, res) => {
       slug,
       releaseId,
       versionId: vid,
+      clientEmail: readClientEmail(req.body),
     });
     return res.json(result);
   } catch (err) {
@@ -173,6 +182,7 @@ router.post("/:slug/preview-commit", async (req, res) => {
       before,
       messageId:
         Number.isInteger(messageId) && messageId > 0 ? messageId : null,
+      clientEmail: readClientEmail(req.body),
     });
     return res.json(result);
   } catch (err) {

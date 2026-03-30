@@ -1759,7 +1759,7 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
   if (!stakeholderSet.has(email)) {
     throw new ApiError(
       403,
-      "This email is not authorized to lock the release. Use an address listed as a project stakeholder.",
+      "This email is not authorized",
     );
   }
 
