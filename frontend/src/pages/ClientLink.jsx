@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchPublicProjectBySlug,
   publicLockRelease,
@@ -33,6 +33,10 @@ import { BotMessageSquare, FileText, Lock } from "lucide-react";
 import { ClientLinkChatPanel } from "../components/ClientLinkChatPanel";
 import { formatProjectVersionLabel } from "@/lib/utils";
 import {
+  ClientLinkPreviewPicker,
+  canAccessIframeDocument,
+} from "../components/ClientLinkPreviewPicker";
+import {
   getClientLinkVerifiedEmail,
   setClientLinkVerifiedEmail,
 } from "@/lib/clientLinkVerifiedEmail";
@@ -48,6 +52,10 @@ export const ClientLink = () => {
   const [previewBuildUrl, setPreviewBuildUrl] = useState(null);
   const [previewContextReleaseId, setPreviewContextReleaseId] = useState(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const previewIframeRef = useRef(null);
+  const [visualPickMode, setVisualPickMode] = useState(false);
+  const [pickedElementContext, setPickedElementContext] = useState(null);
+  const [previewIframeAccessible, setPreviewIframeAccessible] = useState(null);
   /** Version selected for iframe preview (may differ from live active). */
   const [previewMeta, setPreviewMeta] = useState(null);
   const [releaseNoteOpen, setReleaseNoteOpen] = useState(false);
@@ -243,6 +251,52 @@ export const ClientLink = () => {
     [rawBuildUrl, toProxyUrl],
   );
 
+  const iframeSrc = React.useMemo(
+    () => toProxyUrl(previewBuildUrl ?? rawBuildUrl) ?? activeBuildUrl,
+    [previewBuildUrl, rawBuildUrl, activeBuildUrl, toProxyUrl],
+  );
+
+  const handlePreviewIframeLoad = useCallback(() => {
+    const iframe = previewIframeRef.current;
+    setPreviewIframeAccessible(canAccessIframeDocument(iframe));
+  }, []);
+
+  const handlePreviewPinnedChange = useCallback((ctx) => {
+    setPickedElementContext(ctx);
+    if (ctx) setVisualPickMode(false);
+  }, []);
+
+  useEffect(() => {
+    if (!chatOpen) {
+      setVisualPickMode(false);
+      setPickedElementContext(null);
+    }
+  }, [chatOpen]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape" && chatOpen && visualPickMode) {
+        setVisualPickMode(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [chatOpen, visualPickMode]);
+
+  useEffect(() => {
+    setPickedElementContext(null);
+    setVisualPickMode(false);
+    setPreviewIframeAccessible(null);
+  }, [iframeSrc]);
+
+  useEffect(() => {
+    if (!chatOpen || !iframeSrc) return;
+    const id = requestAnimationFrame(() => {
+      handlePreviewIframeLoad();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [chatOpen, iframeSrc, handlePreviewIframeLoad]);
+
   const handleChatPreviewCommitApplied = useCallback(
     ({ buildUrl, releaseId }) => {
       const baseUrl = String(buildUrl || "").trim();
@@ -312,9 +366,6 @@ export const ClientLink = () => {
       </div>
     );
   }
-
-  const iframeSrc =
-    toProxyUrl(previewBuildUrl ?? rawBuildUrl) ?? activeBuildUrl;
 
   const isLocked = activeReleaseLocked;
 
@@ -478,11 +529,23 @@ export const ClientLink = () => {
         {iframeSrc ? (
           <iframe
             key={iframeSrc}
+            ref={previewIframeRef}
             id="previewFrame"
             src={iframeSrc}
             title="Build Preview"
             className="absolute inset-0 h-full w-full border-0"
             allow="display-capture"
+            onLoad={handlePreviewIframeLoad}
+          />
+        ) : null}
+        {chatOpen && showLockAndFeedback && iframeSrc ? (
+          <ClientLinkPreviewPicker
+            iframeRef={previewIframeRef}
+            active={
+              visualPickMode && previewIframeAccessible === true
+            }
+            pinned={pickedElementContext}
+            onPinnedChange={handlePreviewPinnedChange}
           />
         ) : null}
         <EmbeddedFeedbackWidget
@@ -534,6 +597,11 @@ export const ClientLink = () => {
               onProjectReload={loadProject}
               onResetPreview={handleChatResetPreview}
               onCloseChat={() => setChatOpen(false)}
+              pickedElementContext={pickedElementContext}
+              onPickedElementContextChange={setPickedElementContext}
+              visualPickMode={visualPickMode}
+              onVisualPickModeChange={setVisualPickMode}
+              previewIframeAccessible={previewIframeAccessible}
             />
           </ResizablePanel>
         </ResizablePanelGroup>
