@@ -258,26 +258,6 @@ export const fetchProjectById = async (projectId) => {
   }
 };
 
-// Function to get project diff summary
-export const fetchProjectDiff = async (projectId) => {
-  try {
-    const response = await api.get(`/api/projects/${projectId}/diff-summary`);
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to fetch project diff" };
-  }
-};
-
-// Function to get detailed project git diff with file contents
-export const fetchProjectGitDiff = async (projectId) => {
-  try {
-    const response = await api.get(`/api/projects/${projectId}/git-diff`);
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to fetch project git diff" };
-  }
-};
-
 // Release Management API Functions
 
 // Function to fetch all releases for a project

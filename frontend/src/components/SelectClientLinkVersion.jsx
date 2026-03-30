@@ -68,6 +68,7 @@ export function SelectClientLinkVersion({
       onSwitched?.({
         buildUrl: result?.buildUrl,
         version: result?.version,
+        versionId: Number(versionId),
       });
     } catch (err) {
       toast.error(err?.error ?? "Failed to switch version");

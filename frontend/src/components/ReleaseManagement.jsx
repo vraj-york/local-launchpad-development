@@ -26,6 +26,7 @@ import {
   Sparkles,
   History,
   Pencil,
+  FileText,
 } from "lucide-react";
 import { Badge } from "./ui/badge";
 import {
@@ -72,6 +73,7 @@ const CHANGELOG_FIELD_LABELS = {
   description: "Description",
   isMvp: "MVP",
   lockedBy: "Locked by",
+  clientReleaseNote: "Client release note",
 };
 
 function formatReadableDate(value) {
@@ -268,10 +270,14 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     startDate: null,
     releaseDate: null,
     isMvp: false,
+    clientReleaseNote: "",
   });
 
   const [editDialog, setEditDialog] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
+
+  const [clientLinkDialog, setClientLinkDialog] = useState(null);
+  const [clientLinkSaving, setClientLinkSaving] = useState(false);
 
   const [changelogByRelease, setChangelogByRelease] = useState({});
   const [changelogLoadingId, setChangelogLoadingId] = useState(null);
@@ -360,6 +366,39 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     });
   };
 
+  const openClientLinkDialog = (release) => {
+    setClientLinkDialog({
+      id: release.id,
+      name: release.name ?? "",
+      clientReleaseNote: release.clientReleaseNote ?? "",
+    });
+  };
+
+  const saveClientLinkContent = async (e) => {
+    e.preventDefault();
+    if (!clientLinkDialog) return;
+    const note = clientLinkDialog.clientReleaseNote.trim();
+    try {
+      setClientLinkSaving(true);
+      await patchRelease(clientLinkDialog.id, {
+        clientReleaseNote: note || null,
+      });
+      toast.success("Client link content saved");
+      const rid = clientLinkDialog.id;
+      setClientLinkDialog(null);
+      await loadReleases();
+      setChangelogByRelease((prev) => {
+        const next = { ...prev };
+        delete next[rid];
+        return next;
+      });
+    } catch (err) {
+      toast.error(err.error || "Failed to save client link content");
+    } finally {
+      setClientLinkSaving(false);
+    }
+  };
+
   const saveEditRelease = async (e) => {
     e.preventDefault();
     if (!editDialog) return;
@@ -429,6 +468,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
           ? format(newRelease.releaseDate, "yyyy-MM-dd")
           : null,
         isMvp: newRelease.isMvp,
+        clientReleaseNote: newRelease.clientReleaseNote.trim() || null,
       };
       await createRelease(releaseData);
       setNewRelease({
@@ -437,6 +477,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
         startDate: null,
         releaseDate: null,
         isMvp: false,
+        clientReleaseNote: "",
       });
       setShowCreateForm(false);
       await loadReleases();
@@ -830,18 +871,32 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                           </p>
                         </div>
 
-                        {canManageReleases && !isReleaseLocked(release) && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="w-fit gap-2"
-                            onClick={() => openEditRelease(release)}
-                          >
-                            <Pencil className="size-3.5" />
-                            Edit details
-                          </Button>
-                        )}
+                        <div className="flex flex-wrap gap-2">
+                          {canManageReleases && !isReleaseLocked(release) && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="w-fit gap-2"
+                              onClick={() => openEditRelease(release)}
+                            >
+                              <Pencil className="size-3.5" />
+                              Edit details
+                            </Button>
+                          )}
+                          {canManageReleases && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="w-fit gap-2"
+                              onClick={() => openClientLinkDialog(release)}
+                            >
+                              <FileText className="size-3.5" />
+                              Client link notes
+                            </Button>
+                          )}
+                        </div>
 
                         {canManageReleases && (
                           <Collapsible
@@ -1314,55 +1369,32 @@ const ReleaseManagement = ({ projectId, projectName }) => {
               </div>
             </div>
 
-            {/* <div className="space-y-2">
-              <Label>Roadmaps (for reference)</Label>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full justify-between gap-2 p-2 hover:bg-transparent"
-                    disabled={roadmapsLoading || roadmaps.length === 0}
-                  >
-                    {roadmapsLoading ? (
-                      "Loading roadmaps..."
-                    ) : roadmaps.length === 0 ? (
-                      "No roadmaps found"
-                    ) : (
-                      "View roadmap items"
-                    )}
-                    <ChevronDown className="h-4 w-4 text-slate-500" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-80 max-h-[320px] overflow-y-auto">
-                  <DropdownMenuLabel>Roadmaps</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {roadmaps.map((roadmap) => (
-                    <div key={roadmap.id} className="py-1">
-                      <DropdownMenuLabel className="text-primary font-medium">
-                        {roadmap.title}
-                      </DropdownMenuLabel>
-                      {roadmap.items?.length ? (
-                        <ul className="list-none pl-3 space-y-1 mt-1">
-                          {roadmap.items.map((item) => (
-                            <li
-                              key={item.id}
-                              className="text-sm"
-                            >
-                              {item.title}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <div className="px-2 py-1.5 text-sm text-slate-500">
-                          No items found for this roadmap.
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div> */}
+            <div className="space-y-3 rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-3">
+              <p className="text-xs font-medium text-emerald-900">
+                Client link (optional)
+              </p>
+              <p className="text-xs text-slate-600">
+                Shown on the public client URL for this release (e.g. what to
+                skip testing or scope). Git change summary loads there
+                automatically from the project repo.
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor="new-client-release-note">Notes for clients</Label>
+                <Textarea
+                  id="new-client-release-note"
+                  rows={3}
+                  placeholder="e.g. Do not test billing — out of scope for this build."
+                  value={newRelease.clientReleaseNote}
+                  onChange={(e) =>
+                    setNewRelease((prev) => ({
+                      ...prev,
+                      clientReleaseNote: e.target.value,
+                    }))
+                  }
+                  className="resize-y min-h-[72px]"
+                />
+              </div>
+            </div>
 
             <DialogFooter className="gap-2 sm:gap-0">
               <Button
@@ -1524,6 +1556,71 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                 </Button>
                 <Button type="submit" className="text-white" disabled={editSaving}>
                   {editSaving ? (
+                    <>
+                      <Spinner /> Saving
+                    </>
+                  ) : (
+                    "Save"
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!clientLinkDialog}
+        onOpenChange={(open) => {
+          if (!open && !clientLinkSaving) setClientLinkDialog(null);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Client link content</DialogTitle>
+            <DialogDescription>
+              Shown on the public client URL for release{" "}
+              <span className="font-medium text-slate-800">
+                {clientLinkDialog?.name ?? ""}
+              </span>
+              . Git change summary is loaded automatically on that page (API).
+              You can update this note even when the release is locked.
+            </DialogDescription>
+          </DialogHeader>
+          {clientLinkDialog ? (
+            <form onSubmit={saveClientLinkContent} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="client-link-note">Notes for clients</Label>
+                <p className="text-xs text-muted-foreground">
+                  e.g. areas out of scope, what not to test, or messages for
+                  stakeholders.
+                </p>
+                <Textarea
+                  id="client-link-note"
+                  rows={4}
+                  value={clientLinkDialog.clientReleaseNote}
+                  onChange={(e) =>
+                    setClientLinkDialog((prev) =>
+                      prev
+                        ? { ...prev, clientReleaseNote: e.target.value }
+                        : prev,
+                    )
+                  }
+                  placeholder="Optional"
+                  className="resize-y min-h-[96px]"
+                />
+              </div>
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setClientLinkDialog(null)}
+                  disabled={clientLinkSaving}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" className="text-white" disabled={clientLinkSaving}>
+                  {clientLinkSaving ? (
                     <>
                       <Spinner /> Saving
                     </>
