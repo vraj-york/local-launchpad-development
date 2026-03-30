@@ -862,9 +862,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                 </p>
               )}
             {showMainChatUi && isLocked && (
-              <p className="rounded-lg border border-red-500 bg-red-50 px-3 py-3 text-xs leading-relaxed text-red-500">
-                This release is locked. please switch to an active release to
-                use chat.
+              <p className="rounded-lg border border-red-500 bg-red-50 px-3 py-3 text-xs leading-relaxed text-red-500 m-4">
+                This release is locked. Please switch to an active release to continue using the chat.
               </p>
             )}
 
@@ -906,14 +905,14 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
               </div>
 
               <div className="shrink-0 space-y-2 border-t border-border bg-card px-4 py-3">
-                {mergeAwaitingConfirm &&
-                  !selectedAppliedMessage &&
-                  !isLocked && (
-                    <>
+                {mergeAwaitingConfirm && !isLocked && (
+                  <>
+                    {!selectedAppliedMessage ? (
                       <p className="text-xs text-muted-foreground">
                         Apply one chat change in preview first, then confirm
                         merge.
                       </p>
+                    ) : (
                       <Button
                         type="button"
                         disabled={
@@ -921,8 +920,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                           chatSending ||
                           chatPolling ||
                           confirmingMerge ||
-                          chatHistoryLoading ||
-                          !selectedAppliedMessage
+                          chatHistoryLoading
                         }
                         size="sm"
                         className="w-full bg-linear-to-r from-violet-600 to-indigo-600 font-semibold text-white shadow-md hover:from-violet-700 hover:to-indigo-700"
@@ -937,8 +935,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                           "Confirm changes"
                         )}
                       </Button>
-                    </>
-                  )}
+                    )}
+                  </>
+                )}
                 <div className="rounded-lg border border-slate-200/90 bg-white shadow-sm dark:border-border dark:bg-card">
                   <Textarea
                     placeholder="Type here to reflect changes..."
