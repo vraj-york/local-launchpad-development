@@ -1,5 +1,3 @@
-const TOKEN_KEY = 'authToken';
-
 /**
  * Decode JWT payload without verification (only to read exp).
  * Returns null if token is invalid/not a JWT.
@@ -47,20 +45,4 @@ export const isTokenExpiringSoon = (token, bufferSeconds = 5 * 60) => {
     if (!payload || typeof payload.exp !== 'number') return false;
     const nowSeconds = Math.floor(Date.now() / 1000);
     return payload.exp <= nowSeconds + bufferSeconds;
-};
-
-export const setToken = (token) => {
-    localStorage.setItem(TOKEN_KEY, token);
-};
-
-export const getToken = () => {
-    return localStorage.getItem(TOKEN_KEY);
-};
-
-export const removeToken = () => {
-    localStorage.removeItem(TOKEN_KEY);
-};
-
-export const isLoggedIn = () => {
-    return !!getToken();
 };

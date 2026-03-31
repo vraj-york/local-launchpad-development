@@ -98,7 +98,6 @@ export function AppSidebar() {
                 <HubProfileAvatar
                   email={user.email}
                   alt={user.name}
-                  fallbackImageUrl={user.avatar}
                   className="h-8 w-8 rounded-lg"
                   fallbackClassName="rounded-lg"
                   iconClassName="size-5"
