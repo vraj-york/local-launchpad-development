@@ -35,6 +35,10 @@ function normEmailListField(v) {
   return String(v).trim();
 }
 
+function isMaskedToken(v) {
+  return /^\*{2,}[A-Za-z0-9._-]{0,4}$/.test(String(v || "").trim());
+}
+
 function buildUpdatePayload({
   description,
   githubUsername,
@@ -43,6 +47,7 @@ function buildUpdatePayload({
   jiraUsername,
   jiraProjectKey,
   jiraApiToken,
+  gitRepoPath,
   assignedUserEmails,
   stakeholderEmails,
   project,
@@ -58,7 +63,9 @@ function buildUpdatePayload({
   if (ghUser) payload.githubUsername = ghUser;
 
   const ghTok = githubToken.trim();
-  if (ghTok) payload.githubToken = ghTok;
+  if (ghTok && !(isMaskedToken(ghTok) && ghTok === String(project?.githubToken || "").trim())) {
+    payload.githubToken = ghTok;
+  }
 
   const jBase = jiraBaseUrl.trim();
   if (jBase) payload.jiraBaseUrl = jBase;
@@ -70,7 +77,14 @@ function buildUpdatePayload({
   if (jKey) payload.jiraProjectKey = jKey;
 
   const jTok = jiraApiToken.trim();
-  if (jTok) payload.jiraApiToken = jTok;
+  if (jTok && !(isMaskedToken(jTok) && jTok === String(project?.jiraApiToken || "").trim())) {
+    payload.jiraApiToken = jTok;
+  }
+
+  const repoPath = gitRepoPath.trim();
+  if (repoPath && repoPath !== String(project?.gitRepoPath || "").trim()) {
+    payload.gitRepoPath = repoPath;
+  }
 
   if (
     normEmailListField(assignedUserEmails) !==
@@ -97,6 +111,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const [jiraUsername, setJiraUsername] = useState("");
   const [jiraApiToken, setJiraApiToken] = useState("");
   const [jiraProjectKey, setJiraProjectKey] = useState("");
+  const [gitRepoPath, setGitRepoPath] = useState("");
 
   const [assignedUserEmailTags, setAssignedUserEmailTags] = useState([]);
   const [stakeholderEmailTags, setStakeholderEmailTags] = useState([]);
@@ -118,6 +133,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
     setJiraUsername(project.jiraUsername ?? "");
     setJiraProjectKey(project.jiraProjectKey ?? "");
     setJiraApiToken(project.jiraApiToken ?? "");
+    setGitRepoPath(project.gitRepoPath ?? "");
     setAssignedUserEmailTags(
       storageStringToEmailsArray(project.assignedUserEmails),
     );
@@ -169,6 +185,9 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
       errors.jiraApiToken =
         "Jira API Token is required (stored credentials missing; add a token to save)";
     }
+    if (!gitRepoPath.trim()) {
+      errors.gitRepoPath = "Git repository path is required";
+    }
 
     const assignedErr = validateOptionalCommaSeparatedEmails(
       emailsArrayToStorageString(assignedUserEmailTags),
@@ -204,6 +223,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         jiraUsername,
         jiraProjectKey,
         jiraApiToken,
+        gitRepoPath,
         assignedUserEmails: emailsArrayToStorageString(assignedUserEmailTags),
         stakeholderEmails: emailsArrayToStorageString(stakeholderEmailTags),
         project,
@@ -386,6 +406,19 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   />
                   {validationErrors.githubUsername && (
                     <p className="text-sm text-destructive">{validationErrors.githubUsername}</p>
+                  )}
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="edit-gitRepoPath">Git repository path</Label>
+                  <Input
+                    id="edit-gitRepoPath"
+                    placeholder="github.com/org/repository"
+                    value={gitRepoPath}
+                    onChange={(e) => setGitRepoPath(e.target.value)}
+                    className={validationErrors.gitRepoPath ? "border-destructive" : ""}
+                  />
+                  {validationErrors.gitRepoPath && (
+                    <p className="text-sm text-destructive">{validationErrors.gitRepoPath}</p>
                   )}
                 </div>
                 <div className="space-y-2 sm:col-span-2">

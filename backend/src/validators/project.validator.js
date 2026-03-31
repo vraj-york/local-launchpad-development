@@ -116,6 +116,12 @@ export const createProjectValidation = [
         .notEmpty()
         .withMessage("Jira API Token is required"),
 
+    body("gitRepoPath")
+        .optional({ checkFalsy: true })
+        .trim()
+        .matches(/^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
+        .withMessage("gitRepoPath must be a valid GitHub repository path"),
+
     optionalEmailList("assignedUserEmails"),
     optionalEmailList("stakeholderEmails"),
     // body("roadmaps")
@@ -174,6 +180,12 @@ export const updateProjectValidation = [
         .trim()
         .isLength({ min: 1, max: 2048 })
         .withMessage("GitHub token must be 1–2048 characters"),
+
+    body("gitRepoPath")
+        .optional()
+        .trim()
+        .matches(/^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
+        .withMessage("gitRepoPath must be a valid GitHub repository path"),
 
     body("slug")
         .optional({ nullable: true })

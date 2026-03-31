@@ -51,6 +51,7 @@ const CreateProject = () => {
   // GitHub Config State
   const [githubToken, setGithubToken] = useState("");
   const [githubUsername, setGithubUsername] = useState("");
+  const [gitRepoPath, setGitRepoPath] = useState("");
 
   // Jira Config State
   const [jiraBaseUrl, setJiraBaseUrl] = useState("");
@@ -240,6 +241,7 @@ const CreateProject = () => {
         description: projectDescription,
         githubUsername: githubUsername,
         githubToken: githubToken,
+        gitRepoPath: gitRepoPath.trim() || undefined,
         // roadmaps: processedRoadmaps,
         jiraBaseUrl: jiraBaseUrl,
         jiraProjectKey: jiraProjectKey,
@@ -593,6 +595,20 @@ const CreateProject = () => {
                     {validationErrors.githubToken}
                   </p>
                 )}
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="gitRepoPath">
+                  Existing Git repository path (optional)
+                </Label>
+                <Input
+                  id="gitRepoPath"
+                  placeholder="github.com/org/repository"
+                  value={gitRepoPath}
+                  onChange={(e) => setGitRepoPath(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  If this repo is accessible with your credentials, it will be linked to this project; otherwise a new repo is created automatically.
+                </p>
               </div>
             </div>
           </CardContent>
