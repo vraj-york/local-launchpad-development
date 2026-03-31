@@ -1048,8 +1048,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
 
   return (
     <>
-      <div className="flex h-full min-h-0 flex-col border-l border-border bg-card text-card-foreground">
-        <div className="border-b border-border bg-muted/50 px-4 py-2">
+      <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden border-l border-border bg-card text-card-foreground">
+        <div className="shrink-0 border-b border-border bg-muted/50 px-4 py-2">
           <div className="flex items-center justify-between gap-2">
             <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
               <img src={logo} alt="launchpad logo" className="w-7 h-7" />
@@ -1068,10 +1068,10 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {!showMainChatUi && (
             <>
-              <div className="space-y-3 px-4 py-3">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
                 <p className="text-xs text-muted-foreground">
                   Enter your email to continue. Chat permissions are verified
                   securely on the server.
@@ -1112,7 +1112,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
             </>
           )}
           {showMainChatUi && !canViewChat && effectiveChatReleaseId == null && (
-            <p className="text-xs text-muted-foreground px-4py-3">
+            <p className="px-4 py-3 text-xs text-muted-foreground">
               Choose a version in the header dropdown so we know which release
               to update.
             </p>
@@ -1125,8 +1125,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           )}
 
           {showMainChatUi ? (
-            <>
-              <div className="min-h-[200px] flex-1 space-y-3 overflow-y-auto px-4 py-3">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3">
                 {chatMessages.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     Describe the change you want (e.g. &quot;Make the hero
@@ -1390,7 +1390,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                   </div>
                 </div>
               </div>
-            </>
+            </div>
           ) : null}
         </div>
       </div>
