@@ -116,7 +116,7 @@ function formatChangelogScalar(value) {
 function changelogFieldLabel(key) {
   return (
     CHANGELOG_FIELD_LABELS[key] ??
-    key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase())
+    key.replace(/([A-Z])/g, " $1").replace(/^s./, (c) => c.toUpperCase())
   );
 }
 
@@ -251,7 +251,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState("");
-  const [uploadSuccessBuildUrl, setUploadSuccessBuildUrl] = useState(null);
   const [isDragActive, setIsDragActive] = useState(false);
   const uploadFileInputRef = useRef(null);
 
@@ -589,11 +588,9 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       setUploadProgress(100);
 
       const revisionLabel = formatProjectVersionLabel(result?.version);
-      const buildUrlDisplay = result?.url ?? result?.buildUrl ?? null;
       setUploadStatus(
         `Upload successful! Revision: ${revisionLabel}`,
       );
-      setUploadSuccessBuildUrl(buildUrlDisplay);
       setUploadFile(null);
       setSelectedRelease("");
       setSelectedRoadmapItemIds([]);
@@ -626,7 +623,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     setUploadFile(null);
     setSelectedRoadmapItemIds([]);
     setUploadStatus("");
-    setUploadSuccessBuildUrl(null);
     setUploadProgress(0);
     if (uploadFileInputRef.current) uploadFileInputRef.current.value = "";
   };
@@ -1776,20 +1772,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                     }`}
                 >
                   {uploadStatus}
-                  {uploadStatus.includes("Upload successful") &&
-                    uploadSuccessBuildUrl && (
-                      <>
-                        {" "}
-                        <a
-                          href={uploadSuccessBuildUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline font-medium hover:opacity-80 break-all"
-                        >
-                          {uploadSuccessBuildUrl}
-                        </a>
-                      </>
-                    )}
                 </div>
               )}
 
