@@ -12,6 +12,7 @@ import {
   toDate,
   assertReleaseNameIsNextIncrement,
 } from "../utils/projectValidation.utils.js";
+import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import { promisify } from "util";
 import os from "os";
@@ -19,6 +20,32 @@ import { execa } from "execa";
 
 const execAsync = promisify(exec);
 const prisma = new PrismaClient();
+
+async function resolveUserEmail(user) {
+  const direct = typeof user?.email === "string" ? user.email.trim().toLowerCase() : "";
+  if (direct) return direct;
+  if (!user?.id) return null;
+  const row = await prisma.user.findUnique({
+    where: { id: Number(user.id) },
+    select: { email: true },
+  });
+  return row?.email ? String(row.email).trim().toLowerCase() : null;
+}
+
+async function assertProjectReadPermission(projectId, user) {
+  const project = await prisma.project.findUnique({
+    where: { id: Number(projectId) },
+    select: { id: true, assignedManagerId: true, assignedUserEmails: true },
+  });
+  if (!project) throw new ApiError(404, "Project not found");
+  const { id: userId, role } = user || {};
+  if (role === "admin") return project;
+  if (role === "manager" && project.assignedManagerId === userId) return project;
+  const email = await resolveUserEmail(user);
+  const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
+  if (email && assignedUsers.has(email)) return project;
+  throw new ApiError(403, "Forbidden");
+}
 
 function datesEqual(a, b) {
   if (a == null && b == null) return true;
@@ -406,18 +433,7 @@ function runCommand(command, cwd, options = {}) {
  * Do not filter to active+locked only; drafts must appear for create/edit flows.
  */
 export const listReleasesService = async (projectId, user) => {
-  const { id: userId, role } = user;
-
-  // Check project access
-  const project = await prisma.project.findUnique({ where: { id: projectId } });
-  if (!project) throw new ApiError(404, "Project not found");
-
-  let hasAccess = false;
-  if (role === "admin") hasAccess = true;
-  else if (role === "manager" && project.assignedManagerId === userId)
-    hasAccess = true;
-
-  if (!hasAccess) throw new ApiError(403, "Forbidden");
+  await assertProjectReadPermission(projectId, user);
 
   return prisma.release.findMany({
     where: { projectId },
@@ -442,7 +458,7 @@ export const listReleasesService = async (projectId, user) => {
 /**
  * Get single release by ID
  */
-export const getReleaseByIdService = async (releaseId) => {
+export const getReleaseByIdService = async (releaseId, user) => {
   const release = await prisma.release.findUnique({
     where: { id: releaseId },
     include: {
@@ -465,6 +481,7 @@ export const getReleaseByIdService = async (releaseId) => {
   if (!release) {
     throw new ApiError(404, "Release not found");
   }
+  await assertProjectReadPermission(release.project.id, user);
   return release;
 };
 
@@ -472,21 +489,14 @@ export const getReleaseByIdService = async (releaseId) => {
  * Audit history for a release (newest first).
  */
 export const getReleaseChangelogService = async (releaseId, user) => {
-  const { id: userId, role } = user;
-
   const release = await prisma.release.findUnique({
     where: { id: releaseId },
     select: {
       projectId: true,
-      project: { select: { assignedManagerId: true } },
     },
   });
   if (!release) throw new ApiError(404, "Release not found");
-
-  const hasPermission =
-    role === "admin" ||
-    (role === "manager" && release.project.assignedManagerId === userId);
-  if (!hasPermission) throw new ApiError(403, "Forbidden");
+  await assertProjectReadPermission(release.projectId, user);
 
   return prisma.releaseChangeLog.findMany({
     where: { releaseId },
@@ -511,18 +521,10 @@ export const createReleaseService = async (data, user) => {
     startDate: startDateInput,
     clientReleaseNote: clientNoteInput,
   } = data;
-  const { id: userId, role } = user;
+  const { id: userId } = user;
 
   // Check access
-  const project = await prisma.project.findUnique({ where: { id: projectId } });
-  if (!project) throw new ApiError(404, "Project not found");
-
-  let hasAccess = false;
-  if (role === "admin") hasAccess = true;
-  else if (role === "manager" && project.assignedManagerId === userId)
-    hasAccess = true;
-
-  if (!hasAccess) throw new ApiError(403, "Forbidden");
+  await assertProjectReadPermission(projectId, user);
 
   // Allow creating new releases in draft mode even when previous release is not locked
 
@@ -652,7 +654,7 @@ async function deactivateProjectVersionsForRelease(tx, releaseId) {
 const RELEASE_STATUS_VALUES = Object.values(ReleaseStatus);
 
 export const setReleaseStatusService = async (releaseId, status, user, options = {}) => {
-  const { id: userId, role } = user;
+  const { id: userId } = user;
   const reasonRaw = options?.reason;
   const releaseStatus = status && String(status).toLowerCase();
   if (!RELEASE_STATUS_VALUES.includes(releaseStatus)) {
@@ -669,11 +671,7 @@ export const setReleaseStatusService = async (releaseId, status, user, options =
     },
   });
   if (!release) throw new ApiError(404, "Release not found");
-
-  const hasPermission =
-    role === "admin" ||
-    (role === "manager" && release.project.assignedManagerId === userId);
-  if (!hasPermission) throw new ApiError(403, "Forbidden");
+  await assertProjectReadPermission(release.projectId, user);
 
   const isLockedState = release.status === ReleaseStatus.locked;
 
@@ -836,7 +834,7 @@ export const setReleaseStatusService = async (releaseId, status, user, options =
  * Unlock is not supported.
  */
 export const lockReleaseService = async (releaseId, locked, user) => {
-  const { id: userId, role } = user;
+  const { id: userId } = user;
 
   if (locked !== true) {
     throw new ApiError(400, "Unlocking a release is not allowed.");
@@ -855,13 +853,7 @@ export const lockReleaseService = async (releaseId, locked, user) => {
   if (!release) {
     throw new ApiError(404, "Release not found");
   }
-
-  const hasPermission =
-    role === "admin" ||
-    (role === "manager" && release.project.assignedManagerId === userId);
-  if (!hasPermission) {
-    throw new ApiError(403, "Forbidden");
-  }
+  await assertProjectReadPermission(release.projectId, user);
 
   if (release.status === ReleaseStatus.locked) {
     throw new ApiError(400, "Release is already locked");
@@ -886,7 +878,7 @@ export const lockReleaseService = async (releaseId, locked, user) => {
  * Requires non-empty reason when any non–client-facing field actually changes.
  */
 export const updateReleaseService = async (releaseId, data, user) => {
-  const { id: userId, role } = user;
+  const { id: userId } = user;
   const {
     name,
     description,
@@ -913,11 +905,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
     },
   });
   if (!current) throw new ApiError(404, "Release not found");
-
-  const hasPermission =
-    role === "admin" ||
-    (role === "manager" && current.project.assignedManagerId === userId);
-  if (!hasPermission) throw new ApiError(403, "Forbidden");
+  await assertProjectReadPermission(current.projectId, user);
 
   const locked = current.status === ReleaseStatus.locked;
 
@@ -1577,6 +1565,9 @@ export const uploadReleaseVersionService = async (
 
     const githubCreds = getProjectGitHubCredentials(project);
     const validatedProjectName = projectRepoSlugFromDisplayName(project.name);
+    const parsedProjectRepo = parseGitRepoPath(project.gitRepoPath || "");
+    const remoteOwner = parsedProjectRepo?.owner || githubCreds.githubUsername;
+    const remoteRepo = parsedProjectRepo?.repo || validatedProjectName;
 
     const gitWorkingDir = sourceRoot;
     const permanentGitDir = path.join(projectFolder, ".git");
@@ -1587,7 +1578,7 @@ export const uploadReleaseVersionService = async (
       fs.moveSync(permanentGitDir, localGitDir, { overwrite: true });
     }
 
-    const remoteUrl = `https://${githubCreds.githubUsername}:${githubCreds.githubToken}@github.com/${githubCreds.githubUsername}/${validatedProjectName}.git`;
+    const remoteUrl = `https://${githubCreds.githubUsername}:${githubCreds.githubToken}@github.com/${remoteOwner}/${remoteRepo}.git`;
     /* Initialize repo if first time */
     if (!fs.existsSync(localGitDir)) {
       runCommand("git init", gitWorkingDir);
@@ -1599,12 +1590,20 @@ export const uploadReleaseVersionService = async (
       runCommand(`git config user.name "${gitUserName}"`, gitWorkingDir);
       runCommand(`git config user.email "${gitUserEmail}"`, gitWorkingDir);
 
-      const repoExists = await checkRepoExists(
-        validatedProjectName,
-        githubCreds,
+      const repoMeta = await getRepositoryMetadata(
+        remoteOwner,
+        remoteRepo,
+        githubCreds.githubToken,
       );
+      const repoExists = repoMeta.ok;
       if (!repoExists) {
-        await createGithubRepo(validatedProjectName, githubCreds);
+        // We can only auto-create under the authenticated user's account.
+        if (remoteOwner !== githubCreds.githubUsername) {
+          throw new ApiError(
+            `Destination repository ${remoteOwner}/${remoteRepo} does not exist or is not accessible.`,
+          );
+        }
+        await createGithubRepo(remoteRepo, githubCreds);
       }
 
       runCommand(`git remote add origin ${remoteUrl}`, gitWorkingDir);
@@ -1679,12 +1678,6 @@ export const uploadReleaseVersionService = async (
           gitTag: tag,
           zipFilePath: tag, // legacy column; same value so DB row stays consistent
           uploadedBy: userId,
-        },
-      });
-      await tx.project.update({
-        where: { id: project.id },
-        data: {
-          gitRepoPath: `github.com/${githubCreds.githubUsername}/${validatedProjectName}`,
         },
       });
     });

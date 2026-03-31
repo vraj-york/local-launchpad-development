@@ -39,9 +39,14 @@ function transformIframeIndexHtml(html, port) {
 async function serveIframeRoot(port, req, res, next) {
   const target = `http://127.0.0.1:${port}`;
   try {
-    const path = (req.url && req.url.split("?")[0]) || "/";
-    const query = (req.url && req.url.includes("?") ? "?" + req.url.split("?").slice(1).join("?") : "") || "";
-    const resp = await fetch(target + path + query, {
+    // Always request the project static root on the inner server. req.url is still
+    // /iframe-preview/<port>/... — forwarding that path would break routing (wrong
+    // document vs cookie/preview state) and can cause stale hashed assets after refresh.
+    const upstream = new URL(`http://127.0.0.1:${port}/`);
+    if (req.url?.includes("?")) {
+      upstream.search = `?${req.url.split("?").slice(1).join("?")}`;
+    }
+    const resp = await fetch(upstream, {
       headers: {
         accept: req.headers.accept || "text/html,*/*",
         "accept-language": req.headers["accept-language"] || "",
@@ -52,7 +57,22 @@ async function serveIframeRoot(port, req, res, next) {
     }
     const html = await resp.text();
     const transformed = transformIframeIndexHtml(html, port);
+    // Preserve preview cookie set by the project static server (?preview=1 document load),
+    // otherwise subsequent asset requests won't route to _preview/serve.
+    if (typeof resp.headers.getSetCookie === "function") {
+      const upstreamCookies = resp.headers.getSetCookie();
+      if (Array.isArray(upstreamCookies) && upstreamCookies.length > 0) {
+        res.setHeader("Set-Cookie", upstreamCookies);
+      }
+    } else {
+      const upstreamCookie = resp.headers.get("set-cookie");
+      if (upstreamCookie) {
+        res.setHeader("Set-Cookie", upstreamCookie);
+      }
+    }
     res.setHeader("Content-Type", resp.headers.get("content-type") || "text/html; charset=utf-8");
+    // Avoid cached iframe documents mixing preview vs live hashed bundles after refresh.
+    res.setHeader("Cache-Control", "private, no-store, must-revalidate");
     res.send(transformed);
   } catch (err) {
     console.warn(`[iframe-proxy] ${port} root fetch error:`, err.message);

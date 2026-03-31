@@ -35,7 +35,7 @@ export const releaseController = {
      */
     getById: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
-        const release = await getReleaseByIdService(releaseId);
+        const release = await getReleaseByIdService(releaseId, req.user);
         res.json(release);
     }),
 
