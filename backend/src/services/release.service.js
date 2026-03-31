@@ -12,6 +12,7 @@ import {
   toDate,
   assertReleaseNameIsNextIncrement,
 } from "../utils/projectValidation.utils.js";
+import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import { promisify } from "util";
 import os from "os";
@@ -1564,6 +1565,9 @@ export const uploadReleaseVersionService = async (
 
     const githubCreds = getProjectGitHubCredentials(project);
     const validatedProjectName = projectRepoSlugFromDisplayName(project.name);
+    const parsedProjectRepo = parseGitRepoPath(project.gitRepoPath || "");
+    const remoteOwner = parsedProjectRepo?.owner || githubCreds.githubUsername;
+    const remoteRepo = parsedProjectRepo?.repo || validatedProjectName;
 
     const gitWorkingDir = sourceRoot;
     const permanentGitDir = path.join(projectFolder, ".git");
@@ -1574,7 +1578,7 @@ export const uploadReleaseVersionService = async (
       fs.moveSync(permanentGitDir, localGitDir, { overwrite: true });
     }
 
-    const remoteUrl = `https://${githubCreds.githubUsername}:${githubCreds.githubToken}@github.com/${githubCreds.githubUsername}/${validatedProjectName}.git`;
+    const remoteUrl = `https://${githubCreds.githubUsername}:${githubCreds.githubToken}@github.com/${remoteOwner}/${remoteRepo}.git`;
     /* Initialize repo if first time */
     if (!fs.existsSync(localGitDir)) {
       runCommand("git init", gitWorkingDir);
@@ -1586,12 +1590,20 @@ export const uploadReleaseVersionService = async (
       runCommand(`git config user.name "${gitUserName}"`, gitWorkingDir);
       runCommand(`git config user.email "${gitUserEmail}"`, gitWorkingDir);
 
-      const repoExists = await checkRepoExists(
-        validatedProjectName,
-        githubCreds,
+      const repoMeta = await getRepositoryMetadata(
+        remoteOwner,
+        remoteRepo,
+        githubCreds.githubToken,
       );
+      const repoExists = repoMeta.ok;
       if (!repoExists) {
-        await createGithubRepo(validatedProjectName, githubCreds);
+        // We can only auto-create under the authenticated user's account.
+        if (remoteOwner !== githubCreds.githubUsername) {
+          throw new ApiError(
+            `Destination repository ${remoteOwner}/${remoteRepo} does not exist or is not accessible.`,
+          );
+        }
+        await createGithubRepo(remoteRepo, githubCreds);
       }
 
       runCommand(`git remote add origin ${remoteUrl}`, gitWorkingDir);
@@ -1666,12 +1678,6 @@ export const uploadReleaseVersionService = async (
           gitTag: tag,
           zipFilePath: tag, // legacy column; same value so DB row stays consistent
           uploadedBy: userId,
-        },
-      });
-      await tx.project.update({
-        where: { id: project.id },
-        data: {
-          gitRepoPath: `github.com/${githubCreds.githubUsername}/${validatedProjectName}`,
         },
       });
     });
