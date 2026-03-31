@@ -52,6 +52,19 @@ async function serveIframeRoot(port, req, res, next) {
     }
     const html = await resp.text();
     const transformed = transformIframeIndexHtml(html, port);
+    // Preserve preview cookie set by the project static server (?preview=1 document load),
+    // otherwise subsequent asset requests won't route to _preview/serve.
+    if (typeof resp.headers.getSetCookie === "function") {
+      const upstreamCookies = resp.headers.getSetCookie();
+      if (Array.isArray(upstreamCookies) && upstreamCookies.length > 0) {
+        res.setHeader("Set-Cookie", upstreamCookies);
+      }
+    } else {
+      const upstreamCookie = resp.headers.get("set-cookie");
+      if (upstreamCookie) {
+        res.setHeader("Set-Cookie", upstreamCookie);
+      }
+    }
     res.setHeader("Content-Type", resp.headers.get("content-type") || "text/html; charset=utf-8");
     res.send(transformed);
   } catch (err) {
