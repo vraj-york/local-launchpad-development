@@ -15,6 +15,7 @@ import {
 import config from "../config/index.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import {
+  autoGenerateVersion,
   runBuildSequence,
   reloadNginx,
   findProjectRoot,
@@ -451,19 +452,7 @@ async function executeLaunchpadHeadDeploy(conversion, headSha, headBranchName, o
   }
 
   const releaseId = conversion.releaseId;
-  let versionNumber = "1.0.0";
-  const lastVersion = await prisma.projectVersion.findFirst({
-    where: { projectId: conversion.projectId, releaseId },
-    orderBy: { createdAt: "desc" },
-    select: { version: true },
-  });
-  if (lastVersion) {
-    const semverMatch = lastVersion.version.match(/^(\d+)\.(\d+)\.(\d+)$/);
-    if (semverMatch) {
-      const patch = Number(semverMatch[3]) + 1;
-      versionNumber = `${semverMatch[1]}.${semverMatch[2]}.${patch}`;
-    }
-  }
+  const versionNumber = await autoGenerateVersion(releaseId);
   const tagName = `rel-${releaseId}-${versionNumber}`;
 
   const tagResult = await createTagIdempotent(owner, repo, tagName, headSha, token);
