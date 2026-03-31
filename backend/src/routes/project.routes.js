@@ -14,6 +14,7 @@ import { createProjectValidation, updateProjectValidation } from "../validators/
 import { validate } from "../validators/validate.middleware.js";
 import { clearProjectLock as releaseClearProjectLock } from "../services/release.service.js";
 import { projectRepositoryWebUrl } from "../utils/projectGithubUrl.js";
+import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 dotenv.config();
 
 const router = express.Router();
@@ -643,9 +644,19 @@ router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) =>
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) return res.status(404).json({ error: "Project not found" });
 
-    let hasAccess = false;
-    if (role === "admin") hasAccess = true;
-    else if (role === "manager" && project.assignedManagerId === userId) hasAccess = true;
+    let userEmail = typeof req.user?.email === "string" ? req.user.email.trim().toLowerCase() : "";
+    if (!userEmail && userId) {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: Number(userId) },
+        select: { email: true },
+      });
+      userEmail = dbUser?.email ? String(dbUser.email).trim().toLowerCase() : "";
+    }
+    const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
+    const hasAccess =
+      role === "admin" ||
+      (role === "manager" && project.assignedManagerId === userId) ||
+      (userEmail && assignedUsers.has(userEmail));
     if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 
     const projectFolder = getProjectLiveAbsolutePath(project);

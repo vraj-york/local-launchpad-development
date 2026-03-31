@@ -23,9 +23,11 @@ import {
   findProjectRoot,
   setReleaseStatusService as applyReleaseStatus,
 } from "./release.service.js";
-import { parseGitRepoPath } from "./github.service.js";
+import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
 import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
 import { normalizeOptionalEmailListString } from "../utils/emailList.utils.js";
+import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
+import { maskProjectSecrets } from "../utils/secretMasking.js";
 
 /**
  * Allocate a unique slug for Project.slug (DB unique). Tries base, then base-2, base-3, ...
@@ -57,6 +59,152 @@ const PREVIEW_LAST_CLEANUP_FILE = ".last-cleanup-at";
 const previewBuildLocks = new Map(); // projectId -> Promise chain
 
 const execAsync = promisify(exec);
+
+function normalizeGitRepoPathValue(raw) {
+  if (raw == null) return null;
+  const parsed = parseGitRepoPath(String(raw));
+  if (!parsed) return null;
+  return `github.com/${parsed.owner}/${parsed.repo}`;
+}
+
+function buildGitRemoteUrl(gitRepoPath, token) {
+  const parsed = parseGitRepoPath(gitRepoPath);
+  if (!parsed || !token?.trim()) return null;
+  return `https://x-access-token:${token.trim()}@github.com/${parsed.owner}/${parsed.repo}.git`;
+}
+
+function listProjectVersionTags(rows) {
+  return Array.from(
+    new Set(
+      (rows || [])
+        .map((r) => (typeof r?.gitTag === "string" ? r.gitTag.trim() : ""))
+        .filter(Boolean),
+    ),
+  );
+}
+
+function ensureTagExistsInRemote(remoteUrl, tag, cwd) {
+  const output = execFileSync(
+    "git",
+    ["ls-remote", "--tags", remoteUrl, `refs/tags/${tag}`],
+    { cwd, encoding: "utf8", timeout: 120000 },
+  ).trim();
+  if (!output) {
+    throw new ApiError(
+      400,
+      `Repository migration failed: required tag "${tag}" is missing on destination repository.`,
+    );
+  }
+}
+
+function migrateProjectRepositoryRefs({
+  oldGitRepoPath,
+  newGitRepoPath,
+  githubToken,
+  requiredTags,
+  backendRoot,
+  projectId,
+}) {
+  if (!oldGitRepoPath || !newGitRepoPath || oldGitRepoPath === newGitRepoPath) return;
+
+  const oldRemoteUrl = buildGitRemoteUrl(oldGitRepoPath, githubToken);
+  const newRemoteUrl = buildGitRemoteUrl(newGitRepoPath, githubToken);
+  if (!oldRemoteUrl || !newRemoteUrl) {
+    throw new ApiError(
+      400,
+      "Repository migration failed: git repo path and GitHub token are required.",
+    );
+  }
+
+  const migrationRoot = path.join(
+    backendRoot,
+    "_tmp_repo_migrations",
+    `project_${projectId}_${Date.now()}`,
+  );
+  const bareMirrorDir = path.join(migrationRoot, "mirror.git");
+  fsExtra.ensureDirSync(migrationRoot);
+  const tryNonDestructivePush = (args) => {
+    try {
+      execFileSync("git", args, {
+        cwd: backendRoot,
+        encoding: "utf8",
+        timeout: 300000,
+      });
+      return true;
+    } catch (e) {
+      // Non-fast-forward/tag-already-exists errors are expected in non-destructive migration.
+      console.warn(
+        `[repo-migration] non-destructive push skipped some refs: ${e?.message || e}`,
+      );
+      return false;
+    }
+  };
+  try {
+    execFileSync("git", ["init", "--bare", bareMirrorDir], {
+      cwd: backendRoot,
+      encoding: "utf8",
+      timeout: 120000,
+    });
+    execFileSync("git", ["--git-dir", bareMirrorDir, "remote", "add", "old-origin", oldRemoteUrl], {
+      cwd: backendRoot,
+      encoding: "utf8",
+      timeout: 120000,
+    });
+    execFileSync("git", ["--git-dir", bareMirrorDir, "remote", "add", "new-origin", newRemoteUrl], {
+      cwd: backendRoot,
+      encoding: "utf8",
+      timeout: 120000,
+    });
+    execFileSync(
+      "git",
+      [
+        "--git-dir",
+        bareMirrorDir,
+        "fetch",
+        "--prune",
+        "old-origin",
+        "+refs/heads/*:refs/heads/*",
+        "+refs/tags/*:refs/tags/*",
+      ],
+      { cwd: backendRoot, encoding: "utf8", timeout: 300000 },
+    );
+    // Non-destructive migration: push available branches/tags without deleting or force-overwriting
+    // existing destination refs.
+    tryNonDestructivePush(["--git-dir", bareMirrorDir, "push", "new-origin", "--all"]);
+    tryNonDestructivePush(["--git-dir", bareMirrorDir, "push", "new-origin", "--tags"]);
+    for (const tag of requiredTags) {
+      ensureTagExistsInRemote(newRemoteUrl, tag, backendRoot);
+    }
+  } catch (error) {
+    throw new ApiError(
+      400,
+      `Repository migration failed: ${error?.message || "unable to mirror refs"}`,
+    );
+  } finally {
+    fsExtra.removeSync(migrationRoot);
+  }
+}
+
+function refreshSharedGitCacheRemote(gitRepoPath, githubToken, backendRoot) {
+  const gitDir = path.join(getProjectsDir(), ".git");
+  if (!fsExtra.existsSync(gitDir)) return;
+  const remoteUrl = buildGitRemoteUrl(gitRepoPath, githubToken);
+  if (!remoteUrl) return;
+  try {
+    execFileSync("git", ["--git-dir", gitDir, "remote", "set-url", "origin", remoteUrl], {
+      cwd: backendRoot,
+      encoding: "utf8",
+      timeout: 60000,
+    });
+    execFileSync("git", ["--git-dir", gitDir, "fetch", "--prune", "--tags", "origin"], {
+      cwd: backendRoot,
+      encoding: "utf8",
+      timeout: 180000,
+    });
+  } catch (e) {
+    console.warn("[updateProject] shared projects/.git refresh failed:", e?.message || e);
+  }
+}
 
 /**
  * Serialize preview builds per project to avoid hash mismatches/404s caused by
@@ -118,8 +266,8 @@ function deleteLocalGitTag(gitDir, tag) {
  */
 export async function assertProjectAccess(projectId, user) {
   const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { id: true, assignedManagerId: true },
+    where: { id: Number(projectId) },
+    select: { id: true, assignedManagerId: true, assignedUserEmails: true },
   });
 
   if (!project) {
@@ -131,19 +279,56 @@ export async function assertProjectAccess(projectId, user) {
   const hasAccess =
     role === "admin" ||
     (role === "manager" && project.assignedManagerId === userId);
-
-  if (!hasAccess) {
-    throw new ApiError(403, "Forbidden");
+  if (hasAccess) {
+    return project;
   }
 
-  return project;
+  const email = await resolveUserEmail(user);
+  const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
+  if (email && assignedUsers.has(email)) {
+    return project;
+  }
+
+  throw new ApiError(403, "Forbidden");
+}
+
+async function resolveUserEmail(user) {
+  const direct = typeof user?.email === "string" ? user.email.trim().toLowerCase() : "";
+  if (direct) return direct;
+  if (!user?.id) return null;
+  const row = await prisma.user.findUnique({
+    where: { id: Number(user.id) },
+    select: { email: true },
+  });
+  return row?.email ? String(row.email).trim().toLowerCase() : null;
+}
+
+export async function assertProjectReadAccess(projectId, user) {
+  const project = await prisma.project.findUnique({
+    where: { id: Number(projectId) },
+    select: { id: true, assignedManagerId: true, assignedUserEmails: true },
+  });
+  if (!project) {
+    throw new ApiError(404, "Project not found");
+  }
+
+  const { role, id: userId } = user || {};
+  if (role === "admin") return project;
+  if (role === "manager" && project.assignedManagerId === userId) return project;
+
+  const email = await resolveUserEmail(user);
+  const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
+  if (email && assignedUsers.has(email)) {
+    return project;
+  }
+  throw new ApiError(403, "Forbidden");
 }
 
 /** Allow admin, project creator, or assigned manager to delete. */
 export async function assertProjectDeleteAccess(projectId, user) {
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
-    select: { id: true, createdById: true, assignedManagerId: true },
+    select: { id: true, createdById: true, assignedManagerId: true, assignedUserEmails: true },
   });
   if (!project) throw new ApiError(404, "Project not found");
   const { role, id: userId } = user;
@@ -151,8 +336,11 @@ export async function assertProjectDeleteAccess(projectId, user) {
     role === "admin" ||
     project.createdById === userId ||
     (role === "manager" && project.assignedManagerId === userId);
-  if (!allowed) throw new ApiError(403, "Forbidden");
-  return project;
+  if (allowed) return project;
+  const email = await resolveUserEmail(user);
+  const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
+  if (email && assignedUsers.has(email)) return project;
+  throw new ApiError(403, "Forbidden");
 }
 
 const validateGithubConnection = async (username, token) => {
@@ -283,6 +471,7 @@ export const createProjectService = async ({ userId, body }) => {
     jiraApiToken,
     githubUsername,
     githubToken,
+    gitRepoPath,
   } = body;
 
   let assignedUserEmailsDb = null;
@@ -294,7 +483,6 @@ export const createProjectService = async ({ userId, body }) => {
     throw new ApiError(400, e.message);
   }
   const isLinux = os.platform() === 'linux';
-  const nginxBinary = isLinux ? '/usr/sbin/nginx' : '/opt/homebrew/bin/nginx';
 
   try {
     // 1. Project name must be unique (case-insensitive)
@@ -369,24 +557,50 @@ export const createProjectService = async ({ userId, body }) => {
       githubToken: githubToken?.trim(),
     };
     let gitRepoUrl = null;
+    let persistedGitRepoPath = null;
     if (githubCreds.githubUsername && githubCreds.githubToken) {
       try {
-        await createGithubRepo(slug, githubCreds);
-        gitRepoUrl = `https://github.com/${githubCreds.githubUsername}/${slug}`;
+        const requestedGitRepoPath = normalizeGitRepoPathValue(gitRepoPath);
+        if (requestedGitRepoPath) {
+          const requestedParsed = parseGitRepoPath(requestedGitRepoPath);
+          const metadata = await getRepositoryMetadata(
+            requestedParsed.owner,
+            requestedParsed.repo,
+            githubCreds.githubToken,
+          );
+          if (metadata.ok) {
+            persistedGitRepoPath = requestedGitRepoPath;
+            gitRepoUrl = `https://github.com/${requestedParsed.owner}/${requestedParsed.repo}`;
+          } else {
+            console.warn(
+              `[createProject] Provided gitRepoPath is not accessible, creating repo instead: ${metadata.message || "validation failed"}`,
+            );
+          }
+        }
+
+        if (!persistedGitRepoPath) {
+          await createGithubRepo(slug, githubCreds);
+          persistedGitRepoPath = `github.com/${githubCreds.githubUsername}/${slug}`;
+          gitRepoUrl = `https://github.com/${githubCreds.githubUsername}/${slug}`;
+        }
+
+        const collaboratorRepo = parseGitRepoPath(persistedGitRepoPath);
         // Collaborator + invitation email (GitHub notifies invitee)
         const defaultCollaborator =
           process.env.GITHUB_DEFAULT_COLLABORATOR || "kalrav@york.ie";
-        const invited = await addGithubCollaborator(
-          githubCreds.githubUsername,
-          slug,
-          defaultCollaborator,
-          githubCreds.githubToken,
-          "push",
-        );
-        if (!invited) {
-          console.warn(
-            "[createProject] Collaborator invite skipped or failed; repo created. Set GITHUB_DEFAULT_COLLABORATOR to a valid GitHub username.",
+        if (collaboratorRepo) {
+          const invited = await addGithubCollaborator(
+            collaboratorRepo.owner,
+            collaboratorRepo.repo,
+            defaultCollaborator,
+            githubCreds.githubToken,
+            "push",
           );
+          if (!invited) {
+            console.warn(
+              "[createProject] Collaborator invite skipped or failed. Set GITHUB_DEFAULT_COLLABORATOR to a valid GitHub username.",
+            );
+          }
         }
       } catch (e) {
         console.warn("[createProject] GitHub repo/collaborator:", e.message);
@@ -442,7 +656,7 @@ export const createProjectService = async ({ userId, body }) => {
           stakeholderEmails: stakeholderEmailsDb,
           // Remote clone URL when GitHub repo was created; else local .git path for legacy
           gitRepoPath:
-            gitRepoUrl || path.join(relativeProjectPath, ".git"),
+            persistedGitRepoPath || path.join(relativeProjectPath, ".git"),
           nginxConfigPath: path.join('nginx-configs', configFileName),
         },
       });
@@ -451,7 +665,7 @@ export const createProjectService = async ({ userId, body }) => {
     // 9. Start static server on this project's port (so http://localhost:8004/ works)
     startProjectServer(port, absoluteProjectPath);
 
-    return project;
+    return maskProjectSecrets(project);
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(500, `Project creation failed: ${error.message}`);
@@ -538,19 +752,17 @@ export const deleteProjectService = async (projectId, user) => {
 
 export async function listProjectsService(user) {
   const { id: userId, role } = user;
-
-  let whereClause;
-
-  if (role === "admin") {
-    whereClause = {};
-  } else if (role === "manager") {
-    whereClause = { assignedManagerId: userId };
-  } else {
+  if (role !== "admin" && role !== "manager") {
     throw new ApiError(403, "Forbidden");
   }
 
-  return prisma.project.findMany({
-    where: whereClause,
+  const projects = await prisma.project.findMany({
+    where: role === "admin" ? {} : {
+      OR: [
+        { assignedManagerId: userId },
+        { assignedUserEmails: { not: null } },
+      ],
+    },
     orderBy: { createdAt: "desc" },
 
     include: {
@@ -608,6 +820,16 @@ export async function listProjectsService(user) {
       },
     },
   });
+  if (role === "admin") return projects.map(maskProjectSecrets);
+  const userEmail = await resolveUserEmail(user);
+  return projects
+    .filter((project) => {
+      if (project.assignedManagerId === userId) return true;
+      if (!userEmail) return false;
+      const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
+      return assignedUsers.has(userEmail);
+    })
+    .map(maskProjectSecrets);
 }
 /**
  * GET project by ID or public slug (single entry point).
@@ -687,7 +909,9 @@ export const getProjectByIdService = async (
     });
   }
 
-  return prisma.project.findUnique({
+  await assertProjectReadAccess(Number(projectId), user);
+
+  const project = await prisma.project.findUnique({
     where,
     include: {
       createdBy: {
@@ -700,6 +924,7 @@ export const getProjectByIdService = async (
       releases: releasesQuery,
     },
   });
+  return maskProjectSecrets(project);
 };
 
 /**
@@ -1033,7 +1258,7 @@ export async function setReleaseStatusService({ projectId, releaseId, user, reas
 }
 /*GET LIVE URL - reflects projects/ folder (updated on upload release and on activate version from tag) */
 export async function getProjectLiveUrlService({ projectId, user }) {
-  await assertProjectAccess(projectId, user);
+  await assertProjectReadAccess(projectId, user);
 
   const activeVersion = await prisma.projectVersion.findFirst({
     where: {
@@ -1054,7 +1279,7 @@ export async function getProjectLiveUrlService({ projectId, user }) {
 }
 /*list project versions*/
 export async function listProjectVersionsService({ projectId, user }) {
-  await assertProjectAccess(projectId, user);
+  await assertProjectReadAccess(projectId, user);
 
   return prisma.projectVersion.findMany({
     where: { projectId },
@@ -1081,6 +1306,7 @@ const PROJECT_UPDATE_KEYS = [
   "jiraApiToken",
   "githubUsername",
   "githubToken",
+  "gitRepoPath",
   "assignedUserEmails",
   "stakeholderEmails",
 ];
@@ -1128,6 +1354,17 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
         }
         continue;
       }
+      if (key === "gitRepoPath") {
+        if (raw === null || raw === "") {
+          throw new ApiError(400, "gitRepoPath cannot be empty");
+        }
+        const normalized = normalizeGitRepoPathValue(raw);
+        if (!normalized) {
+          throw new ApiError(400, "gitRepoPath must be a valid GitHub repository path");
+        }
+        data.gitRepoPath = normalized;
+        continue;
+      }
       if (raw === null || raw === "") {
         data[key] = null;
       } else if (typeof raw === "string") {
@@ -1160,14 +1397,90 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     await validateGithubConnection(ghUser, ghTok);
   }
 
-  return prisma.project.update({
+  const nextGitRepoPath =
+    data.gitRepoPath !== undefined ? data.gitRepoPath : existingProject.gitRepoPath;
+  const oldGitRepoPath = normalizeGitRepoPathValue(existingProject.gitRepoPath);
+  const nextNormalizedGitRepoPath = normalizeGitRepoPathValue(nextGitRepoPath);
+  if (data.gitRepoPath !== undefined && !nextNormalizedGitRepoPath) {
+    throw new ApiError(400, "gitRepoPath must be a valid GitHub repository path");
+  }
+
+  const effectiveGitToken =
+    data.githubToken !== undefined ? data.githubToken : existingProject.githubToken;
+  if (data.gitRepoPath !== undefined && !effectiveGitToken) {
+    throw new ApiError(400, "GitHub token is required to validate and migrate repository data");
+  }
+  if (data.gitRepoPath !== undefined && nextNormalizedGitRepoPath) {
+    const parsedNextRepo = parseGitRepoPath(nextNormalizedGitRepoPath);
+    const metadata = await getRepositoryMetadata(
+      parsedNextRepo.owner,
+      parsedNextRepo.repo,
+      effectiveGitToken,
+    );
+    if (!metadata.ok) {
+      throw new ApiError(
+        400,
+        `Cannot access destination repository: ${metadata.message || "validation failed"}`,
+      );
+    }
+  }
+
+  const gitRepoChanged =
+    data.gitRepoPath !== undefined &&
+    oldGitRepoPath &&
+    nextNormalizedGitRepoPath &&
+    oldGitRepoPath !== nextNormalizedGitRepoPath;
+
+  let migrationLockHeld = false;
+  if (gitRepoChanged) {
+    const lock = await prisma.project.updateMany({
+      where: { id: Number(projectId), isUploading: false },
+      data: { isUploading: true },
+    });
+    if (lock.count === 0) {
+      throw new ApiError(409, "Upload or migration already in progress for this project");
+    }
+    migrationLockHeld = true;
+    try {
+      const versions = await prisma.projectVersion.findMany({
+        where: { projectId: Number(projectId) },
+        select: { gitTag: true },
+      });
+      const requiredTags = listProjectVersionTags(versions);
+      migrateProjectRepositoryRefs({
+        oldGitRepoPath,
+        newGitRepoPath: nextNormalizedGitRepoPath,
+        githubToken: effectiveGitToken,
+        requiredTags,
+        backendRoot: getBackendRoot(),
+        projectId: Number(projectId),
+      });
+      refreshSharedGitCacheRemote(
+        nextNormalizedGitRepoPath,
+        effectiveGitToken,
+        getBackendRoot(),
+      );
+    } catch (e) {
+      throw e;
+    } finally {
+      if (migrationLockHeld) {
+        await prisma.project.update({
+          where: { id: Number(projectId) },
+          data: { isUploading: false },
+        });
+      }
+    }
+  }
+
+  const updatedProject = await prisma.project.update({
     where: { id: Number(projectId) },
     data,
   });
+  return maskProjectSecrets(updatedProject);
 };
 export const getJiraTicketsService = async (projectId, user) => {
   // 1️⃣ Access check
-  const project = await assertProjectAccess(projectId, user);
+  const project = await assertProjectReadAccess(projectId, user);
 
   // 2️⃣ Get full project details including Jira config
   const projectDetails = await prisma.project.findUnique({

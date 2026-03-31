@@ -61,7 +61,7 @@ export async function authenticateToken(req, res, next) {
 
   try {
     const appDecoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = { id: appDecoded.id, role: appDecoded.role };
+    req.user = { id: appDecoded.id, role: appDecoded.role, email: appDecoded.email };
     return next();
   } catch {
     // Not an app JWT; try Cognito (ID then access token)
@@ -91,7 +91,7 @@ export async function authenticateToken(req, res, next) {
     try {
       const user = await findOrCreateUserFromCognitoPayload(payload, "manager");
       if (!user) return sendAuthError(res, 403, "Access denied.");
-      req.user = { id: user.id, role: user.role };
+      req.user = { id: user.id, role: user.role, email: user.email };
       return next();
     } catch {
       return sendAuthError(res, 401, "Authentication failed. Please sign in again.");

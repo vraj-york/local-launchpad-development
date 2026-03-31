@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { validateRoadmapItems } from "../validators/roadmap.validator.js";
 import ApiError from "../utils/apiError.js";
-import { assertProjectAccess } from "./project.service.js";
+import { assertProjectAccess, assertProjectReadAccess } from "./project.service.js";
 const prisma = new PrismaClient();
 
 export const createRoadmapWithItems = async (tx, projectId, roadmap) => {
@@ -108,23 +108,7 @@ export const deleteRoadmapItem = async (roadmapId, itemId) => {
 };
 
 export const listRoadmapItemsByProjectService = async (projectId, user) => {
-    const { role, id: userId } = user;
-
-    /**
-     * Access control
-     */
-    const project = await prisma.project.findUnique({
-        where: { id: projectId },
-        select: { assignedManagerId: true }
-    });
-
-    if (!project) {
-        throw new ApiError(404, "Project not found");
-    }
-
-    if (role !== "admin" && project.assignedManagerId !== userId) {
-        throw new ApiError(403, "Forbidden");
-    }
+    await assertProjectReadAccess(projectId, user);
 
     /**
      * Fetch roadmaps + items
