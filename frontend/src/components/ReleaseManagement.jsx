@@ -251,7 +251,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState("");
-console.log(uploadStatus, "uploadStatus");
   const [isDragActive, setIsDragActive] = useState(false);
   const uploadFileInputRef = useRef(null);
 
