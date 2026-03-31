@@ -30,9 +30,31 @@ import {
   getClientLinkVerifiedEmail,
   setClientLinkVerifiedEmail,
 } from "@/lib/clientLinkVerifiedEmail";
-import { ArrowUp, Check, Plus, RotateCcw, User, X } from "lucide-react";
+import {
+  ArrowUp,
+  Check,
+  Crosshair,
+  RotateCcw,
+  SquareMousePointer,
+  User,
+  X,
+} from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  buildOpeningTagSnippet,
+  formatPickedElementForPrompt,
+  parseContextBlockToInspectorCtx,
+  splitFollowupWithElementContext,
+} from "@/components/ClientLinkPreviewPicker";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import Lottie from "lottie-react";
 import logo from "../assets/fevicon.png";
+import websiteChangesAnimation from "../assets/website-changes-animations.json";
 
 const USER_BUBBLE_CLASS =
   "ml-6 rounded-lg rounded-br-xs bg-primary px-3 py-2 text-sm text-primary-foreground shadow-xs";
@@ -48,13 +70,198 @@ const LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CHAT_ACCESS_DENIED_USER_MESSAGE =
   "Your email is not allowed to use this chat feature.";
 
-function extractChatHttpErrorMessage(err) {
+function InspectorBlock({ title, children }) {
   return (
-    err?.response?.data?.error ||
-    err?.error ||
-    err?.message ||
-    ""
+    <div className="border-b border-zinc-800/90 py-2.5 first:pt-1 last:border-0 last:pb-1">
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+        {title}
+      </div>
+      {children}
+    </div>
   );
+}
+
+function ElementInspectorTooltipBody({ ctx }) {
+  if (!ctx) {
+    return (
+      <p className="px-2 py-3 text-xs text-zinc-500">No element details.</p>
+    );
+  }
+
+  const openSnippet = buildOpeningTagSnippet(ctx);
+  const pathLine = ctx.domPath || ctx.selector || "—";
+
+  const attrRows = [];
+  if (ctx.className) attrRows.push(["class", ctx.className]);
+  if (ctx.id) attrRows.push(["id", ctx.id]);
+  if (ctx.role) attrRows.push(["role", ctx.role]);
+  if (ctx.href) attrRows.push(["href", ctx.href]);
+  if (ctx.ariaLabel) attrRows.push(["aria-label", ctx.ariaLabel]);
+  if (ctx.dataTestId) attrRows.push(["data-testid", ctx.dataTestId]);
+  if (ctx.dataComponent) attrRows.push(["data-component", ctx.dataComponent]);
+  if (ctx.dataCy) attrRows.push(["data-cy", ctx.dataCy]);
+  if (
+    ctx.componentHint &&
+    !ctx.dataTestId &&
+    !ctx.dataComponent &&
+    !ctx.dataCy
+  ) {
+    attrRows.push(["hint", ctx.componentHint]);
+  }
+
+  const computedEntries =
+    ctx.computedStyles && typeof ctx.computedStyles === "object"
+      ? Object.entries(ctx.computedStyles)
+      : [];
+
+  return (
+    <div className="max-h-[min(70vh,32rem)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto px-3 py-2">
+      <InspectorBlock title="Element">
+        <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-snug text-sky-300">
+          {openSnippet}
+        </pre>
+      </InspectorBlock>
+      <InspectorBlock title="Path">
+        <p className="break-all font-mono text-[11px] leading-snug text-zinc-300">
+          {pathLine}
+        </p>
+        {ctx.path ? (
+          <p className="mt-1.5 font-mono text-[10px] text-zinc-500">
+            URL: {ctx.path}
+          </p>
+        ) : null}
+      </InspectorBlock>
+      {ctx.textPreview ? (
+        <InspectorBlock title="Visible text">
+          <p className="whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-zinc-200">
+            {ctx.textPreview}
+          </p>
+        </InspectorBlock>
+      ) : null}
+      <InspectorBlock title="Attributes">
+        {attrRows.length === 0 ? (
+          <p className="text-[11px] text-zinc-500">No attributes captured.</p>
+        ) : (
+          <dl className="space-y-2">
+            {attrRows.map(([k, v]) => (
+              <div key={k}>
+                <dt className="font-mono text-[11px] text-sky-400">{k}:</dt>
+                <dd className="mt-0.5 whitespace-pre-wrap break-all font-mono text-[11px] text-zinc-200">
+                  {v}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </InspectorBlock>
+      <InspectorBlock title="Computed styles">
+        {computedEntries.length === 0 ? (
+          <p className="text-[11px] text-zinc-500">
+            No snapshot (older pick or unavailable).
+          </p>
+        ) : (
+          <dl className="space-y-2">
+            {computedEntries.map(([k, v]) => (
+              <div
+                key={k}
+                className="flex flex-wrap items-start gap-x-2 gap-y-1 font-mono text-[11px]"
+              >
+                <dt className="shrink-0 text-sky-400">{k}:</dt>
+                <dd className="flex min-w-0 flex-1 items-center gap-2 text-zinc-200">
+                  {(k === "color" || k === "background-color") && v ? (
+                    <span
+                      className="inline-block size-3.5 shrink-0 rounded-sm border border-zinc-600 bg-zinc-800"
+                      style={{ backgroundColor: v }}
+                      title={v}
+                    />
+                  ) : null}
+                  <span className="min-w-0 break-all">{v}</span>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </InspectorBlock>
+    </div>
+  );
+}
+
+/**
+ * @param {{ tag: string, inspectorCtx?: object | null, contextBlock?: string, onRemove?: () => void, variant?: 'composer' | 'onPrimary', className?: string }} props
+ */
+function ElementContextChip({
+  tag,
+  inspectorCtx = null,
+  contextBlock = "",
+  onRemove,
+  variant = "composer",
+  className,
+}) {
+  const ctx =
+    inspectorCtx ||
+    (contextBlock ? parseContextBlockToInspectorCtx(contextBlock) : null);
+
+  const chipVisual =
+    variant === "onPrimary"
+      ? "border border-white bg-emerald-500/15 text-white ring-1 ring-white/30"
+      : "border-emerald-600/40 bg-emerald-50 text-emerald-950 ring-1 ring-emerald-600/15 dark:border-emerald-500/45 dark:bg-emerald-950/55 dark:text-emerald-50 dark:ring-emerald-500/20";
+
+  const iconClass =
+    variant === "onPrimary" ? "text-white" : "text-primary";
+
+  const monoClass =
+    variant === "onPrimary"
+      ? "text-white py-0.5"
+      : "text-emerald-900 dark:text-emerald-100";
+
+  return (
+    <Tooltip delayDuration={200}>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            "inline-flex max-w-[min(100%,16rem)] shrink-0 items-center gap-1.5 rounded-md px-2 text-xs",
+            chipVisual,
+            onRemove && "pr-0",
+            className,
+          )}
+        >
+          <SquareMousePointer
+            className={cn("size-3.5 shrink-0", iconClass)}
+            aria-hidden
+          />
+          <span className={cn("truncate font-mono text-xs", monoClass)}>
+            &lt;{tag}&gt;
+          </span>
+          {onRemove ? (
+            <button
+              type="button"
+              className="flex size-6 shrink-0 items-center justify-center rounded-md text-primary hover:bg-red-50 hover:text-red-500 dark:text-emerald-200/80 dark:hover:bg-emerald-500/20 dark:hover:text-white"
+              aria-label="Remove selected element"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onRemove();
+              }}
+            >
+              <X className="size-3.5" />
+            </button>
+          ) : null}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        className="border border-zinc-700 bg-zinc-950 p-0 text-zinc-100 shadow-2xl"
+      >
+        <ElementInspectorTooltipBody ctx={ctx} />
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function extractChatHttpErrorMessage(err) {
+  return err?.response?.data?.error || err?.error || err?.message || "";
 }
 
 /** Cursor may return errors such as "Unauthorized request.: Follow-up blocked." */
@@ -128,12 +335,30 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
         })
       : null;
 
+  const elementSplit =
+    msg.role === "user" ? splitFollowupWithElementContext(msg.text) : null;
+
   return (
     <div
       key={msg.id ?? msg.key ?? `m-${index}`}
       className={msg.role === "user" ? USER_BUBBLE_CLASS : systemClass}
     >
-      {msg.text}
+      {elementSplit ? (
+        <div className="flex w-full flex-col items-stretch gap-2.5">
+          <div className="flex w-full justify-start">
+            <ElementContextChip
+              tag={elementSplit.tag}
+              contextBlock={elementSplit.contextBlock}
+              variant="onPrimary"
+            />
+          </div>
+          <p className="w-full whitespace-pre-wrap break-words text-sm leading-relaxed">
+            {elementSplit.userText}
+          </p>
+        </div>
+      ) : (
+        msg.text
+      )}
       {msg.role === "user" && msg.appliedCommitSha ? (
         <div className="mt-2 flex justify-end">
           <Button
@@ -178,6 +403,11 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   onProjectReload,
   onResetPreview,
   onCloseChat,
+  pickedElementContext = null,
+  onPickedElementContextChange = () => {},
+  visualPickMode = false,
+  onVisualPickModeChange = () => {},
+  previewIframeAccessible = null,
 }) {
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState([]);
@@ -192,8 +422,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const [verifyBump, setVerifyBump] = useState(0);
   const [panelEmailInput, setPanelEmailInput] = useState("");
   const [gateInlineError, setGateInlineError] = useState("");
-  const [composerEmailEditorOpen, setComposerEmailEditorOpen] =
-    useState(false);
+  const [composerEmailEditorOpen, setComposerEmailEditorOpen] = useState(false);
   const [composerEmailDraft, setComposerEmailDraft] = useState("");
   const [composerEmailError, setComposerEmailError] = useState("");
 
@@ -220,6 +449,24 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const canViewChat =
     Boolean(projectSlug?.trim()) && effectiveChatReleaseId != null;
   const canMutateChat = canViewChat && !isLocked && identityLooksValid;
+
+  const visualPickSupported = previewIframeAccessible === true;
+  const visualPickDisabledReason =
+    previewIframeAccessible === false
+      ? "Visual pick needs a same-origin preview (for example local dev with the /iframe-preview/ proxy). Cross-origin previews cannot be inspected from the browser."
+      : previewIframeAccessible === null
+        ? "Loading preview…"
+        : "";
+
+  const handleToggleVisualPick = useCallback(() => {
+    if (!visualPickSupported || !canMutateChat) return;
+    onVisualPickModeChange(!visualPickMode);
+  }, [
+    visualPickSupported,
+    canMutateChat,
+    visualPickMode,
+    onVisualPickModeChange,
+  ]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -582,8 +829,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   ]);
 
   const handleSendChat = useCallback(async () => {
-    const text = chatInput.trim();
-    if (!text || !projectSlug?.trim()) {
+    const userPart = chatInput.trim();
+    if (!userPart || !projectSlug?.trim()) {
       toast.error("Enter a message.");
       return;
     }
@@ -596,11 +843,16 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       return;
     }
 
+    const text = pickedElementContext
+      ? `${formatPickedElementForPrompt(pickedElementContext)}\n\n${userPart}`
+      : userPart;
+
     const rid = Number(effectiveChatReleaseId);
     setChatSending(true);
     try {
       setChatMessages((m) => [...m, { role: "user", text }]);
       setChatInput("");
+      onPickedElementContextChange(null);
       await clientLinkSendFollowup(projectSlug, rid, text, identityEmail);
       autoApplyArmedRef.current = { releaseId: rid, armed: true };
       lastAgentSnapshotRef.current = {
@@ -638,6 +890,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     effectiveChatReleaseId,
     identityEmail,
     isLocked,
+    onPickedElementContextChange,
+    pickedElementContext,
     pollUntilAgentSettles,
     projectSlug,
   ]);
@@ -809,63 +1063,60 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col">
-            {!showMainChatUi && (
-              <>
-                <div className="space-y-3 px-4 py-3">
-                  <p className="text-xs text-muted-foreground">
-                    Enter your email to continue. Chat permissions are verified
-                    securely on the server.
-                  </p>
-                  <div className="grid gap-2">
-                    <Label htmlFor="client-link-panel-chat-email">
-                      Your email
-                    </Label>
-                    <Input
-                      id="client-link-panel-chat-email"
-                      type="email"
-                      autoComplete="email"
-                      placeholder="you@company.com"
-                      value={panelEmailInput}
-                      onChange={(e) => {
-                        setPanelEmailInput(e.target.value);
-                        setGateInlineError("");
-                      }}
-                      className="rounded-lg border-input"
-                    />
-                    {gateInlineError ? (
-                      <p className="text-xs text-destructive">
-                        {gateInlineError}
-                      </p>
-                    ) : null}
-                    <Button
-                      type="button"
-                      className="w-full bg-linear-to-r from-violet-600 to-indigo-600 font-semibold text-white shadow-md hover:from-violet-700 hover:to-indigo-700"
-                      onClick={handleContinueEmail}
-                      disabled={
-                        !LOCK_EMAIL_RE.test(
-                          panelEmailInput.trim().toLowerCase(),
-                        )
-                      }
-                    >
-                      Continue
-                    </Button>
-                  </div>
-                </div>
-              </>
-            )}
-            {showMainChatUi &&
-              !canViewChat &&
-              effectiveChatReleaseId == null && (
-                <p className="text-xs text-muted-foreground px-4py-3">
-                  Choose a version in the header dropdown so we know which
-                  release to update.
+          {!showMainChatUi && (
+            <>
+              <div className="space-y-3 px-4 py-3">
+                <p className="text-xs text-muted-foreground">
+                  Enter your email to continue. Chat permissions are verified
+                  securely on the server.
                 </p>
-              )}
-            {showMainChatUi && isLocked && (
-              <p className="rounded-lg border border-red-500 bg-red-50 px-3 py-3 text-xs leading-relaxed text-red-500 m-4">
-                This release is locked. Please switch to an active release to continue using the chat.
-              </p>
-            )}
+                <div className="grid gap-2">
+                  <Label htmlFor="client-link-panel-chat-email">
+                    Your email
+                  </Label>
+                  <Input
+                    id="client-link-panel-chat-email"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="you@company.com"
+                    value={panelEmailInput}
+                    onChange={(e) => {
+                      setPanelEmailInput(e.target.value);
+                      setGateInlineError("");
+                    }}
+                    className="rounded-lg border-input"
+                  />
+                  {gateInlineError ? (
+                    <p className="text-xs text-destructive">
+                      {gateInlineError}
+                    </p>
+                  ) : null}
+                  <Button
+                    type="button"
+                    className="w-full bg-linear-to-r from-violet-600 to-indigo-600 font-semibold text-white shadow-md hover:from-violet-700 hover:to-indigo-700"
+                    onClick={handleContinueEmail}
+                    disabled={
+                      !LOCK_EMAIL_RE.test(panelEmailInput.trim().toLowerCase())
+                    }
+                  >
+                    Continue
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+          {showMainChatUi && !canViewChat && effectiveChatReleaseId == null && (
+            <p className="text-xs text-muted-foreground px-4py-3">
+              Choose a version in the header dropdown so we know which release
+              to update.
+            </p>
+          )}
+          {showMainChatUi && isLocked && (
+            <p className="rounded-lg border border-red-500 bg-red-50 px-3 py-3 text-xs leading-relaxed text-red-500 m-4">
+              This release is locked. Please switch to an active release to
+              continue using the chat.
+            </p>
+          )}
 
           {showMainChatUi ? (
             <>
@@ -873,7 +1124,12 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                 {chatMessages.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     Describe the change you want (e.g. &quot;Make the hero
-                    button larger&quot;).
+                    button larger&quot;). Use{" "}
+                    <span className="font-medium text-foreground">
+                      Pick element
+                    </span>{" "}
+                    to select something in the preview — it appears as a tag in
+                    the box below; hover the tag for full details.
                   </p>
                 )}
                 {chatMessages.map((msg, index) => (
@@ -891,9 +1147,27 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                   />
                 ))}
                 {(chatSending || chatPolling) && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Spinner className="size-4" />
-                    Applying changes...
+                  <div
+                    className="flex shrink-0 flex-col items-center gap-3 rounded-xl px-3 py-3 dark:border-violet-500/25 dark:from-violet-950/40 dark:via-card/90 dark:to-indigo-950/30"
+                    role="status"
+                    aria-live="polite"
+                    aria-label="Cursor agent is working"
+                  >
+                    {/* Fixed height: Lottie intrinsic canvas is tall; unconstrained flex child pushed label below the fold */}
+                    <div className="relative h-[148px] w-full max-w-[240px] shrink-0 overflow-hidden">
+                      <Lottie
+                        animationData={websiteChangesAnimation}
+                        loop
+                        className="h-full w-full [&_svg]:h-full [&_svg]:max-h-full [&_svg]:w-full"
+                        rendererSettings={{
+                          preserveAspectRatio: "xMidYMid meet",
+                        }}
+                      />
+                    </div>
+                    <p className="flex shrink-0 items-center justify-center gap-2 text-center text-xs font-semibold text-slate-800 dark:text-slate-100">
+                      <Spinner className="size-3.5 shrink-0 text-primary" />
+                      Applying changes…
+                    </p>
                   </div>
                 )}
                 {chatHistoryLoading && (
@@ -939,31 +1213,42 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                   </>
                 )}
                 <div className="rounded-lg border border-slate-200/90 bg-white shadow-sm dark:border-border dark:bg-card">
-                  <Textarea
-                    placeholder="Type here to reflect changes..."
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    disabled={
-                      !canMutateChat ||
-                      chatSending ||
-                      chatPolling ||
-                      chatHistoryLoading
-                    }
-                    className="resize-none border-0 bg-transparent px-3 pb-1 pt-3 text-sm shadow-none placeholder:tex focus-visible:ring-0 focus-visible:ring-offset-0 dark:placeholder:text-muted-foreground"
-                      onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        if (
-                          canMutateChat &&
-                          !chatSending &&
-                          !chatPolling &&
-                          !chatHistoryLoading
-                        ) {
-                          void handleSendChat();
-                        }
+                  <div className="flex flex-col min-h-[48px] items-start gap-0 px-2 py-2">
+                    {pickedElementContext ? (
+                      <ElementContextChip
+                        tag={pickedElementContext.tag}
+                        inspectorCtx={pickedElementContext}
+                        onRemove={() => onPickedElementContextChange(null)}
+                        variant="composer"
+                        className="self-start"
+                      />
+                    ) : null}
+                    <Textarea
+                      placeholder="Type here to reflect changes..."
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      disabled={
+                        !canMutateChat ||
+                        chatSending ||
+                        chatPolling ||
+                        chatHistoryLoading
                       }
-                    }}
-                  />
+                      className="min-h-[40px] flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-sm shadow-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0 dark:placeholder:text-muted-foreground"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          if (
+                            canMutateChat &&
+                            !chatSending &&
+                            !chatPolling &&
+                            !chatHistoryLoading
+                          ) {
+                            void handleSendChat();
+                          }
+                        }
+                      }}
+                    />
+                  </div>
                   <div className="flex items-end justify-between gap-2 px-2 pb-2 pt-0">
                     <div
                       className={`flex min-w-0 items-end gap-2 ${composerEmailEditorOpen ? "flex-1" : ""}`}
@@ -1004,9 +1289,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                                 }
                               }}
                               disabled={
-                                chatSending ||
-                                chatPolling ||
-                                chatHistoryLoading
+                                chatSending || chatPolling || chatHistoryLoading
                               }
                               className="h-9 min-w-0 flex-1 rounded-full border-slate-200/90 bg-white text-xs shadow-sm dark:border-border dark:bg-background"
                             />
@@ -1037,25 +1320,67 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                         </div>
                       ) : null}
                     </div>
-                    <Button
-                      type="button"
-                      size="icon"
-                      disabled={
-                        !canMutateChat ||
-                        chatSending ||
-                        chatPolling ||
-                        chatHistoryLoading
-                      }
-                      className="h-9 w-9 shrink-0 rounded-full disabled:opacity-40"
-                      aria-label="Send message"
-                      onClick={() => void handleSendChat()}
-                    >
-                      {chatSending || chatPolling ? (
-                        <Spinner className="size-4 text-white" />
-                      ) : (
-                        <ArrowUp className="size-4" />
-                      )}
-                    </Button>
+                    <div className="flex justify-center items-center gap-2">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant={visualPickMode ? "default" : "secondary"}
+                              disabled={
+                                !canMutateChat ||
+                                chatSending ||
+                                chatPolling ||
+                                chatHistoryLoading ||
+                                !visualPickSupported
+                              }
+                              className={`h-9 w-9 shrink-0 rounded-full disabled:opacity-40 ${
+                                visualPickMode
+                                  ? "bg-linear-to-br from-violet-600 to-indigo-600 text-white shadow-md hover:from-violet-700 hover:to-indigo-700"
+                                  : ""
+                              }`}
+                              aria-pressed={visualPickMode}
+                              aria-label={
+                                visualPickMode
+                                  ? "Exit pick element mode"
+                                  : "Pick element in preview"
+                              }
+                              onClick={handleToggleVisualPick}
+                            >
+                              <SquareMousePointer className="size-4" />
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="top"
+                          className="max-w-[260px] text-xs leading-relaxed"
+                        >
+                          {visualPickSupported
+                            ? "Turn this on and select the part of the UI you'd like to edit"
+                            : visualPickDisabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                      <Button
+                        type="button"
+                        size="icon"
+                        disabled={
+                          !canMutateChat ||
+                          chatSending ||
+                          chatPolling ||
+                          chatHistoryLoading
+                        }
+                        className="h-9 w-9 shrink-0 rounded-full disabled:opacity-40"
+                        aria-label="Send message"
+                        onClick={() => void handleSendChat()}
+                      >
+                        {chatSending || chatPolling ? (
+                          <Spinner className="size-4 text-white" />
+                        ) : (
+                          <ArrowUp className="size-4" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
