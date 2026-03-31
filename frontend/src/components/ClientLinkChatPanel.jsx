@@ -574,6 +574,12 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     [appliedMessageKey, chatMessages],
   );
 
+  const confirmMergeMessageSplit = useMemo(() => {
+    const t = selectedAppliedMessage?.text;
+    if (typeof t !== "string" || !t.trim()) return null;
+    return splitFollowupWithElementContext(t);
+  }, [selectedAppliedMessage?.text]);
+
   const applyMessageToPreview = useCallback(
     async (msg) => {
       if (!projectSlug?.trim() || effectiveChatReleaseId == null) return false;
@@ -1403,8 +1409,29 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">Chat message</p>
             <div className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-foreground">
-              {selectedAppliedMessage?.text ||
-                "No applied chat message selected."}
+              {!selectedAppliedMessage?.text ? (
+                <span className="text-muted-foreground">
+                  No applied chat message selected.
+                </span>
+              ) : confirmMergeMessageSplit ? (
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex justify-start">
+                    <ElementContextChip
+                      tag={confirmMergeMessageSplit.tag}
+                      contextBlock={confirmMergeMessageSplit.contextBlock}
+                      variant="composer"
+                      className="self-start"
+                    />
+                  </div>
+                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                    {confirmMergeMessageSplit.userText}
+                  </p>
+                </div>
+              ) : (
+                <p className="whitespace-pre-wrap break-words leading-relaxed">
+                  {selectedAppliedMessage.text}
+                </p>
+              )}
             </div>
           </div>
           <DialogFooter showCloseButton={false}>

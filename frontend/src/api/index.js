@@ -34,8 +34,33 @@ api.interceptors.request.use(
 
 const STORAGE_KEYS = ["token", "access_token", "user", "cognito_refresh_token"];
 
+/** Removed features / older clients; safe to delete if present. */
+const LEGACY_LOCAL_STORAGE_KEYS = [
+  "authToken",
+  "persist:auth",
+  "hasCompletedTour",
+  "meetings",
+];
+
 export function clearAuthStorageOnly() {
-  STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
+  [...STORAGE_KEYS, ...LEGACY_LOCAL_STORAGE_KEYS].forEach((k) =>
+    localStorage.removeItem(k),
+  );
+}
+
+/** Drop stale keys without clearing an active session. */
+export function clearLegacyLocalStorageKeys() {
+  LEGACY_LOCAL_STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
+}
+
+function sanitizeUserForStorage(user) {
+  if (!user || typeof user !== "object") return null;
+  return {
+    id: user.id ?? null,
+    role: user.role ?? null,
+    email: typeof user.email === "string" ? user.email : "",
+    name: typeof user.name === "string" ? user.name : "",
+  };
 }
 
 function clearAuthAndRedirect() {
@@ -97,7 +122,10 @@ export async function refreshAppToken() {
       if (accessToken) localStorage.setItem("access_token", accessToken);
       if (newRefreshToken)
         localStorage.setItem("cognito_refresh_token", newRefreshToken);
-      if (body?.user) localStorage.setItem("user", JSON.stringify(body.user));
+      const userForStorage = sanitizeUserForStorage(body?.user);
+      if (userForStorage) {
+        localStorage.setItem("user", JSON.stringify(userForStorage));
+      }
       return launchpadToken;
     }
   } catch {
@@ -633,7 +661,11 @@ export async function exchangeHubAuthCode(code, redirectUri) {
     } catch {
       // Token valid; DB user will be linked on first protected request
     }
-    localStorage.setItem("user", JSON.stringify(user));
+    const userForStorage = sanitizeUserForStorage(user);
+    if (userForStorage) {
+      localStorage.setItem("user", JSON.stringify(userForStorage));
+      user = userForStorage;
+    }
     return {
       token: idToken || accessToken,
       user,

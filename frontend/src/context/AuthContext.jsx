@@ -5,6 +5,7 @@ import {
     stopTokenRefreshTimer,
     hubLogout,
     clearAuthStorageOnly,
+    clearLegacyLocalStorageKeys,
 } from '../api/index';
 import { isTokenExpired } from '../utils/auth';
 
@@ -14,6 +15,16 @@ export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
+    const normalizeStoredUser = (rawUser) => {
+        if (!rawUser || typeof rawUser !== 'object') return null;
+        return {
+            id: rawUser.id ?? null,
+            role: rawUser.role ?? null,
+            email: typeof rawUser.email === 'string' ? rawUser.email : '',
+            name: typeof rawUser.name === 'string' ? rawUser.name : '',
+        };
+    };
+
     const clearAuthStorage = () => {
         stopTokenRefreshTimer();
         clearAuthStorageOnly();
@@ -21,6 +32,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     useEffect(() => {
+        clearLegacyLocalStorageKeys();
         let cancelled = false;
         (async () => {
             const storedUser = localStorage.getItem('user');
@@ -33,7 +45,13 @@ export const AuthProvider = ({ children }) => {
                     if (refreshed) {
                         try {
                             const u = localStorage.getItem('user');
-                            if (u) setUser(JSON.parse(u));
+                            if (u) {
+                                const normalizedUser = normalizeStoredUser(JSON.parse(u));
+                                if (normalizedUser) {
+                                    localStorage.setItem('user', JSON.stringify(normalizedUser));
+                                    setUser(normalizedUser);
+                                }
+                            }
                         } catch {
                             clearAuthStorage();
                         }
@@ -42,7 +60,13 @@ export const AuthProvider = ({ children }) => {
                     }
                 } else {
                     try {
-                        setUser(JSON.parse(storedUser));
+                        const normalizedUser = normalizeStoredUser(JSON.parse(storedUser));
+                        if (normalizedUser) {
+                            localStorage.setItem('user', JSON.stringify(normalizedUser));
+                            setUser(normalizedUser);
+                        } else {
+                            clearAuthStorage();
+                        }
                     } catch (error) {
                         clearAuthStorage();
                     }
@@ -76,7 +100,13 @@ export const AuthProvider = ({ children }) => {
             if (refreshed) {
                 try {
                     const u = localStorage.getItem('user');
-                    if (u) setUser(JSON.parse(u));
+                    if (u) {
+                        const normalizedUser = normalizeStoredUser(JSON.parse(u));
+                        if (normalizedUser) {
+                            localStorage.setItem('user', JSON.stringify(normalizedUser));
+                            setUser(normalizedUser);
+                        }
+                    }
                 } catch {
                     clearAuthStorage();
                 }
@@ -86,7 +116,13 @@ export const AuthProvider = ({ children }) => {
             return;
         }
         try {
-            setUser(JSON.parse(storedUser));
+            const normalizedUser = normalizeStoredUser(JSON.parse(storedUser));
+            if (normalizedUser) {
+                localStorage.setItem('user', JSON.stringify(normalizedUser));
+                setUser(normalizedUser);
+            } else {
+                clearAuthStorage();
+            }
         } catch (error) {
             clearAuthStorage();
         }

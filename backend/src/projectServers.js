@@ -75,6 +75,26 @@ function createStaticServer(absoluteDir, projectId = null) {
     res.setHeader("Set-Cookie", `${PREVIEW_COOKIE}=1; Path=/; Max-Age=${PREVIEW_COOKIE_MAX_AGE}; SameSite=Lax`);
   };
 
+  const ASSET_EXT_RE =
+    /\.(?:mjs|cjs|js|css|map|json|txt|xml|webmanifest|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|otf|mp4|webm|mp3|wav|pdf)$/i;
+  const isStaticAssetRequest = (req) => ASSET_EXT_RE.test(String(req.path || ""));
+
+  // Keep preview cookie state aligned before static file lookup.
+  app.use((req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    if (!previewDir || !fs.existsSync(previewDir)) {
+      if (req.path === "/" || req.path === "/index.html") clearPreviewCookie(res);
+      return next();
+    }
+    if (req.query && req.query.preview === "1") {
+      setPreviewCookie(res);
+    } else if ((req.path === "/" || req.path === "/index.html") && !parsePreviewCookie(req)) {
+      // Visiting the live doc without an existing preview session should clear stale preview state.
+      clearPreviewCookie(res);
+    }
+    next();
+  });
+
   // Fallback for / or /index.html when file is missing (empty project dir)
   app.use((req, res, next) => {
     if ((req.path !== "/" && req.path !== "/index.html") || (req.method !== "GET" && req.method !== "HEAD")) return next();
@@ -100,12 +120,12 @@ function createStaticServer(absoluteDir, projectId = null) {
   // SPA fallback: serve index.html for any path that didn't match a file (so refresh/direct URL works)
   app.use((req, res, next) => {
     if (req.method !== "GET" && req.method !== "HEAD") return next();
+    if (isStaticAssetRequest(req)) return res.status(404).end();
     const root = chooseRoot(req);
     const indexPath = path.join(root, "index.html");
     if (!fs.existsSync(indexPath)) return next();
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     if (root === previewDir) {
-      if (req.query && req.query.preview === "1") setPreviewCookie(res);
       fs.readFile(indexPath, "utf-8", (err, html) => {
         if (err) return res.status(200).sendFile(indexPath);
         const injected = html.replace("</head>", PREVIEW_CLEANUP_SCRIPT);
