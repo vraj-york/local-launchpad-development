@@ -56,6 +56,7 @@ const PREVIEW_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 const PREVIEW_META_FILE = ".preview-meta.json";
 const PREVIEW_CLEANUP_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const PREVIEW_LAST_CLEANUP_FILE = ".last-cleanup-at";
+const previewBuildLocks = new Map(); // projectId -> Promise chain
 
 const execAsync = promisify(exec);
 
@@ -203,6 +204,23 @@ function refreshSharedGitCacheRemote(gitRepoPath, githubToken, backendRoot) {
   } catch (e) {
     console.warn("[updateProject] shared projects/.git refresh failed:", e?.message || e);
   }
+}
+
+/**
+ * Serialize preview builds per project to avoid hash mismatches/404s caused by
+ * concurrent writes to the same _preview/project_<id>/serve directory.
+ */
+async function withPreviewBuildLock(projectId, task) {
+  const key = Number(projectId);
+  const previous = previewBuildLocks.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(task);
+  const chain = current.finally(() => {
+    if (previewBuildLocks.get(key) === chain) {
+      previewBuildLocks.delete(key);
+    }
+  });
+  previewBuildLocks.set(key, chain);
+  return current;
 }
 
 /** UFW needs sudo; Docker images often have no sudo — skip to avoid noisy warnings. */
@@ -1578,6 +1596,7 @@ export const switchProjectVersion = async (
   versionIdOrTag,
   isPermanent = false
 ) => {
+  return withPreviewBuildLock(projectId, async () => {
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
     select: { id: true, name: true, projectPath: true, port: true, gitRepoPath: true, githubToken: true },
@@ -1776,6 +1795,7 @@ export const switchProjectVersion = async (
       err.message || "Failed to build preview (checkout + build). Live app unchanged."
     );
   }
+  });
 };
 
 /**
@@ -1790,6 +1810,8 @@ export async function buildProjectPreviewFromGitRef({ projectId, gitRef, label =
   if (!/^[A-Za-z0-9._/-]+$/.test(ref)) {
     throw new ApiError(400, "Invalid git ref format");
   }
+
+  return withPreviewBuildLock(projectId, async () => {
 
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
@@ -1883,6 +1905,7 @@ export async function buildProjectPreviewFromGitRef({ projectId, gitRef, label =
       err?.message || "Failed to build preview from git ref.",
     );
   }
+  });
 }
 
 
