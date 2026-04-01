@@ -73,8 +73,8 @@ services:
       AWS_COGNITO_USER_POOL_ID: ${AWS_COGNITO_USER_POOL_ID:-}
       AWS_COGNITO_APP_CLIENT_ID: ${AWS_COGNITO_APP_CLIENT_ID:-}
       AUTH_ALLOWED_DOMAIN: ${AUTH_ALLOWED_DOMAIN:-}
-      # --- CORS / cookie-related redirects (backend src/app.js) ---
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      # FRONTEND_URL: set only in root .env (env_file). Do not set here — a default like localhost breaks UAT OAuth redirects.
+      # Backend falls back to VITE_FRONTEND_URL when FRONTEND_URL is omitted (see backend/src/utils/publicFrontendUrl.js getPublicFrontendBaseUrl).
       # --- Optional integrations (release upload, Cursor, S3) ---
       CURSOR_API_KEY: ${CURSOR_API_KEY:-}
       # Optional: force Cursor agent source.ref (branch/tag); unset uses request ref or GitHub default_branch
