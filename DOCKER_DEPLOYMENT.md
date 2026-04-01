@@ -11,7 +11,7 @@ Run the full stack (backend, frontend, nginx) with Docker Compose.
 
 | File | When it’s used | Why it exists |
 |------|----------------|----------------|
-| **Repo root `.env`** | **Only when you run Docker** (`docker compose up` from repo root). | Compose runs from the root; `env_file: - .env` is relative to the folder that contains `docker-compose.yml`. One file feeds **all** services (db, backend, frontend) so you don’t have to duplicate DB URL, JWT_SECRET, VITE_* etc. in each app folder. |
+| **Repo root `.env`** | **Only when you run Docker** (`docker compose up` from repo root). | Compose runs from the root; `db` and `backend` use `env_file: .env` (plus optional `.env.local` for overrides). The same root `.env` is also used for **variable substitution** in `docker-compose.yml` (e.g. `VITE_*` build args for the frontend image). The **frontend container** does not use `env_file`, so secrets stay out of the static app container. |
 | **`backend/.env`** | **Only when you run the backend without Docker** (e.g. `cd backend && npm start`). | Node loads it via `dotenv.config()` from the backend directory. Used for local dev only. |
 | **`frontend/.env`** (or `.env.local`) | **Only when you run the frontend without Docker** (e.g. `cd frontend && npm run dev`). | Vite reads it when building/serving. Used for local dev or a non-Docker frontend deploy. |
 

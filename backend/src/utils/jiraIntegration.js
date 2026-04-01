@@ -476,16 +476,60 @@ function toSingleLineSummary(s) {
  * @param {Object} config - { baseUrl, projectKey, apiToken, email, issueType? }
  * @returns {Promise<{ success: boolean, ticketKey?: string, ticketUrl?: string, error?: string }>}
  */
+function jiraIssueAuthHeaders(config) {
+    if (config.auth === 'bearer' && config.accessToken) {
+        return {
+            Authorization: `Bearer ${config.accessToken}`,
+            Accept: 'application/json',
+        };
+    }
+    const { apiToken, email } = config;
+    const auth = Buffer.from(`${email}:${apiToken}`).toString('base64');
+    return {
+        Authorization: `Basic ${auth}`,
+        Accept: 'application/json',
+    };
+}
+
+/**
+ * Jira Cloud OAuth 2.0 (3LO) must call REST via api.atlassian.com/ex/jira/{cloudId}.
+ * Site URL + Bearer is rejected. Basic auth uses the site URL.
+ * @param {{ baseUrl: string, auth?: string, accessToken?: string, atlassianCloudId?: string }} config
+ */
+function jiraRestApiRoot(config) {
+    const base = (config.baseUrl || '').replace(/\/$/, '');
+    if (config.auth === 'bearer' && config.accessToken && config.atlassianCloudId) {
+        return `https://api.atlassian.com/ex/jira/${encodeURIComponent(config.atlassianCloudId)}`;
+    }
+    return base;
+}
+
 export async function createJiraTicketWithConfig(ticketData, config) {
-    const { baseUrl, projectKey, apiToken, email, issueType = 'Task' } = config;
+    const { baseUrl, projectKey, issueType = 'Task' } = config;
+    const useBearer = config.auth === 'bearer' && config.accessToken;
     console.log('[jira] createJiraTicketWithConfig called | baseUrl:', baseUrl, '| projectKey:', projectKey, '| issueType:', issueType);
-    if (!baseUrl || !projectKey || !apiToken || !email) {
-        const missing = []; if (!baseUrl) missing.push('baseUrl'); if (!projectKey) missing.push('projectKey'); if (!apiToken) missing.push('apiToken'); if (!email) missing.push('email');
+    if (!baseUrl || !projectKey) {
+        const missing = [];
+        if (!baseUrl) missing.push('baseUrl');
+        if (!projectKey) missing.push('projectKey');
         console.warn('[jira] createJiraTicketWithConfig validation failed — missing:', missing.join(', '));
+        return { success: false, error: 'Missing Jira configuration (baseUrl, projectKey)' };
+    }
+    if (!useBearer && (!config.apiToken || !config.email)) {
+        console.warn('[jira] createJiraTicketWithConfig validation failed — missing apiToken/email for basic auth');
         return { success: false, error: 'Missing Jira configuration (baseUrl, projectKey, apiToken, email)' };
     }
-    const auth = Buffer.from(`${email}:${apiToken}`).toString('base64');
-    const url = `${baseUrl.replace(/\/$/, '')}/rest/api/3/issue`;
+    if (useBearer && !config.accessToken) {
+        return { success: false, error: 'Missing Jira OAuth access token' };
+    }
+    if (useBearer && !config.atlassianCloudId) {
+        return {
+            success: false,
+            error: 'Jira OAuth missing cloud id; reconnect Jira under Integrations.',
+        };
+    }
+    const authHeaders = jiraIssueAuthHeaders(config);
+    const url = `${jiraRestApiRoot(config)}/rest/api/3/issue`;
     const descriptionContent = buildDescriptionContent(ticketData.description, ticketData.metadata || null);
     const summary = toSingleLineSummary(ticketData.title).slice(0, 255);
     const payload = {
@@ -505,8 +549,7 @@ export async function createJiraTicketWithConfig(ticketData, config) {
         const response = await fetch(url, {
             method: 'POST',
             headers: {
-                Authorization: `Basic ${auth}`,
-                Accept: 'application/json',
+                ...authHeaders,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(payload)
@@ -518,7 +561,7 @@ export async function createJiraTicketWithConfig(ticketData, config) {
         }
         const result = await response.json();
         const ticketKey = result.key;
-        const ticketUrl = `${baseUrl.replace(/\/$/, '')}/browse/${ticketKey}`;
+        const ticketUrl = `${(config.baseUrl || '').replace(/\/$/, '')}/browse/${ticketKey}`;
         console.log('[jira] Ticket created successfully:', ticketKey, '| url:', ticketUrl);
         return { success: true, ticketKey, ticketUrl };
     } catch (err) {
@@ -535,18 +578,32 @@ export async function createJiraTicketWithConfig(ticketData, config) {
  * @returns {Promise<{ success: boolean, error?: string }>}
  */
 export async function addAttachmentToJiraIssue(issueKey, filePath, config) {
-    const { baseUrl, apiToken, email } = config;
+    const { baseUrl } = config;
+    const useBearer = config.auth === 'bearer' && config.accessToken;
     console.log('[jira] addAttachmentToJiraIssue called | issueKey:', issueKey, '| filePath:', filePath, '| baseUrl:', baseUrl);
-    if (!baseUrl || !apiToken || !email) {
-        console.warn('[jira] addAttachmentToJiraIssue — missing config (baseUrl/apiToken/email)');
+    if (!baseUrl) {
+        console.warn('[jira] addAttachmentToJiraIssue — missing baseUrl');
         return { success: false, error: 'Missing Jira config for attachment' };
+    }
+    if (!useBearer && (!config.apiToken || !config.email)) {
+        console.warn('[jira] addAttachmentToJiraIssue — missing apiToken/email for basic auth');
+        return { success: false, error: 'Missing Jira config for attachment' };
+    }
+    if (useBearer && !config.accessToken) {
+        return { success: false, error: 'Missing Jira OAuth access token' };
+    }
+    if (useBearer && !config.atlassianCloudId) {
+        return {
+            success: false,
+            error: 'Jira OAuth missing cloud id; reconnect Jira under Integrations.',
+        };
     }
     if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
         console.error('[jira] addAttachmentToJiraIssue — file not found:', filePath);
         return { success: false, error: 'File not found: ' + filePath };
     }
-    const auth = Buffer.from(`${email}:${apiToken}`).toString('base64');
-    const url = `${baseUrl.replace(/\/$/, '')}/rest/api/3/issue/${encodeURIComponent(issueKey)}/attachments`;
+    const authHeaders = jiraIssueAuthHeaders(config);
+    const url = `${jiraRestApiRoot(config)}/rest/api/3/issue/${encodeURIComponent(issueKey)}/attachments`;
     const filename = path.basename(filePath);
     const mimeType = filename.toLowerCase().endsWith('.png') ? 'image/png' : (filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : 'image/png');
     const form = new FormData();
@@ -556,7 +613,7 @@ export async function addAttachmentToJiraIssue(issueKey, filePath, config) {
         const response = await fetch(url, {
             method: 'POST',
             headers: {
-                Authorization: `Basic ${auth}`,
+                ...authHeaders,
                 'X-Atlassian-Token': 'no-check',
                 ...form.getHeaders()
             },
@@ -581,21 +638,32 @@ export async function addAttachmentToJiraIssue(issueKey, filePath, config) {
 // jira.service.js
 export async function fetchProjectJiraTickets(config) {
     try {
-        const { baseUrl, email, apiToken, projectKey } = config;
+        const { baseUrl, projectKey } = config;
+        const useBearer = config.auth === "bearer" && config.accessToken;
 
-        if (!baseUrl || !email || !apiToken || !projectKey) {
+        if (!baseUrl || !projectKey) {
             throw new Error("Missing Jira configuration");
         }
+        if (!useBearer && (!config.email || !config.apiToken)) {
+            throw new Error("Missing Jira configuration");
+        }
+        if (useBearer && !config.accessToken) {
+            throw new Error("Missing Jira OAuth access token");
+        }
+        if (useBearer && !config.atlassianCloudId) {
+            throw new Error(
+                "Jira OAuth missing cloud id; reconnect Jira under Integrations.",
+            );
+        }
 
-        const auth = Buffer.from(`${email}:${apiToken}`).toString("base64");
+        const authHeaders = jiraIssueAuthHeaders(config);
 
         const response = await fetch(
-            `${baseUrl}/rest/api/3/search/jql`,
+            `${jiraRestApiRoot(config)}/rest/api/3/search/jql`,
             {
                 method: "POST",
                 headers: {
-                    Authorization: `Basic ${auth}`,
-                    Accept: "application/json",
+                    ...authHeaders,
                     "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
@@ -626,7 +694,7 @@ export async function fetchProjectJiraTickets(config) {
             issues: data.issues.map(issue => ({
                 id: issue.id,
                 key: issue.key,
-                url: `${baseUrl}/browse/${issue.key}`,
+                url: `${(config.baseUrl || "").replace(/\/$/, "")}/browse/${issue.key}`,
                 summary: issue.fields.summary,
                 status: issue.fields.status.name,
                 priority: issue.fields.priority?.name ?? null,

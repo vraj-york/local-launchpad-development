@@ -8,6 +8,7 @@ import {
   postCursorAgentFollowup,
   performMergeToLaunchpad,
 } from "../services/cursor.service.js";
+import { resolveGithubCredentialsFromProject } from "../services/integrationCredential.service.js";
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -233,7 +234,14 @@ router.post(
 
     const project = await prisma.project.findUnique({
       where: { id: conversion.projectId },
-      select: { assignedManagerId: true, githubToken: true, gitRepoPath: true },
+      select: {
+        assignedManagerId: true,
+        githubToken: true,
+        gitRepoPath: true,
+        githubConnectionId: true,
+        createdById: true,
+        githubUsername: true,
+      },
     });
     if (!project) {
       return res.status(404).json({ error: "Project not found" });
@@ -243,7 +251,13 @@ router.post(
     if (!hasAccess) {
       return res.status(403).json({ error: "Forbidden: no access to this project" });
     }
-    if (!project.githubToken?.trim() || !project.gitRepoPath?.trim()) {
+    let ghTokRoute = "";
+    try {
+      ghTokRoute = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+    } catch {
+      ghTokRoute = "";
+    }
+    if (!ghTokRoute?.trim() || !project.gitRepoPath?.trim()) {
       return res.status(400).json({ error: "Project has no GitHub token or Git repo path configured" });
     }
 

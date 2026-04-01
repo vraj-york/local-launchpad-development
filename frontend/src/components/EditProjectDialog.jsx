@@ -1,5 +1,16 @@
-import React, { useEffect, useState } from "react";
-import { updateProject, fetchExternalHubProjects } from "@/api";
+import React, { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  updateProject,
+  fetchExternalHubProjects,
+  fetchCreatorIntegrationConnections,
+  fetchGithubReposPage,
+  fetchJiraProjectsForConnection,
+  getGithubOAuthAuthorizeUrl,
+  getJiraOAuthAuthorizeUrl,
+} from "@/api";
+import ProjectGitJiraOAuthCard from "@/components/project/ProjectGitJiraOAuthCard";
+import { useAuth } from "@/context/AuthContext";
 import {
   validateOptionalCommaSeparatedEmails,
   uniqueEmailsForHubProject,
@@ -19,6 +30,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Loader2,
   HelpCircle,
@@ -51,6 +69,11 @@ function buildUpdatePayload({
   assignedUserEmails,
   stakeholderEmails,
   project,
+  useOAuthGithub,
+  useOAuthJira,
+  selectedGithubConnectionId,
+  selectedJiraConnectionId,
+  creatorIntegrations,
 }) {
   const payload = {};
 
@@ -60,24 +83,38 @@ function buildUpdatePayload({
   }
 
   const ghUser = githubUsername.trim();
-  if (ghUser) payload.githubUsername = ghUser;
+  if (ghUser && (!useOAuthGithub || ghUser !== String(project?.githubUsername || "").trim())) {
+    payload.githubUsername = ghUser;
+  }
 
   const ghTok = githubToken.trim();
-  if (ghTok && !(isMaskedToken(ghTok) && ghTok === String(project?.githubToken || "").trim())) {
+  if (
+    !useOAuthGithub &&
+    ghTok &&
+    !(isMaskedToken(ghTok) && ghTok === String(project?.githubToken || "").trim())
+  ) {
     payload.githubToken = ghTok;
   }
 
   const jBase = jiraBaseUrl.trim();
-  if (jBase) payload.jiraBaseUrl = jBase;
+  if (jBase && (!useOAuthJira || jBase !== String(project?.jiraBaseUrl || "").trim())) {
+    payload.jiraBaseUrl = jBase;
+  }
 
   const jUser = jiraUsername.trim();
-  if (jUser) payload.jiraUsername = jUser;
+  if (jUser && (!useOAuthJira || jUser !== String(project?.jiraUsername || "").trim())) {
+    payload.jiraUsername = jUser;
+  }
 
   const jKey = jiraProjectKey.trim();
   if (jKey) payload.jiraProjectKey = jKey;
 
   const jTok = jiraApiToken.trim();
-  if (jTok && !(isMaskedToken(jTok) && jTok === String(project?.jiraApiToken || "").trim())) {
+  if (
+    !useOAuthJira &&
+    jTok &&
+    !(isMaskedToken(jTok) && jTok === String(project?.jiraApiToken || "").trim())
+  ) {
     payload.jiraApiToken = jTok;
   }
 
@@ -99,10 +136,44 @@ function buildUpdatePayload({
     payload.stakeholderEmails = normEmailListField(stakeholderEmails);
   }
 
+  if (
+    useOAuthGithub &&
+    selectedGithubConnectionId &&
+    String(selectedGithubConnectionId) !== String(project?.githubConnectionId ?? "")
+  ) {
+    payload.githubConnectionId = Number(selectedGithubConnectionId);
+  }
+
+  if (
+    useOAuthJira &&
+    selectedJiraConnectionId &&
+    String(selectedJiraConnectionId) !== String(project?.jiraConnectionId ?? "")
+  ) {
+    payload.jiraConnectionId = Number(selectedJiraConnectionId);
+    const ji = creatorIntegrations?.jira?.connections?.find(
+      (c) => String(c.id) === String(selectedJiraConnectionId),
+    );
+    if (ji?.baseUrl) payload.jiraBaseUrl = ji.baseUrl.trim();
+  }
+
   return payload;
 }
 
 const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
+  const { user } = useAuth();
+  const useOAuthGithub = Boolean(project?.githubConnectionId);
+  const useOAuthJira = Boolean(project?.jiraConnectionId);
+  const creatorId = project?.createdBy?.id ?? project?.createdById;
+  const canReconnectOAuth =
+    user != null &&
+    creatorId != null &&
+    Number(user.id) === Number(creatorId);
+  const canEditOAuthLinks =
+    user?.role === "admin" ||
+    (creatorId != null && user != null && Number(user.id) === Number(creatorId));
+  const useSharedOAuthCard =
+    canEditOAuthLinks && useOAuthGithub && useOAuthJira;
+  const gitJiraRef = useRef(null);
 
   const [projectDescription, setProjectDescription] = useState("");
   const [githubToken, setGithubToken] = useState("");
@@ -123,6 +194,16 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const [showJiraGuide, setShowJiraGuide] = useState(false);
   const [showGithubToken, setShowGithubToken] = useState(false);
   const [showJiraToken, setShowJiraToken] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState(null);
+  const [creatorIntegrations, setCreatorIntegrations] = useState(null);
+  const [loadingCreatorInt, setLoadingCreatorInt] = useState(false);
+  const [selectedGithubConnectionId, setSelectedGithubConnectionId] = useState("");
+  const [selectedJiraConnectionId, setSelectedJiraConnectionId] = useState("");
+  const [githubReposEdit, setGithubReposEdit] = useState([]);
+  const [reposLoadingEdit, setReposLoadingEdit] = useState(false);
+  const [jiraProjectsEdit, setJiraProjectsEdit] = useState([]);
+  const [jiraProjectsLoadingEdit, setJiraProjectsLoadingEdit] = useState(false);
+  const [githubRepoPickSeq, setGithubRepoPickSeq] = useState(0);
 
   useEffect(() => {
     if (!open || !project) return;
@@ -161,32 +242,161 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
     };
   }, [open]);
 
+  useEffect(() => {
+    if (useSharedOAuthCard) return;
+    if (!open || !project) return;
+    setSelectedGithubConnectionId(
+      project.githubConnectionId != null ? String(project.githubConnectionId) : "",
+    );
+    setSelectedJiraConnectionId(
+      project.jiraConnectionId != null ? String(project.jiraConnectionId) : "",
+    );
+  }, [
+    useSharedOAuthCard,
+    open,
+    project?.id,
+    project?.githubConnectionId,
+    project?.jiraConnectionId,
+  ]);
+
+  useEffect(() => {
+    if (!open || !project?.id || !canEditOAuthLinks) return;
+    if (!useOAuthGithub && !useOAuthJira) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingCreatorInt(true);
+      try {
+        const data = await fetchCreatorIntegrationConnections(project.id);
+        if (!cancelled) setCreatorIntegrations(data);
+      } catch {
+        if (!cancelled) setCreatorIntegrations(null);
+      } finally {
+        if (!cancelled) setLoadingCreatorInt(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, project?.id, canEditOAuthLinks, useOAuthGithub, useOAuthJira]);
+
+  useEffect(() => {
+    if (useSharedOAuthCard) return;
+    if (!open || !project?.id || !selectedGithubConnectionId || !useOAuthGithub) {
+      setGithubReposEdit([]);
+      return;
+    }
+    if (!canEditOAuthLinks) return;
+    let cancelled = false;
+    (async () => {
+      setReposLoadingEdit(true);
+      try {
+        const data = await fetchGithubReposPage(selectedGithubConnectionId, {
+          page: 1,
+          projectId: project.id,
+        });
+        if (!cancelled) setGithubReposEdit(data.repos || []);
+      } catch {
+        if (!cancelled) setGithubReposEdit([]);
+      } finally {
+        if (!cancelled) setReposLoadingEdit(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    useSharedOAuthCard,
+    open,
+    project?.id,
+    selectedGithubConnectionId,
+    useOAuthGithub,
+    canEditOAuthLinks,
+  ]);
+
+  useEffect(() => {
+    if (useSharedOAuthCard) return;
+    if (!open || !project?.id || !selectedJiraConnectionId || !useOAuthJira) {
+      setJiraProjectsEdit([]);
+      return;
+    }
+    if (!canEditOAuthLinks) return;
+    let cancelled = false;
+    (async () => {
+      setJiraProjectsLoadingEdit(true);
+      try {
+        const data = await fetchJiraProjectsForConnection(selectedJiraConnectionId, {
+          projectId: project.id,
+        });
+        if (!cancelled) {
+          setJiraProjectsEdit(Array.isArray(data.projects) ? data.projects : []);
+        }
+      } catch {
+        if (!cancelled) setJiraProjectsEdit([]);
+      } finally {
+        if (!cancelled) setJiraProjectsLoadingEdit(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    useSharedOAuthCard,
+    open,
+    project?.id,
+    selectedJiraConnectionId,
+    useOAuthJira,
+    canEditOAuthLinks,
+  ]);
+
   const validateForm = () => {
     const errors = {};
 
-    if (!githubUsername.trim()) {
-      errors.githubUsername = "GitHub username is required";
-    }
-    const githubStored = Boolean(project?.githubToken?.trim?.());
-    if (!githubToken.trim() && !githubStored) {
-      errors.githubToken =
-        "GitHub token is required (stored credentials missing; add a token to save)";
-    }
+    if (useSharedOAuthCard) {
+      Object.assign(
+        errors,
+        gitJiraRef.current?.validateEdit?.(project, loadingCreatorInt) ?? {},
+      );
+    } else {
+      if (!gitRepoPath.trim()) {
+        errors.gitRepoPath = "Git repository path is required";
+      }
 
-    if (!jiraBaseUrl.trim()) errors.jiraBaseUrl = "Jira Base URL is required";
-    if (!jiraUsername.trim()) {
-      errors.jiraUsername = "Jira username (email) is required";
-    }
-    if (!jiraProjectKey.trim()) {
-      errors.jiraProjectKey = "Jira Project Key is required";
-    }
-    const jiraTokenStored = Boolean(project?.jiraApiToken?.trim?.());
-    if (!jiraApiToken.trim() && !jiraTokenStored) {
-      errors.jiraApiToken =
-        "Jira API Token is required (stored credentials missing; add a token to save)";
-    }
-    if (!gitRepoPath.trim()) {
-      errors.gitRepoPath = "Git repository path is required";
+      if (useOAuthGithub) {
+        if (!githubUsername.trim() && !project?.githubUsername?.trim()) {
+          errors.githubUsername = "GitHub login missing; reconnect under Integrations";
+        }
+      } else {
+        if (!githubUsername.trim()) {
+          errors.githubUsername = "GitHub username is required";
+        }
+        const githubStored = Boolean(project?.githubToken?.trim?.());
+        if (!githubToken.trim() && !githubStored) {
+          errors.githubToken =
+            "GitHub token is required (stored credentials missing; add a token to save)";
+        }
+      }
+
+      if (useOAuthJira) {
+        if (!jiraProjectKey.trim()) {
+          errors.jiraProjectKey = "Jira project key is required";
+        }
+        if (!jiraBaseUrl.trim()) {
+          errors.jiraBaseUrl = "Jira site URL is required (from your OAuth site or type it)";
+        }
+      } else {
+        if (!jiraBaseUrl.trim()) errors.jiraBaseUrl = "Jira Base URL is required";
+        if (!jiraUsername.trim()) {
+          errors.jiraUsername = "Jira username (email) is required";
+        }
+        if (!jiraProjectKey.trim()) {
+          errors.jiraProjectKey = "Jira Project Key is required";
+        }
+        const jiraTokenStored = Boolean(project?.jiraApiToken?.trim?.());
+        if (!jiraApiToken.trim() && !jiraTokenStored) {
+          errors.jiraApiToken =
+            "Jira API Token is required (stored credentials missing; add a token to save)";
+        }
+      }
     }
 
     const assignedErr = validateOptionalCommaSeparatedEmails(
@@ -215,18 +425,39 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
 
     setSaving(true);
     try {
+      const resolvedGitPath = useSharedOAuthCard
+        ? gitJiraRef.current?.getEditResolvedGitRepoPath?.(project) ?? ""
+        : gitRepoPath;
+      const resolvedJiraKey = useSharedOAuthCard
+        ? gitJiraRef.current?.getJiraProjectKey?.() ?? ""
+        : jiraProjectKey;
+      const resolvedJiraBaseUrl = useSharedOAuthCard
+        ? gitJiraRef.current?.getJiraBaseUrl?.() ?? jiraBaseUrl
+        : jiraBaseUrl;
+      const resolvedGhConn = useSharedOAuthCard
+        ? gitJiraRef.current?.getSelectedGithubConnectionId?.() ?? ""
+        : selectedGithubConnectionId;
+      const resolvedJiConn = useSharedOAuthCard
+        ? gitJiraRef.current?.getSelectedJiraConnectionId?.() ?? ""
+        : selectedJiraConnectionId;
+
       const payload = buildUpdatePayload({
         description: projectDescription,
         githubUsername,
         githubToken,
-        jiraBaseUrl,
+        jiraBaseUrl: resolvedJiraBaseUrl,
         jiraUsername,
-        jiraProjectKey,
+        jiraProjectKey: resolvedJiraKey,
         jiraApiToken,
-        gitRepoPath,
+        gitRepoPath: resolvedGitPath,
         assignedUserEmails: emailsArrayToStorageString(assignedUserEmailTags),
         stakeholderEmails: emailsArrayToStorageString(stakeholderEmailTags),
         project,
+        useOAuthGithub,
+        useOAuthJira,
+        selectedGithubConnectionId: resolvedGhConn,
+        selectedJiraConnectionId: resolvedJiConn,
+        creatorIntegrations,
       });
 
       if (Object.keys(payload).length === 0) {
@@ -348,6 +579,19 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
             </CardContent>
           </Card>
 
+          {useSharedOAuthCard ? (
+            <ProjectGitJiraOAuthCard
+              ref={gitJiraRef}
+              variant="edit"
+              projectId={project.id}
+              editProject={project}
+              integrationsPayload={creatorIntegrations}
+              integrationsLoading={loadingCreatorInt}
+              validationErrors={validationErrors}
+              syncKey={open && project?.id != null ? String(project.id) : "__closed__"}
+            />
+          ) : (
+          <>
           <Card className="border-border shadow-sm overflow-hidden">
             <CardHeader className="py-3 px-4 bg-muted/50 border-b border-border">
               <div className="flex items-center justify-between gap-4">
@@ -372,7 +616,104 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
               </div>
             </CardHeader>
             <CardContent className="pt-4 space-y-4">
-              {showGithubGuide && (
+              {useOAuthGithub && (
+                <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground space-y-2">
+                  <p>
+                    <span className="font-medium text-foreground">GitHub via OAuth.</span>{" "}
+                    Tokens stay on the server. Update the linked account under{" "}
+                    <Link
+                      to="/settings/integrations"
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      Integrations
+                    </Link>
+                    {canEditOAuthLinks ? " or reconnect below." : "."}
+                  </p>
+                  {!canEditOAuthLinks && (
+                    <p className="text-xs">
+                      Only the project creator or an admin can change OAuth links; managers can still
+                      edit the repository path if the new repo is accessible with the creator&apos;s
+                      GitHub account.
+                    </p>
+                  )}
+                  {canEditOAuthLinks && creatorIntegrations && (
+                    <div className="space-y-2 border-t border-border pt-3 mt-2">
+                      <Label className="text-xs text-foreground">GitHub account</Label>
+                      {loadingCreatorInt ? (
+                        <p className="text-xs text-muted-foreground">Loading…</p>
+                      ) : (
+                        <Select
+                          value={selectedGithubConnectionId || undefined}
+                          onValueChange={setSelectedGithubConnectionId}
+                        >
+                          <SelectTrigger className="h-9">
+                            <SelectValue placeholder="Select connection" />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-60">
+                            {(creatorIntegrations.github?.connections ?? []).map((c) => (
+                              <SelectItem key={c.id} value={String(c.id)}>
+                                {c.login ? `@${c.login}` : `Connection #${c.id}`}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                      {githubReposEdit.length > 0 && (
+                        <div className="space-y-1">
+                          <Label className="text-xs text-foreground">Pick repository (optional)</Label>
+                          <Select
+                            key={githubRepoPickSeq}
+                            onValueChange={(v) => {
+                              setGitRepoPath(v);
+                              setGithubRepoPickSeq((s) => s + 1);
+                            }}
+                          >
+                            <SelectTrigger className="h-9" disabled={reposLoadingEdit}>
+                              <SelectValue
+                                placeholder={
+                                  reposLoadingEdit ? "Loading repos…" : "Choose to fill path…"
+                                }
+                              />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-52">
+                              {githubReposEdit.map((r) => (
+                                <SelectItem key={r.gitRepoPath} value={r.gitRepoPath}>
+                                  {r.fullName}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {canEditOAuthLinks && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={oauthBusy || !selectedGithubConnectionId}
+                      onClick={async () => {
+                        setOauthBusy("gh");
+                        try {
+                          window.location.href = await getGithubOAuthAuthorizeUrl(
+                            selectedGithubConnectionId,
+                          );
+                        } catch (e) {
+                          toast.error(e.message || "Could not start GitHub OAuth");
+                          setOauthBusy(null);
+                        }
+                      }}
+                    >
+                      {oauthBusy === "gh" ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : null}
+                      Reconnect this GitHub account
+                    </Button>
+                  )}
+                </div>
+              )}
+              {showGithubGuide && !useOAuthGithub && (
                 <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-foreground space-y-3">
                   <p className="font-medium text-foreground">How to get your GitHub credentials</p>
                   <ol className="list-decimal list-inside space-y-2">
@@ -402,6 +743,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                     placeholder="octocat"
                     value={githubUsername}
                     onChange={(e) => setGithubUsername(e.target.value)}
+                    disabled={useOAuthGithub}
                     className={validationErrors.githubUsername ? "border-destructive" : ""}
                   />
                   {validationErrors.githubUsername && (
@@ -420,38 +762,50 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   {validationErrors.gitRepoPath && (
                     <p className="text-sm text-destructive">{validationErrors.gitRepoPath}</p>
                   )}
+                  {gitRepoPath.trim() &&
+                    gitRepoPath.trim() !== String(project?.gitRepoPath || "").trim() && (
+                      <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/20 p-2">
+                        Saving a <strong>new</strong> path runs a one-time migration: the server
+                        fetches <strong>all branches and tags</strong> from the old GitHub remote and
+                        pushes them to the new repo (append / update only — it does not delete
+                        existing refs on the destination). Release <strong>tags</strong> used by this
+                        project must appear on the new remote after migration.
+                      </p>
+                    )}
                 </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="edit-githubToken">GitHub Personal Access Token</Label>
-                  <div className="relative">
-                    <Input
-                      id="edit-githubToken"
-                      type={showGithubToken ? "text" : "password"}
-                      autoComplete="off"
-                      placeholder="ghp_…"
-                      value={githubToken}
-                      onChange={(e) => setGithubToken(e.target.value)}
-                      className={`pr-10 ${validationErrors.githubToken ? "border-destructive" : ""}`}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="absolute right-0.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowGithubToken((v) => !v)}
-                      aria-label={showGithubToken ? "Hide GitHub token" : "Show GitHub token"}
-                    >
-                      {showGithubToken ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
-                    </Button>
+                {!useOAuthGithub && (
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label htmlFor="edit-githubToken">GitHub Personal Access Token</Label>
+                    <div className="relative">
+                      <Input
+                        id="edit-githubToken"
+                        type={showGithubToken ? "text" : "password"}
+                        autoComplete="off"
+                        placeholder="ghp_…"
+                        value={githubToken}
+                        onChange={(e) => setGithubToken(e.target.value)}
+                        className={`pr-10 ${validationErrors.githubToken ? "border-destructive" : ""}`}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="absolute right-0.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowGithubToken((v) => !v)}
+                        aria-label={showGithubToken ? "Hide GitHub token" : "Show GitHub token"}
+                      >
+                        {showGithubToken ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                    {validationErrors.githubToken && (
+                      <p className="text-sm text-destructive">{validationErrors.githubToken}</p>
+                    )}
                   </div>
-                  {validationErrors.githubToken && (
-                    <p className="text-sm text-destructive">{validationErrors.githubToken}</p>
-                  )}
-                </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -480,7 +834,101 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
               </div>
             </CardHeader>
             <CardContent className="pt-4 space-y-4">
-              {showJiraGuide && (
+              {useOAuthJira && (
+                <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground space-y-2">
+                  <p>
+                    <span className="font-medium text-foreground">Jira via OAuth.</span>{" "}
+                    Manage the Atlassian link under{" "}
+                    <Link
+                      to="/settings/integrations"
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      Integrations
+                    </Link>
+                    {canEditOAuthLinks ? " or reconnect below." : "."}
+                  </p>
+                  {!canEditOAuthLinks && (
+                    <p className="text-xs">
+                      Only the project creator or an admin can change Jira OAuth. You can still edit
+                      the Jira <strong>project key</strong> for this workspace.
+                    </p>
+                  )}
+                  {canEditOAuthLinks && creatorIntegrations && (
+                    <div className="space-y-2 border-t border-border pt-3 mt-2">
+                      <Label className="text-xs text-foreground">Jira site</Label>
+                      {loadingCreatorInt ? (
+                        <p className="text-xs text-muted-foreground">Loading…</p>
+                      ) : (
+                        <Select
+                          value={selectedJiraConnectionId || undefined}
+                          onValueChange={setSelectedJiraConnectionId}
+                        >
+                          <SelectTrigger className="h-9">
+                            <SelectValue placeholder="Select connection" />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-60">
+                            {(creatorIntegrations.jira?.connections ?? []).map((c) => (
+                              <SelectItem key={c.id} value={String(c.id)}>
+                                {c.baseUrl || `Site #${c.id}`}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                      {jiraProjectsEdit.length > 0 && (
+                        <div className="space-y-1">
+                          <Label className="text-xs text-foreground">Pick project (optional)</Label>
+                          <Select
+                            value={
+                              jiraProjectsEdit.some((p) => p.key === jiraProjectKey)
+                                ? jiraProjectKey
+                                : undefined
+                            }
+                            onValueChange={(key) => setJiraProjectKey(key)}
+                            disabled={jiraProjectsLoadingEdit}
+                          >
+                            <SelectTrigger className="h-9">
+                              <SelectValue placeholder="Choose Jira project…" />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-52">
+                              {jiraProjectsEdit.map((p) => (
+                                <SelectItem key={p.id} value={p.key}>
+                                  {p.key} — {p.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {canEditOAuthLinks && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={oauthBusy || !selectedJiraConnectionId}
+                      onClick={async () => {
+                        setOauthBusy("ji");
+                        try {
+                          window.location.href = await getJiraOAuthAuthorizeUrl(
+                            selectedJiraConnectionId,
+                          );
+                        } catch (e) {
+                          toast.error(e.message || "Could not start Jira OAuth");
+                          setOauthBusy(null);
+                        }
+                      }}
+                    >
+                      {oauthBusy === "ji" ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : null}
+                      Reconnect this Jira site
+                    </Button>
+                  )}
+                </div>
+              )}
+              {showJiraGuide && !useOAuthJira && (
                 <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-foreground space-y-3">
                   <p className="font-medium text-foreground">How to get your Jira credentials</p>
                   <ol className="list-decimal list-inside space-y-2">
@@ -504,12 +952,13 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="edit-jiraBaseUrl">Jira Base URL</Label>
+                  <Label htmlFor="edit-jiraBaseUrl">Jira site URL</Label>
                   <Input
                     id="edit-jiraBaseUrl"
                     placeholder="https://mycompany.atlassian.net"
                     value={jiraBaseUrl}
                     onChange={(e) => setJiraBaseUrl(e.target.value)}
+                    disabled={useOAuthJira}
                     className={validationErrors.jiraBaseUrl ? "border-destructive" : ""}
                   />
                   {validationErrors.jiraBaseUrl && (
@@ -517,12 +966,13 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit-jiraUsername">Jira username (email)</Label>
+                  <Label htmlFor="edit-jiraUsername">Jira account email</Label>
                   <Input
                     id="edit-jiraUsername"
                     placeholder="you@company.com"
                     value={jiraUsername}
                     onChange={(e) => setJiraUsername(e.target.value)}
+                    disabled={useOAuthJira}
                     className={validationErrors.jiraUsername ? "border-destructive" : ""}
                   />
                   {validationErrors.jiraUsername && (
@@ -532,7 +982,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="edit-jiraProjectKey">Project key</Label>
+                <Label htmlFor="edit-jiraProjectKey">Jira project key</Label>
                 <Input
                   id="edit-jiraProjectKey"
                   placeholder="PROJ"
@@ -543,41 +993,51 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                 {validationErrors.jiraProjectKey && (
                   <p className="text-sm text-destructive">{validationErrors.jiraProjectKey}</p>
                 )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="edit-jiraApiToken">Jira API token</Label>
-                <div className="relative">
-                  <Input
-                    id="edit-jiraApiToken"
-                    type={showJiraToken ? "text" : "password"}
-                    autoComplete="off"
-                    placeholder="ATATT…"
-                    value={jiraApiToken}
-                    onChange={(e) => setJiraApiToken(e.target.value)}
-                    className={`pr-10 ${validationErrors.jiraApiToken ? "border-destructive" : ""}`}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="absolute right-0.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowJiraToken((v) => !v)}
-                    aria-label={showJiraToken ? "Hide Jira token" : "Show Jira token"}
-                  >
-                    {showJiraToken ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-                {validationErrors.jiraApiToken && (
-                  <p className="text-sm text-destructive">{validationErrors.jiraApiToken}</p>
+                {useOAuthJira && (
+                  <p className="text-xs text-muted-foreground">
+                    This is the short project code in Jira (not your OAuth site). Change it if this
+                    workspace should use a different Jira project.
+                  </p>
                 )}
               </div>
+
+              {!useOAuthJira && (
+                <div className="space-y-2">
+                  <Label htmlFor="edit-jiraApiToken">Jira API token</Label>
+                  <div className="relative">
+                    <Input
+                      id="edit-jiraApiToken"
+                      type={showJiraToken ? "text" : "password"}
+                      autoComplete="off"
+                      placeholder="ATATT…"
+                      value={jiraApiToken}
+                      onChange={(e) => setJiraApiToken(e.target.value)}
+                      className={`pr-10 ${validationErrors.jiraApiToken ? "border-destructive" : ""}`}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="absolute right-0.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowJiraToken((v) => !v)}
+                      aria-label={showJiraToken ? "Hide Jira token" : "Show Jira token"}
+                    >
+                      {showJiraToken ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                  {validationErrors.jiraApiToken && (
+                    <p className="text-sm text-destructive">{validationErrors.jiraApiToken}</p>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
+          </>
+          )}
 
           <DialogFooter className="pt-2 gap-2 border-t border-border mt-2 -mx-6 px-6 py-4 bg-muted/30">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>

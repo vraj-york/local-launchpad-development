@@ -28,6 +28,18 @@ import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils
 import { normalizeOptionalEmailListString } from "../utils/emailList.utils.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import { maskProjectSecrets } from "../utils/secretMasking.js";
+import {
+  assertGithubConnectionOwned,
+  assertJiraConnectionOwned,
+  resolveGithubCredentialsFromProject,
+  resolveJiraCredentialsFromProject,
+  jiraIntegrationConfigFromResolved,
+} from "./integrationCredential.service.js";
+import {
+  ensureFreshGithubConnection,
+  ensureFreshJiraConnection,
+  getIntegrationsStatus,
+} from "./oauthConnection.service.js";
 
 /**
  * Allocate a unique slug for Project.slug (DB unique). Tries base, then base-2, base-3, ...
@@ -303,6 +315,30 @@ async function resolveUserEmail(user) {
   return row?.email ? String(row.email).trim().toLowerCase() : null;
 }
 
+/**
+ * Integration connection list for the project creator (same shape as GET /api/integrations/status).
+ * Caller must be project creator or admin; must have project access.
+ */
+export async function getCreatorIntegrationConnectionsForEditor(projectId, user) {
+  await assertProjectAccess(projectId, user);
+  const project = await prisma.project.findUnique({
+    where: { id: Number(projectId) },
+    select: { createdById: true },
+  });
+  if (!project) {
+    throw new ApiError(404, "Project not found");
+  }
+  const allowed =
+    user.role === "admin" || Number(user.id) === Number(project.createdById);
+  if (!allowed) {
+    throw new ApiError(
+      403,
+      "Only the project creator or an admin can load creator integration connections",
+    );
+  }
+  return getIntegrationsStatus(project.createdById);
+}
+
 export async function assertProjectReadAccess(projectId, user) {
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
@@ -345,33 +381,62 @@ export async function assertProjectDeleteAccess(projectId, user) {
 
 const validateGithubConnection = async (username, token) => {
   try {
-    // We check the user profile; it's the lightest way to verify a token
-    await axios.get(`https://api.github.com/users/${username}`, {
-      headers: { Authorization: `token ${token}` },
+    await axios.get(`https://api.github.com/users/${encodeURIComponent(username)}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
     });
   } catch (error) {
     throw new ApiError(400, "Invalid GitHub credentials or username.");
   }
 };
 
-const validateJiraConnection = async (baseUrl, projectKey, email, apiToken) => {
+/**
+ * @param {string} [oauthAccessToken] - If set, uses Bearer (Atlassian 3LO)
+ * @param {string} [atlassianCloudId] - Required for 3LO: REST calls go via api.atlassian.com/ex/jira/{cloudId}
+ */
+const validateJiraConnection = async (
+  baseUrl,
+  projectKey,
+  email,
+  apiToken,
+  oauthAccessToken,
+  atlassianCloudId,
+) => {
+  const key = encodeURIComponent(projectKey);
+  let url;
+  const headers = oauthAccessToken
+    ? {
+        Authorization: `Bearer ${oauthAccessToken}`,
+        Accept: "application/json",
+      }
+    : {
+        Authorization: `Basic ${Buffer.from(`${email}:${apiToken}`).toString("base64")}`,
+        Accept: "application/json",
+        "X-Atlassian-Token": "no-check",
+      };
+console.log("oauthAccessToken", oauthAccessToken);
+  if (oauthAccessToken) {
+    const cloud = atlassianCloudId && String(atlassianCloudId).trim();
+    if (!cloud) {
+      throw new ApiError(
+        400,
+        "Jira OAuth is missing Atlassian cloud id. Reconnect Jira under Integrations, then retry.",
+      );
+    }
+    url = `https://api.atlassian.com/ex/jira/${encodeURIComponent(cloud)}/rest/api/3/project/${key}`;
+  } else {
+    url = `${baseUrl.replace(/\/$/, "")}/rest/api/2/project/${key}`;
+  }
+
   try {
-    // 1. Jira requires: base64(email:apiToken)
-    const authString = Buffer.from(`${email}:${apiToken}`).toString('base64');
-
-    const url = `${baseUrl.replace(/\/$/, "")}/rest/api/2/project/${projectKey}`;
-
-    await axios.get(url, {
-      headers: {
-        'Authorization': `Basic ${authString}`,
-        'Accept': 'application/json',
-        'X-Atlassian-Token': 'no-check' // Optional: prevents some XSRF issues
-      },
-    });
+    await axios.get(url, { headers });
   } catch (error) {
-    // Log the actual response from Jira to see exactly why it failed (401, 403, or 404)
-
-    throw new ApiError(400, `Jira Validation Failed: ${error.response?.data?.errorMessages?.[0] || "Check credentials"}`);
+    console.log("error", error);
+    const msg =
+      error.response?.data?.errorMessages?.[0] ||
+      error.response?.data?.message ||
+      error.message ||
+      "Check credentials";
+    throw new ApiError(400, `Jira Validation Failed: ${msg}`);
   }
 };
 /**
@@ -474,6 +539,17 @@ export const createProjectService = async ({ userId, body }) => {
     gitRepoPath,
   } = body;
 
+  const jiraKeyTrim = (jiraProjectKey && String(jiraProjectKey).trim()) || "";
+
+  const githubConnectionId =
+    body.githubConnectionId != null && String(body.githubConnectionId).trim() !== ""
+      ? Number(body.githubConnectionId)
+      : null;
+  const jiraConnectionId =
+    body.jiraConnectionId != null && String(body.jiraConnectionId).trim() !== ""
+      ? Number(body.jiraConnectionId)
+      : null;
+
   let assignedUserEmailsDb = null;
   let stakeholderEmailsDb = null;
   try {
@@ -519,9 +595,51 @@ export const createProjectService = async ({ userId, body }) => {
       select: { id: true },
     });
     if (!managerExists) throw new ApiError(400, "Assigned manager not found");
+
+    let effGithubUsername = (githubUsername && String(githubUsername).trim()) || "";
+    let effGithubToken = (githubToken && String(githubToken).trim()) || "";
+    if (githubConnectionId) {
+      const ghRow = await assertGithubConnectionOwned(userId, githubConnectionId);
+      const fresh = await ensureFreshGithubConnection(ghRow);
+      effGithubUsername = fresh.githubLogin || effGithubUsername;
+      effGithubToken = fresh.accessToken;
+    }
+
+    let effJiraBase = (jiraBaseUrl && String(jiraBaseUrl).trim()) || "";
+    let effJiraUser = (jiraUsername && String(jiraUsername).trim()) || "";
+    let effJiraToken = (jiraApiToken && String(jiraApiToken).trim()) || "";
+    let jiraOAuthAccess = null;
+    let jiraAtlassianCloudId = null;
+    if (jiraConnectionId) {
+      const jRow = await assertJiraConnectionOwned(userId, jiraConnectionId);
+      const fresh = await ensureFreshJiraConnection(jRow);
+      effJiraBase = fresh.jiraBaseUrl || effJiraBase;
+      effJiraUser = fresh.atlassianAccountEmail || effJiraUser;
+      effJiraToken = "";
+      jiraOAuthAccess = fresh.accessToken;
+      jiraAtlassianCloudId = fresh.atlassianCloudId || null;
+    }
+
+    if (!effJiraBase?.trim() || !jiraKeyTrim) {
+      throw new ApiError(400, "Jira base URL and project key are required");
+    }
+    if (!jiraOAuthAccess && (!effJiraUser || !effJiraToken)) {
+      throw new ApiError(400, "Jira account email and API token are required unless using Jira OAuth");
+    }
+    if (!effGithubUsername || !effGithubToken) {
+      throw new ApiError(400, "GitHub username and access are required (connect GitHub or provide a token)");
+    }
+
     await Promise.all([
-      validateJiraConnection(jiraBaseUrl, jiraProjectKey, jiraUsername, jiraApiToken),
-      validateGithubConnection(githubUsername, githubToken)
+      validateJiraConnection(
+        effJiraBase,
+        jiraKeyTrim,
+        effJiraUser,
+        effJiraToken,
+        jiraOAuthAccess,
+        jiraAtlassianCloudId,
+      ),
+      validateGithubConnection(effGithubUsername, effGithubToken),
     ]);
     // 2. Paths: projects and nginx-configs live under backend (backend/projects, backend/nginx-configs)
     const backendRoot = getBackendRoot();
@@ -553,8 +671,8 @@ export const createProjectService = async ({ userId, body }) => {
 
     // 4a. GitHub repo (create once at project create; upload release skips create if repo exists)
     const githubCreds = {
-      githubUsername: githubUsername?.trim(),
-      githubToken: githubToken?.trim(),
+      githubUsername: effGithubUsername,
+      githubToken: effGithubToken,
     };
     let gitRepoUrl = null;
     let persistedGitRepoPath = null;
@@ -644,17 +762,31 @@ export const createProjectService = async ({ userId, body }) => {
     const project = await prisma.$transaction(async (tx) => {
       return await tx.project.create({
         data: {
-          ...body,
           name: nameTrimmed,
+          description:
+            body.description != null && typeof body.description === "string"
+              ? body.description.trim() || null
+              : null,
           slug,
           assignedManagerId: Number(assignedManagerId),
           createdById: userId,
+          githubUsername: effGithubUsername,
+          githubToken: githubConnectionId ? null : effGithubToken || null,
+          githubConnectionId: githubConnectionId || null,
+          jiraBaseUrl: effJiraBase || null,
+          jiraProjectKey: jiraKeyTrim,
+          jiraUsername: effJiraUser || null,
+          jiraApiToken: jiraConnectionId ? null : effJiraToken || null,
+          jiraConnectionId: jiraConnectionId || null,
+          jiraIssueType:
+            body.jiraIssueType != null && String(body.jiraIssueType).trim()
+              ? String(body.jiraIssueType).trim()
+              : null,
           port,
           projectPath: relativeProjectPath,
           projectId: hubProjectId,
           assignedUserEmails: assignedUserEmailsDb,
           stakeholderEmails: stakeholderEmailsDb,
-          // Remote clone URL when GitHub repo was created; else local .git path for legacy
           gitRepoPath:
             persistedGitRepoPath || path.join(relativeProjectPath, ".git"),
           nginxConfigPath: path.join('nginx-configs', configFileName),
@@ -736,9 +868,8 @@ export const deleteProjectService = async (projectId, user) => {
     ]);
 
     /* ----------------------------------------
-     * 3. DATABASE: remove ProjectAccess first (no cascade), then project (cascades releases, roadmaps, versions)
+     * 3. DATABASE: project delete cascades releases, roadmaps, versions
      * -------------------------------------- */
-    await prisma.projectAccess.deleteMany({ where: { projectId: id } });
     await prisma.project.delete({ where: { id } });
 
     return { message: "Project deleted successfully", projectName };
@@ -971,10 +1102,21 @@ export async function deployVersionArtifactsToProjectFolder({
       port: true,
       githubToken: true,
       gitRepoPath: true,
+      githubConnectionId: true,
+      createdById: true,
+      githubUsername: true,
     },
   });
   if (!project?.projectPath?.trim()) {
     throw new ApiError(400, "Project has no projectPath");
+  }
+
+  let githubTokenResolved = "";
+  try {
+    const gh = await resolveGithubCredentialsFromProject(project);
+    githubTokenResolved = gh.githubToken?.trim() || "";
+  } catch {
+    githubTokenResolved = "";
   }
 
   const backendRoot = getBackendRoot();
@@ -1004,12 +1146,12 @@ export async function deployVersionArtifactsToProjectFolder({
       await fs.ensureDir(worktreeDir);
       runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
       deleteLocalGitTag(gitDir, tag);
-      const fetchTagIntoLocalRepo = (gDir, t, proj) => {
-        if (proj.gitRepoPath?.trim() && proj.githubToken?.trim()) {
+      const fetchTagIntoLocalRepo = (gDir, t, proj, tokenStr) => {
+        if (proj.gitRepoPath?.trim() && tokenStr?.trim()) {
           const parsed = parseGitRepoPath(proj.gitRepoPath.trim());
           if (parsed) {
             const { owner, repo } = parsed;
-            const token = proj.githubToken.trim();
+            const token = tokenStr.trim();
             const fetchUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
             try {
               execFileSync("git", ["--git-dir", gDir, "fetch", fetchUrl, `refs/tags/${t}:refs/tags/${t}`], {
@@ -1034,7 +1176,7 @@ export async function deployVersionArtifactsToProjectFolder({
         }
         return false;
       };
-      if (!fetchTagIntoLocalRepo(gitDir, tag, project)) {
+      if (!fetchTagIntoLocalRepo(gitDir, tag, project, githubTokenResolved)) {
         try {
           runCommand(
             `git --git-dir="${gitDir}" fetch origin "refs/tags/${tag}:refs/tags/${tag}"`,
@@ -1063,13 +1205,13 @@ export async function deployVersionArtifactsToProjectFolder({
       );
       const sourceRoot = findProjectRoot(worktreeDir);
       buildOutputPath = await runBuildSequence(sourceRoot);
-    } else if (project.githubToken?.trim() && project.gitRepoPath?.trim()) {
+    } else if (githubTokenResolved?.trim() && project.gitRepoPath?.trim()) {
       const parsed = parseGitRepoPath(project.gitRepoPath);
       if (!parsed) {
         throw new ApiError(400, "Invalid gitRepoPath; cannot clone for deploy");
       }
       const { owner, repo } = parsed;
-      const token = project.githubToken.trim();
+      const token = githubTokenResolved.trim();
       const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
       await fs.ensureDir(worktreeDir);
       try {
@@ -1304,8 +1446,10 @@ const PROJECT_UPDATE_KEYS = [
   "jiraBaseUrl",
   "jiraProjectKey",
   "jiraApiToken",
+  "jiraConnectionId",
   "githubUsername",
   "githubToken",
+  "githubConnectionId",
   "gitRepoPath",
   "assignedUserEmails",
   "stakeholderEmails",
@@ -1365,6 +1509,18 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
         data.gitRepoPath = normalized;
         continue;
       }
+      if (key === "githubConnectionId" || key === "jiraConnectionId") {
+        if (raw === null || raw === "") {
+          data[key] = null;
+        } else {
+          const n = Number(raw);
+          if (!Number.isInteger(n) || n < 1) {
+            throw new ApiError(400, `${key} must be a positive integer or null`);
+          }
+          data[key] = n;
+        }
+        continue;
+      }
       if (raw === null || raw === "") {
         data[key] = null;
       } else if (typeof raw === "string") {
@@ -1380,21 +1536,69 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     throw new ApiError(400, "No updatable fields provided");
   }
 
-  const jEmail =
-    data.jiraUsername !== undefined ? data.jiraUsername : existingProject.jiraUsername;
-  const jBase = data.jiraBaseUrl !== undefined ? data.jiraBaseUrl : existingProject.jiraBaseUrl;
-  const jKey = data.jiraProjectKey !== undefined ? data.jiraProjectKey : existingProject.jiraProjectKey;
-  const jToken = data.jiraApiToken !== undefined ? data.jiraApiToken : existingProject.jiraApiToken;
-
-  if (jEmail && jBase && jKey && jToken) {
-    await validateJiraConnection(jBase, jKey, jEmail, jToken);
+  if (data.githubConnectionId !== undefined && data.githubConnectionId != null) {
+    const row = await prisma.userOAuthConnection.findFirst({
+      where: { id: data.githubConnectionId, provider: "github" },
+    });
+    if (!row) throw new ApiError(400, "Invalid GitHub connection");
+    if (row.userId !== existingProject.createdById) {
+      throw new ApiError(
+        400,
+        "GitHub connection must belong to the user who created this project.",
+      );
+    }
+  }
+  if (data.jiraConnectionId !== undefined && data.jiraConnectionId != null) {
+    const row = await prisma.userOAuthConnection.findFirst({
+      where: { id: data.jiraConnectionId, provider: "jira_atlassian" },
+    });
+    if (!row) throw new ApiError(400, "Invalid Jira connection");
+    if (row.userId !== existingProject.createdById) {
+      throw new ApiError(
+        400,
+        "Jira connection must belong to the user who created this project.",
+      );
+    }
   }
 
-  const ghUser =
-    data.githubUsername !== undefined ? data.githubUsername : existingProject.githubUsername;
-  const ghTok = data.githubToken !== undefined ? data.githubToken : existingProject.githubToken;
-  if (ghUser && ghTok) {
-    await validateGithubConnection(ghUser, ghTok);
+  const merged = { ...existingProject, ...data };
+
+  const hasJiraSetup =
+    merged.jiraBaseUrl &&
+    merged.jiraProjectKey &&
+    (merged.jiraConnectionId || (merged.jiraUsername && merged.jiraApiToken));
+  if (hasJiraSetup) {
+    try {
+      const jc = await resolveJiraCredentialsFromProject(merged);
+      if (jc.auth === "bearer") {
+        await validateJiraConnection(
+          merged.jiraBaseUrl,
+          merged.jiraProjectKey,
+          null,
+          null,
+          jc.accessToken,
+          jc.atlassianCloudId,
+        );
+      } else if (jc.email && jc.apiToken) {
+        await validateJiraConnection(
+          merged.jiraBaseUrl,
+          merged.jiraProjectKey,
+          jc.email,
+          jc.apiToken,
+          null,
+          null,
+        );
+      }
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+    }
+  }
+
+  const hasGithubSetup =
+    merged.githubConnectionId || (merged.githubUsername && merged.githubToken);
+  if (hasGithubSetup) {
+    const g = await resolveGithubCredentialsFromProject(merged);
+    await validateGithubConnection(g.githubUsername, g.githubToken);
   }
 
   const nextGitRepoPath =
@@ -1405,10 +1609,19 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     throw new ApiError(400, "gitRepoPath must be a valid GitHub repository path");
   }
 
-  const effectiveGitToken =
-    data.githubToken !== undefined ? data.githubToken : existingProject.githubToken;
-  if (data.gitRepoPath !== undefined && !effectiveGitToken) {
-    throw new ApiError(400, "GitHub token is required to validate and migrate repository data");
+  let effectiveGitToken = null;
+  if (data.gitRepoPath !== undefined && nextNormalizedGitRepoPath) {
+    try {
+      effectiveGitToken = (await resolveGithubCredentialsFromProject(merged)).githubToken;
+    } catch (e) {
+      throw new ApiError(
+        400,
+        e?.message || "GitHub credentials are required to validate and migrate repository data",
+      );
+    }
+    if (!effectiveGitToken?.trim()) {
+      throw new ApiError(400, "GitHub token is required to validate and migrate repository data");
+    }
   }
   if (data.gitRepoPath !== undefined && nextNormalizedGitRepoPath) {
     const parsedNextRepo = parseGitRepoPath(nextNormalizedGitRepoPath);
@@ -1479,36 +1692,32 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
   return maskProjectSecrets(updatedProject);
 };
 export const getJiraTicketsService = async (projectId, user) => {
-  // 1️⃣ Access check
-  const project = await assertProjectReadAccess(projectId, user);
+  await assertProjectReadAccess(projectId, user);
 
-  // 2️⃣ Get full project details including Jira config
   const projectDetails = await prisma.project.findUnique({
     where: { id: projectId },
     select: {
       jiraBaseUrl: true,
       jiraProjectKey: true,
       jiraApiToken: true,
-      jiraUsername: true, // This is expected to be the email/username
+      jiraUsername: true,
+      jiraConnectionId: true,
+      createdById: true,
     },
   });
 
-  if (
-    !projectDetails.jiraBaseUrl ||
-    !projectDetails.jiraProjectKey ||
-    !projectDetails.jiraApiToken ||
-    !projectDetails.jiraUsername
-  ) {
+  const hasJira =
+    projectDetails?.jiraBaseUrl &&
+    projectDetails?.jiraProjectKey &&
+    (projectDetails.jiraConnectionId ||
+      (projectDetails.jiraUsername && projectDetails.jiraApiToken));
+  if (!hasJira) {
     throw new ApiError(400, "Jira configuration missing for this project");
   }
 
-  // 3️⃣ Fetch tickets
-  const result = await fetchProjectJiraTickets({
-    baseUrl: projectDetails.jiraBaseUrl,
-    projectKey: projectDetails.jiraProjectKey,
-    apiToken: projectDetails.jiraApiToken,
-    email: projectDetails.jiraUsername,
-  });
+  const jc = await resolveJiraCredentialsFromProject(projectDetails);
+  const ticketCfg = jiraIntegrationConfigFromResolved(jc, projectDetails);
+  const result = await fetchProjectJiraTickets(ticketCfg);
 
   if (!result.success) {
     throw new ApiError(502, `Failed to fetch Jira tickets: ${result.error}`);
@@ -1599,13 +1808,30 @@ export const switchProjectVersion = async (
   return withPreviewBuildLock(projectId, async () => {
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
-    select: { id: true, name: true, projectPath: true, port: true, gitRepoPath: true, githubToken: true },
+    select: {
+      id: true,
+      name: true,
+      projectPath: true,
+      port: true,
+      gitRepoPath: true,
+      githubToken: true,
+      githubConnectionId: true,
+      createdById: true,
+      githubUsername: true,
+    },
   });
   if (!project) {
     throw new ApiError(404, "Project not found");
   }
   if (!project.port) {
     throw new ApiError(400, "Project has no port; cannot serve preview.");
+  }
+
+  let ghTokenPreview = "";
+  try {
+    ghTokenPreview = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+  } catch {
+    ghTokenPreview = "";
   }
 
   let tag;
@@ -1687,11 +1913,11 @@ export const switchProjectVersion = async (
     deleteLocalGitTag(gitDir, tag);
     // Fetch tag: prefer project's repo (e.g. projects/Launchpad → binalc-web/launchpad) when set
     const fetchFromProjectRepo = () => {
-      if (!project.gitRepoPath?.trim() || !project.githubToken?.trim()) return false;
+      if (!project.gitRepoPath?.trim() || !ghTokenPreview?.trim()) return false;
       const parsed = parseGitRepoPath(project.gitRepoPath.trim());
       if (!parsed) return false;
       const { owner, repo } = parsed;
-      const token = project.githubToken.trim();
+      const token = ghTokenPreview.trim();
       const fetchUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
       const gitArgs = (refspec) => ["--git-dir", gitDir, "fetch", fetchUrl, refspec];
       try {
@@ -1815,11 +2041,25 @@ export async function buildProjectPreviewFromGitRef({ projectId, gitRef, label =
 
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
-    select: { id: true, port: true, gitRepoPath: true, githubToken: true },
+    select: {
+      id: true,
+      port: true,
+      gitRepoPath: true,
+      githubToken: true,
+      githubConnectionId: true,
+      createdById: true,
+      githubUsername: true,
+    },
   });
   if (!project) throw new ApiError(404, "Project not found");
   if (!project.port) throw new ApiError(400, "Project has no port; cannot serve preview.");
-  if (!project.githubToken?.trim() || !project.gitRepoPath?.trim()) {
+  let ghTokRef = "";
+  try {
+    ghTokRef = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+  } catch {
+    ghTokRef = "";
+  }
+  if (!ghTokRef?.trim() || !project.gitRepoPath?.trim()) {
     throw new ApiError(400, "Project is missing GitHub credentials for preview.");
   }
 
@@ -1865,8 +2105,7 @@ export async function buildProjectPreviewFromGitRef({ projectId, gitRef, label =
     await fs.remove(previewDir).catch(() => { });
     await fs.ensureDir(previewDir);
 
-    const token = project.githubToken.trim();
-    const cloneUrl = `https://x-access-token:${token}@github.com/${parsed.owner}/${parsed.repo}.git`;
+    const cloneUrl = `https://x-access-token:${ghTokRef.trim()}@github.com/${parsed.owner}/${parsed.repo}.git`;
     runCommand(`git clone --no-checkout "${cloneUrl}" "${previewRepo}"`, backendRoot);
     try {
       runCommand(`git -C "${previewRepo}" fetch --depth 1 origin "${ref}"`, backendRoot);

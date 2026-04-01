@@ -8,6 +8,10 @@ import {
   createJiraTicketWithConfig,
   addAttachmentToJiraIssue,
 } from "../utils/jiraIntegration.js";
+import {
+  resolveJiraCredentialsFromProject,
+  jiraIntegrationConfigFromResolved,
+} from "../services/integrationCredential.service.js";
 
 const prisma = new PrismaClient();
 
@@ -112,6 +116,8 @@ router.post(
               jiraProjectKey: true,
               jiraApiToken: true,
               jiraUsername: true,
+              jiraConnectionId: true,
+              createdById: true,
             },
           });
           if (!project) {
@@ -124,8 +130,8 @@ router.post(
             const hasJiraConfig =
               project?.jiraBaseUrl &&
               project?.jiraProjectKey &&
-              project?.jiraApiToken &&
-              project?.jiraUsername;
+              (project.jiraConnectionId ||
+                (project.jiraApiToken && project.jiraUsername));
             if (!hasJiraConfig) {
               console.log(
                 "[feedback] Project",
@@ -133,6 +139,20 @@ router.post(
                 "has no Jira config — skipping Jira ticket",
               );
             } else {
+              let jiraCfg;
+              try {
+                const jc = await resolveJiraCredentialsFromProject(project);
+                jiraCfg = jiraIntegrationConfigFromResolved(jc, {
+                  jiraProjectKey: project.jiraProjectKey,
+                  jiraIssueType: jiraIssueType,
+                });
+              } catch (resolveErr) {
+                console.warn("[feedback] Jira credentials resolve failed:", resolveErr.message);
+                jiraError = resolveErr.message || "Jira credentials unavailable";
+              }
+              if (!jiraCfg) {
+                // skipped
+              } else {
               const oneLine = (description || "Feedback from widget")
                 .replace(/[\r\n\u2028\u2029]+/g, " ")
                 .replace(/\s+/g, " ")
@@ -148,13 +168,7 @@ router.post(
                   description,
                   metadata,
                 },
-                {
-                  baseUrl: project.jiraBaseUrl,
-                  projectKey: project.jiraProjectKey,
-                  apiToken: project.jiraApiToken,
-                  email: project.jiraUsername,
-                  issueType: jiraIssueType,
-                },
+                jiraCfg,
               );
               if (ticketResult.success && ticketResult.ticketKey) {
                 jiraTicket = ticketResult.ticketKey;
@@ -170,11 +184,7 @@ router.post(
                 const attachResult = await addAttachmentToJiraIssue(
                   ticketResult.ticketKey,
                   tempFilePath,
-                  {
-                    baseUrl: project.jiraBaseUrl,
-                    apiToken: project.jiraApiToken,
-                    email: project.jiraUsername,
-                  },
+                  jiraCfg,
                 );
                 if (attachResult.success) {
                   console.log(
@@ -194,6 +204,7 @@ router.post(
                 );
                 jiraError =
                   ticketResult.error || "Jira ticket creation failed.";
+              }
               }
             }
           }

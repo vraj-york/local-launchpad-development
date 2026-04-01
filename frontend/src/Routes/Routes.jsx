@@ -12,6 +12,8 @@ import ProjectDetails from "@/pages/ProjectDetails";
 import Dashboard from "@/pages/Dashboard";
 import Projects from "@/pages/Projects";
 import CreateProject from "@/pages/CreateProject";
+import IntegrationsCallbackPage from "@/pages/IntegrationsCallbackPage";
+import IntegrationsSettingsPage from "@/pages/IntegrationsSettingsPage";
 import { ClientLink } from "@/pages/ClientLink";
 
 export const Routes = () => {
@@ -24,6 +26,11 @@ export const Routes = () => {
       element: <AuthCallbackPage />,
       publicOnly: false,
     },
+    {
+      path: "/integrations/callback",
+      element: <IntegrationsCallbackPage />,
+      publicOnly: false,
+    },
   ];
 
   const privateRoutes = [
@@ -31,6 +38,7 @@ export const Routes = () => {
     { path: "/projects", element: <Projects /> },
     { path: "/projects/new", element: <CreateProject /> },
     { path: "/projects/details/:projectId", element: <ProjectDetails /> },
+    { path: "/settings/integrations", element: <IntegrationsSettingsPage /> },
   ];
 
   if (loading) {

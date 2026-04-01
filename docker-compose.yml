@@ -6,19 +6,27 @@
 # - Supabase / external only: docker compose up -d  (db service is NOT started)
 # - Local DB in Docker: DATABASE_URL=...@db:5432/... then: docker compose --profile with-db up -d
 #
-# Auth / APIs (set in repo root .env — also listed under backend.environment for visibility):
+# Auth / APIs (set in repo root .env — see backend env_file + environment):
 # - Cognito: AWS_COGNITO_USER_POOL_ID, AWS_COGNITO_APP_CLIENT_ID, optional AUTH_ALLOWED_DOMAIN
+# - GitHub/Jira OAuth: GITHUB_OAUTH_*, ATLASSIAN_OAUTH_*, OAUTH_TOKEN_ENCRYPTION_KEY, optional OAUTH_STATE_SECRET
 # - Hub: VITE_HUB_API_URL, optional VITE_HUB_OAUTH_REDIRECT_URL, optional VITE_HUB_PROFILE_PIC_API_KEY (frontend build args)
 # - CORS: FRONTEND_URL should match where users open the UI (e.g. http://localhost:3000)
+#
+# env_file: root .env is loaded into services; optional .env.local (gitignored) overrides when present
+# (Compose 2.24+ path/required syntax). If your Compose is older, remove the .env.local entry or merge into .env.
 
 services:
   db:
+    profiles:
+      - with-db
     image: postgres:16-alpine
     restart: unless-stopped
     ports:
       - "5432:5432"
     env_file:
       - .env
+      - path: .env.local
+        required: false
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -48,6 +56,8 @@ services:
       - "host.docker.internal:host-gateway"
     env_file:
       - .env
+      - path: .env.local
+        required: false
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
@@ -73,6 +83,22 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      # --- GitHub & Jira OAuth (stored tokens encrypted; see .env.example) ---
+      OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:-}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:-}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-}
+      GITHUB_OAUTH_SCOPES: ${GITHUB_OAUTH_SCOPES:-}
+      GITHUB_OAUTH_ALLOW_REFRESH: ${GITHUB_OAUTH_ALLOW_REFRESH:-}
+      ATLASSIAN_OAUTH_CLIENT_ID: ${ATLASSIAN_OAUTH_CLIENT_ID:-}
+      ATLASSIAN_OAUTH_CLIENT_SECRET: ${ATLASSIAN_OAUTH_CLIENT_SECRET:-}
+      ATLASSIAN_OAUTH_REDIRECT_URI: ${ATLASSIAN_OAUTH_REDIRECT_URI:-}
+      ATLASSIAN_OAUTH_SCOPES: ${ATLASSIAN_OAUTH_SCOPES:-}
+      # --- Optional seed / defaults (backend entrypoint or app) ---
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      GITHUB_DEFAULT_COLLABORATOR: ${GITHUB_DEFAULT_COLLABORATOR:-}
     volumes:
       - ./backend/projects:/app/projects
       - backend_nginx_configs:/app/nginx-configs
@@ -81,8 +107,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
+        required: false
 
   frontend:
+    # VITE_* build args use variables from the repo root .env (Compose loads it for ${...} substitution).
+    # Do not use env_file here — that would inject DB/JWT secrets into the static frontend container.
     build:
       context: .
       dockerfile: frontend/Dockerfile
