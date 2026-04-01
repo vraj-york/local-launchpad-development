@@ -19,10 +19,11 @@ import {
   listGithubReposPage,
   listJiraProjectsForConnection,
 } from "../services/oauthConnection.service.js";
+import { getPublicFrontendBaseUrl } from "../utils/publicFrontendUrl.js";
 
 const router = express.Router();
 
-const FRONTEND = () => process.env.FRONTEND_URL || "http://localhost:5173";
+const FRONTEND = () => getPublicFrontendBaseUrl();
 
 function redirectWithError(res, provider, message) {
   const q = new URLSearchParams({ provider, error: message.slice(0, 200) });
