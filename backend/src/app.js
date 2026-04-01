@@ -13,6 +13,7 @@ import feedbackRoutes from "./routes/feedback.routes.js";
 import figmaRoutes, { figmaPendingByWriteKey } from "./routes/figma.routes.js";
 import cursorRoutes from "./routes/cursor.routes.js";
 import chatRoutes from "./routes/chat.routes.js";
+import integrationsRoutes from "./routes/oauth.routes.js";
 
 dotenv.config();
 
@@ -65,7 +66,7 @@ app.use("/static", express.static(path.join(process.cwd(), "public")));
 app.use("/api/feedback", feedbackRoutes);
 
 app.use("/api/auth", authRoutes);
-// app.use("/api/projects", projectRoutes);
+app.use("/api/integrations", integrationsRoutes);
 
 app.use("/api/figma", figmaRoutes);
 app.use("/api/cursor", cursorRoutes);

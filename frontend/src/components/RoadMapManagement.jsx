@@ -20,7 +20,6 @@ import {
 } from "./ui/select";
 import { format } from "date-fns";
 import { Badge } from "./ui/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 function RoadMapManagement({
   value,
@@ -733,58 +732,17 @@ function RoadMapManagement({
                                         <span className="text-xs font-medium text-slate-500">
                                           Item {idx + 1}
                                         </span>
-
-                                        <div className="flex flex-wrap gap-1.5 items-center max-w-full">
-                                          {Array.isArray(
-                                            item?.projectVersions,
-                                          ) &&
-                                            item.projectVersions.length > 0 &&
-                                            item.projectVersions.map((pv) => (
-                                              <Badge
-                                                key={pv.id ?? pv.version}
-                                                className="rounded-sm shrink-0"
-                                                size="sm"
-                                              >
-                                                {pv.release?.name ?? "—"} ( v
-                                                {pv.version})
-                                              </Badge>
-                                            ))}
-                                        </div>
                                       </div>
 
-                                      {editForm.items.length > 1 &&
-                                        (Array.isArray(item?.projectVersions) &&
-                                        item.projectVersions.length > 0 ? (
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <span className="inline-block w-fit cursor-not-allowed">
-                                                <Button
-                                                  className="text-red-600 hover:text-red-600 transition-colors"
-                                                  variant="ghost"
-                                                  disabled
-                                                >
-                                                  <X className="w-4 h-4" />
-                                                </Button>
-                                              </span>
-                                            </TooltipTrigger>
-
-                                            <TooltipContent>
-                                              <p>
-                                                You cannot remove this item
-                                                because it is already linked to
-                                                a project version
-                                              </p>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        ) : (
-                                          <Button
-                                            onClick={() => removeItem(item.id)}
-                                            className="text-red-600 hover:text-red-600 transition-colors"
-                                            variant="ghost"
-                                          >
-                                            <X className="w-4 h-4" />
-                                          </Button>
-                                        ))}
+                                      {editForm.items.length > 1 && (
+                                        <Button
+                                          onClick={() => removeItem(item.id)}
+                                          className="text-red-600 hover:text-red-600 transition-colors"
+                                          variant="ghost"
+                                        >
+                                          <X className="w-4 h-4" />
+                                        </Button>
+                                      )}
                                     </div>
 
                                     <div className="space-y-2.5">
@@ -1189,25 +1147,6 @@ function RoadMapManagement({
                                             </p>
                                           )}
                                         </div>
-
-                                        {/* connected project versions - between details and status, max-width + wrap */}
-                                        {Array.isArray(item?.projectVersions) &&
-                                          item.projectVersions.length > 0 && (
-                                            <div className="flex flex-wrap gap-1.5 items-center max-w-full mt-2">
-                                              {item.projectVersions.map(
-                                                (pv) => (
-                                                  <Badge
-                                                    key={pv.id ?? pv.version}
-                                                    className="rounded-sm shrink-0"
-                                                    size="sm"
-                                                  >
-                                                    {pv.release?.name ?? "—"} (
-                                                    {pv.version})
-                                                  </Badge>
-                                                ),
-                                              )}
-                                            </div>
-                                          )}
                                       </div>
                                       <div className="flex flex-col items-end gap-2">
                                         <span

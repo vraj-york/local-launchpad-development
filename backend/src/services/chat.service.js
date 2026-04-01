@@ -20,6 +20,7 @@ import {
   buildProjectPreviewFromGitRef,
   deployVersionArtifactsToProjectFolder,
 } from "./project.service.js";
+import { resolveGithubCredentialsFromProject } from "./integrationCredential.service.js";
 
 const prisma = new PrismaClient();
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
@@ -40,6 +41,8 @@ export async function resolveProjectBySlug(slug) {
       gitRepoPath: true,
       githubUsername: true,
       stakeholderEmails: true,
+      githubConnectionId: true,
+      createdById: true,
     },
   });
   if (!project) {
@@ -186,10 +189,16 @@ async function resolveClientChatRepository(project) {
   if (!parsed) {
     throw new ApiError(400, "Invalid GitHub repository URL format.");
   }
-  if (!project.githubToken?.trim()) {
+  let token = "";
+  try {
+    token = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+  } catch {
+    token = "";
+  }
+  if (!token) {
     throw new ApiError(400, "GitHub token is not configured for this project.");
   }
-  return { owner: parsed.owner, repo: parsed.repo, token: project.githubToken.trim() };
+  return { owner: parsed.owner, repo: parsed.repo, token };
 }
 
 /**
@@ -644,7 +653,13 @@ export async function clientLinkExecutionSummary({ slug, releaseId }) {
     };
   }
 
-  if (!project.githubToken?.trim() || !project.gitRepoPath?.trim()) {
+  let ghTok = "";
+  try {
+    ghTok = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+  } catch {
+    ghTok = "";
+  }
+  if (!ghTok?.trim() || !project.gitRepoPath?.trim()) {
     return {
       ok: true,
       ready: true,
@@ -675,7 +690,7 @@ export async function clientLinkExecutionSummary({ slug, releaseId }) {
     parsedRepo.repo,
     previousVersion.gitTag,
     currentVersion.gitTag,
-    project.githubToken.trim(),
+    ghTok.trim(),
   );
   if (!compare.ok) {
     return {

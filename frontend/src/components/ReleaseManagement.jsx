@@ -1163,21 +1163,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                                           ).toLocaleDateString()}
                                         </span>
                                       </div>
-                                      {/* <div className="flex items-start gap-2 w-full">
-                                        <span className="text-xs text-slate-400 whitespace-nowrap mt-1">
-                                          RoadMap Items:
-                                        </span>
-                                        <div className="flex flex-wrap gap-2">
-                                          {version.roadmapItems.map((item) => (
-                                            <Badge
-                                              key={item.id}
-                                              className="rounded-md"
-                                            >
-                                              {item.title}
-                                            </Badge>
-                                          ))}
-                                        </div>
-                                      </div> */}
                                     </div>
                                     <div className="flex flex-col gap-3">
                                       {version.isActive && (

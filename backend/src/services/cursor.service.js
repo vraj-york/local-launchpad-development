@@ -21,6 +21,7 @@ import {
   findProjectRoot,
 } from "./release.service.js";
 import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
+import { resolveGithubCredentialsFromProject } from "./integrationCredential.service.js";
 
 const CURSOR_BASE_URL = "https://api.cursor.com";
 const prisma = new PrismaClient();
@@ -241,6 +242,8 @@ export async function createAgentForProjectRelease({
       gitRepoPath: true,
       githubUsername: true,
       githubToken: true,
+      githubConnectionId: true,
+      createdById: true,
     },
   });
   if (!project) {
@@ -248,9 +251,15 @@ export async function createAgentForProjectRelease({
     err.code = "PROJECT_NOT_FOUND";
     throw err;
   }
-  if (!project.githubToken?.trim()) {
+  let ghAccessToken = "";
+  try {
+    ghAccessToken = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+  } catch {
+    ghAccessToken = "";
+  }
+  if (!ghAccessToken) {
     const err = new Error(
-      "GitHub is not configured for this project; set githubToken (and repo) before using Cursor.",
+      "GitHub is not configured for this project; connect GitHub (OAuth) or set githubToken (and repo) before using Cursor.",
     );
     err.code = "GITHUB_NOT_CONFIGURED";
     throw err;
@@ -293,11 +302,10 @@ export async function createAgentForProjectRelease({
       err.code = "REPO_UNRESOLVED";
       throw err;
     }
-    const token = project.githubToken.trim();
     const meta = await getRepositoryMetadata(
       parsedRepo.owner,
       parsedRepo.repo,
-      token,
+      ghAccessToken,
     );
     if (!meta.ok) {
       const hint =
@@ -400,20 +408,29 @@ async function executeLaunchpadHeadDeploy(conversion, headSha, headBranchName, o
   const project = await prisma.project.findUnique({
     where: { id: conversion.projectId },
     select: {
+      id: true,
       githubToken: true,
       gitRepoPath: true,
       projectPath: true,
       port: true,
+      githubConnectionId: true,
+      createdById: true,
+      githubUsername: true,
     },
   });
-  if (!project?.githubToken?.trim() || !project?.gitRepoPath?.trim()) {
+  let token = "";
+  try {
+    token = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+  } catch {
+    token = "";
+  }
+  if (!token?.trim() || !project?.gitRepoPath?.trim()) {
     throw new Error("Project has no GitHub token or Git repo path configured");
   }
 
   const parsed = parseGitRepoPath(project.gitRepoPath);
   if (!parsed) throw new Error("Invalid Git repo path format");
   const { owner, repo } = parsed;
-  const token = project.githubToken.trim();
 
   if (!skipShaDedupe) {
     const lpNow = await getBranchSha(owner, repo, "launchpad", token);
@@ -640,18 +657,27 @@ export async function performMergeToLaunchpad(agentId, agentData, options = {}) 
   const project = await prisma.project.findUnique({
     where: { id: conversion.projectId },
     select: {
+      id: true,
       githubToken: true,
       gitRepoPath: true,
+      githubConnectionId: true,
+      createdById: true,
+      githubUsername: true,
     },
   });
-  if (!project?.githubToken?.trim() || !project?.gitRepoPath?.trim()) {
+  let token = "";
+  try {
+    token = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+  } catch {
+    token = "";
+  }
+  if (!token?.trim() || !project?.gitRepoPath?.trim()) {
     throw new Error("Project has no GitHub token or Git repo path configured");
   }
 
   const parsed = parseGitRepoPath(project.gitRepoPath);
   if (!parsed) throw new Error("Invalid Git repo path format");
   const { owner, repo } = parsed;
-  const token = project.githubToken.trim();
 
   const headBranch = agentData.target?.branchName;
   if (!headBranch || typeof headBranch !== "string") {
