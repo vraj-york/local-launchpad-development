@@ -320,8 +320,14 @@ export async function createAgentForProjectRelease({
       finalSource.ref != null && String(finalSource.ref).trim() !== ""
         ? String(finalSource.ref).trim()
         : null;
-    const refBranch =
-      CURSOR_AGENT_SOURCE_REF_ENV || clientRef || meta.defaultBranch;
+    // Explicit ref from caller wins over CURSOR_AGENT_SOURCE_REF so client-link can force `launchpad`
+    // after prior merges (otherwise env e.g. main overrides and agents miss merged work).
+    const envRef =
+      typeof CURSOR_AGENT_SOURCE_REF_ENV === "string" &&
+      CURSOR_AGENT_SOURCE_REF_ENV.trim()
+        ? CURSOR_AGENT_SOURCE_REF_ENV.trim()
+        : null;
+    const refBranch = clientRef || envRef || meta.defaultBranch;
     finalSource = {
       ...finalSource,
       ref: refBranch,
@@ -402,7 +408,7 @@ export async function createAgentForProjectRelease({
  * @param {string} headBranchName — agent branch name (for DB)
  * @param {{ skipShaDedupe?: boolean, prUrl?: string|null }} options
  */
-async function executeLaunchpadHeadDeploy(conversion, headSha, headBranchName, options = {}) {
+export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranchName, options = {}) {
   const { skipShaDedupe = false, prUrl = null } = options;
 
   const project = await prisma.project.findUnique({
@@ -809,13 +815,22 @@ export function startAgentPolling(agentId) {
                 },
               }),
             ]);
-            console.log("[cursor] poll: agent complete — awaiting user merge confirmation", {
+            console.log("[cursor] poll: agent complete — auto-merge to launchpad (client-link)", {
               agentId: id,
             });
           } catch (deferErr) {
             console.error("[cursor] poll: defer merge flags failed", {
               agentId: id,
               error: deferErr?.message || deferErr,
+            });
+          }
+          try {
+            const { clientLinkAutoMergeFromAgentPoll } = await import("./chat.service.js");
+            await clientLinkAutoMergeFromAgentPoll(id);
+          } catch (autoErr) {
+            console.error("[cursor] poll: client-link auto-merge failed", {
+              agentId: id,
+              error: autoErr?.message || autoErr,
             });
           }
           return;

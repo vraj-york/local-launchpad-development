@@ -1,9 +1,11 @@
+import crypto from "crypto";
 import { PrismaClient, ReleaseStatus } from "@prisma/client";
 import validator from "validator";
 import ApiError from "../utils/apiError.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import {
   createAgentForProjectRelease,
+  executeLaunchpadHeadDeploy,
   getCursorAgentById,
   isCursorAgentSuccessTerminal,
   performMergeToLaunchpadAtCommit,
@@ -15,6 +17,8 @@ import {
   parseGitRepoPath,
   getBranchSha,
   getCommitInfo,
+  getRepositoryMetadata,
+  putRepositoryContents,
 } from "./github.service.js";
 import {
   buildProjectPreviewFromGitRef,
@@ -24,6 +28,178 @@ import { resolveGithubCredentialsFromProject } from "./integrationCredential.ser
 
 const prisma = new PrismaClient();
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
+
+/** Appended to Cursor prompt only (not stored in ChatHistory). Max 5MB base64 payload. */
+const CLIENT_REPO_IMAGE_INSTRUCTION = `
+
+[Repository task — reference image attached]
+The stakeholder attached an image that must replace the real asset in this Git repository for the selected preview element in the context above (sidebar icons, logos, <img>, <picture>, inline SVG, or CSS background-image).
+
+You must:
+1) Locate the source file(s) for that element (follow src= paths, bundler imports, SVG-in-JSX, or url() in CSS using the URL hints in the context).
+2) Save the attached image bytes to **src/assets/** (create subfolders if needed, e.g. src/assets/images/). Use a clear filename (kebab-case, descriptive or derived from data-testid/id/component hint). Preserve the file extension that matches the image type (e.g. .png, .webp, .svg).
+3) Wire the UI to that file: use this project’s usual pattern (e.g. \`import … from '@/assets/...'\` or \`import … from '../assets/...'\`, or \`new URL('../assets/...', import.meta.url)\` for Vite) so the built app resolves the path correctly. If an old asset lived outside src/assets/, migrate references to the new src/assets path and remove or stop using the old file when safe.
+4) For inline SVG icons, prefer writing the raster/SVG file under src/assets/ and switching the component to import or reference that path (not public/), unless the repo convention strictly requires public/.
+5) Remove stale srcset entries if you replace a raster image.
+`;
+
+function sanitizeClientLinkReplacementImage(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  let data = typeof raw.data === "string" ? raw.data.trim() : "";
+  if (data.includes(",")) data = data.split(",").pop() || "";
+  data = data.replace(/\s/g, "");
+  if (!data) return null;
+  let buf;
+  try {
+    buf = Buffer.from(data, "base64");
+  } catch {
+    return null;
+  }
+  if (buf.length < 8 || buf.length > 5 * 1024 * 1024) return null;
+  const mime =
+    typeof raw.mimeType === "string" && raw.mimeType.trim().startsWith("image/")
+      ? raw.mimeType.trim()
+      : "image/png";
+  const w = Math.min(8192, Math.max(1, Number(raw.width) || 512));
+  const h = Math.min(8192, Math.max(1, Number(raw.height) || 512));
+  return { data, mimeType: mime, width: w, height: h };
+}
+
+function replacementToCursorImages(sanitized) {
+  if (!sanitized) return [];
+  return [
+    {
+      data: sanitized.data,
+      dimension: { width: sanitized.width, height: sanitized.height },
+    },
+  ];
+}
+
+function replacementMimeToExt(mimeType) {
+  const m = String(mimeType || "").toLowerCase();
+  if (m.includes("png")) return "png";
+  if (m.includes("webp")) return "webp";
+  if (m.includes("svg")) return "svg";
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  if (m.includes("gif")) return "gif";
+  return "png";
+}
+
+/**
+ * Base Git ref for client-link Cursor agents (persist git path; launchpad vs default branch).
+ * @throws {Error} with .code REPO_UNRESOLVED | GITHUB_NOT_CONFIGURED
+ */
+async function resolveClientChatGitSource(project, forceLaunchpadBase = false) {
+  const resolved = resolveCursorRepositoryUrl(project);
+  if (!resolved.repositoryUrl) {
+    const err = new Error(
+      "Could not resolve GitHub repository for this project. Set gitRepoPath or GitHub username.",
+    );
+    err.code = "REPO_UNRESOLVED";
+    throw err;
+  }
+  if (resolved.gitRepoPathToPersist) {
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { gitRepoPath: resolved.gitRepoPathToPersist },
+    });
+    project.gitRepoPath = resolved.gitRepoPathToPersist;
+  }
+  let sourceRef = "launchpad";
+  let parsed = parseGitRepoPath(project.gitRepoPath || "");
+  if (!parsed && resolved.repositoryUrl) {
+    parsed = parseGitRepoPath(resolved.repositoryUrl);
+  }
+  const token = project.githubToken?.trim();
+  if (!parsed) {
+    const err = new Error(
+      "Could not resolve GitHub repository for this project.",
+    );
+    err.code = "REPO_UNRESOLVED";
+    throw err;
+  }
+  if (!token) {
+    const err = new Error("GitHub token is not configured for this project.");
+    err.code = "GITHUB_NOT_CONFIGURED";
+    throw err;
+  }
+  const lp = await getBranchSha(parsed.owner, parsed.repo, "launchpad", token);
+  const launchpadMissing = !lp?.sha;
+  if (launchpadMissing && !forceLaunchpadBase) {
+    const meta = await getRepositoryMetadata(
+      parsed.owner,
+      parsed.repo,
+      token,
+    );
+    if (meta.ok) {
+      sourceRef = meta.defaultBranch || "main";
+    }
+  }
+  return {
+    repositoryUrl: resolved.repositoryUrl,
+    sourceRef,
+    parsed,
+    token,
+  };
+}
+
+async function resolveAgentTargetBranchForFollowup(conv) {
+  const fromDb =
+    typeof conv?.targetBranchName === "string"
+      ? conv.targetBranchName.trim()
+      : "";
+  if (fromDb) return fromDb;
+  const agentId = conv?.agentId;
+  if (!agentId) return null;
+  try {
+    const { status, data } = await getCursorAgentById(String(agentId));
+    if (status !== 200 || !data) return null;
+    const b = data?.target?.branchName;
+    return typeof b === "string" && b.trim() ? b.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @returns {Promise<{ ok: true, path: string, branch: string } | { ok: false, message: string }>}
+ */
+async function commitClientLinkReplacementToBranch({
+  owner,
+  repo,
+  token,
+  branch,
+  userMessageId,
+  sanitized,
+}) {
+  const branchHead = await getBranchSha(owner, repo, branch, token);
+  if (!branchHead?.sha) {
+    return {
+      ok: false,
+      message: `Branch "${branch}" was not found on GitHub.`,
+    };
+  }
+  const ext = replacementMimeToExt(sanitized.mimeType);
+  const suffix = crypto.randomBytes(4).toString("hex");
+  const filePath = `src/assets/images/client-link-${userMessageId}-${suffix}.${ext}`;
+  const put = await putRepositoryContents(owner, repo, filePath, {
+    message: `chore(client-link): add replacement image (chat #${userMessageId})`,
+    contentBase64: sanitized.data,
+    branch,
+    token,
+    fileSha: null,
+  });
+  if (!put.ok) {
+    return {
+      ok: false,
+      message:
+        typeof put.message === "string"
+          ? put.message
+          : "GitHub refused the file upload.",
+    };
+  }
+  return { ok: true, path: filePath, branch };
+}
 
 /** Resolve project by public slug (no client secret for now). */
 export async function resolveProjectBySlug(slug) {
@@ -136,6 +312,7 @@ function latestConversionForRelease(projectId, releaseId) {
       awaitingLaunchpadConfirmation: true,
       projectVersionId: true,
       pendingClientChatMessageId: true,
+      targetBranchName: true,
     },
   });
 }
@@ -356,15 +533,39 @@ async function assertShaOnTrackedAgentBranch(project, releaseId, sha, chatHistor
   );
 }
 
-async function createClientChatAgent({ project, releaseId, text }) {
+/**
+ * @param {{ forceLaunchpadBase?: boolean }} opts - when true, always use ref launchpad (never main) so a new
+ * agent after a prior client-link merge builds on merged work, not the default branch.
+ */
+async function createClientChatAgent({
+  project,
+  releaseId,
+  text,
+  forceLaunchpadBase = false,
+  promptImages = null,
+}) {
+  const { repositoryUrl, sourceRef } = await resolveClientChatGitSource(
+    project,
+    forceLaunchpadBase,
+  );
+
+  const prompt =
+    Array.isArray(promptImages) && promptImages.length > 0
+      ? { text, images: promptImages }
+      : { text };
+
   const cursorAgentCreateInput = {
     projectId: project.id,
     releaseId: Number(releaseId),
     attemptedById: project.assignedManagerId,
-    prompt: { text },
+    prompt,
     model: "composer-1.5",
     deferLaunchpadMerge: true,
     omitTargetFromBody: true,
+    source: {
+      repository: repositoryUrl,
+      ref: sourceRef,
+    },
   };
   return createAgentForProjectRelease({
     ...cursorAgentCreateInput,
@@ -375,23 +576,40 @@ async function createClientChatAgent({ project, releaseId, text }) {
 /**
  * POST follow-up prompt (public).
  */
-export async function clientLinkFollowup({ slug, releaseId, promptText, clientEmail }) {
+export async function clientLinkFollowup({
+  slug,
+  releaseId,
+  promptText,
+  clientEmail,
+  replacementImage: replacementImageRaw = null,
+}) {
   const project = await resolveProjectBySlug(slug);
   assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
-  const text = typeof promptText === "string" ? promptText.trim() : "";
-  if (!text) {
+  const sanitizedReplacement =
+    sanitizeClientLinkReplacementImage(replacementImageRaw);
+  let storedText = typeof promptText === "string" ? promptText.trim() : "";
+  if (!storedText && sanitizedReplacement) {
+    storedText =
+      "Replace the selected asset with the attached reference image. Save it under src/assets/ (e.g. src/assets/images/) and update imports or references in code.";
+  }
+  if (!storedText) {
     throw new ApiError(400, "Message required");
   }
+
+  let textForCursor = sanitizedReplacement
+    ? `${storedText}${CLIENT_REPO_IMAGE_INSTRUCTION}`
+    : storedText;
+  const cursorImages = replacementToCursorImages(sanitizedReplacement);
 
   const userMessage = await prisma.chatHistory.create({
     data: {
       projectId: project.id,
       releaseId: Number(releaseId),
       role: "user",
-      text,
+      text: storedText,
     },
   });
 
@@ -399,13 +617,86 @@ export async function clientLinkFollowup({ slug, releaseId, promptText, clientEm
     throw new ApiError(503, "Chat is temporarily unavailable.");
   }
 
+  const [priorVersionedConversion, priorMergedChat] = await Promise.all([
+    prisma.figmaConversion.findFirst({
+      where: {
+        projectId: project.id,
+        releaseId: Number(releaseId),
+        projectVersionId: { not: null },
+      },
+      select: { id: true },
+    }),
+    prisma.chatHistory.findFirst({
+      where: {
+        projectId: project.id,
+        releaseId: Number(releaseId),
+        role: "user",
+        mergedAt: { not: null },
+      },
+      select: { id: true },
+    }),
+  ]);
+  const forceLaunchpadBase =
+    Boolean(priorVersionedConversion) || Boolean(priorMergedChat);
+
   let conv = await latestConversionForRelease(project.id, Number(releaseId));
-  if (shouldCreateFreshClientAgent(conv)) {
+  const needFreshAgent = shouldCreateFreshClientAgent(conv);
+
+  if (sanitizedReplacement) {
+    try {
+      const repoCtx = await resolveClientChatRepository(project);
+      let commitBranch = null;
+      if (needFreshAgent) {
+        const git = await resolveClientChatGitSource(project, forceLaunchpadBase);
+        commitBranch = git.sourceRef;
+      } else {
+        commitBranch = await resolveAgentTargetBranchForFollowup(conv);
+      }
+      if (!commitBranch) {
+        throw new ApiError(
+          502,
+          "Could not determine a Git branch to save the uploaded image.",
+        );
+      }
+      const commit = await commitClientLinkReplacementToBranch({
+        owner: repoCtx.owner,
+        repo: repoCtx.repo,
+        token: repoCtx.token,
+        branch: commitBranch,
+        userMessageId: userMessage.id,
+        sanitized: sanitizedReplacement,
+      });
+      if (!commit.ok) {
+        throw new ApiError(
+          502,
+          commit.message || "Failed to save the image to the repository.",
+        );
+      }
+      textForCursor += `\n\n[The uploaded image is already committed at \`${commit.path}\` on branch \`${commitBranch}\`. Import this file (e.g. \`@/assets/images/...\` or your project's path alias) and replace the selected element's asset; do not duplicate the file elsewhere.]`;
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      if (
+        err.code === "GITHUB_NOT_CONFIGURED" ||
+        err.code === "REPO_UNRESOLVED"
+      ) {
+        throw new ApiError(400, err.message);
+      }
+      console.error("[client-link] replacement image commit failed", err);
+      throw new ApiError(
+        502,
+        err.message || "Failed to save the image to the repository.",
+      );
+    }
+  }
+
+  if (needFreshAgent) {
     try {
       const result = await createClientChatAgent({
         project,
         releaseId: Number(releaseId),
-        text,
+        text: textForCursor,
+        forceLaunchpadBase,
+        promptImages: cursorImages.length > 0 ? cursorImages : null,
       });
       if (!result.ok) {
         const rawStr =
@@ -464,9 +755,13 @@ export async function clientLinkFollowup({ slug, releaseId, promptText, clientEm
         deferLaunchpadMerge: true,
       },
     });
-    ({ status, data } = await postCursorAgentFollowup(conv.agentId, { text }, {
-      silent: true,
-    }));
+    ({ status, data } = await postCursorAgentFollowup(
+      conv.agentId,
+      cursorImages.length > 0
+        ? { text: textForCursor, images: cursorImages }
+        : { text: textForCursor },
+      { silent: true },
+    ));
   } catch (err) {
     await prisma.figmaConversion.update({
       where: { id: conv.id },
@@ -781,6 +1076,8 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
       msgKey: true,
       appliedCommitSha: true,
       mergedAt: true,
+      revertedAt: true,
+      revertCommitSha: true,
       createdAt: true,
     },
   });
@@ -795,38 +1092,76 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
       appliedCommitSha: r.appliedCommitSha || null,
       isMerged: r.role === "user" && Boolean(r.mergedAt),
       mergedAt: r.mergedAt,
+      revertedAt: r.revertedAt || null,
+      revertCommitSha: r.revertCommitSha || null,
+      isReverted: r.role === "user" && Boolean(r.revertedAt),
       createdAt: r.createdAt,
     })),
   };
 }
 
-/** Public: merge agent branch to launchpad after user confirms (client-link deferred flows only). */
-export async function clientLinkConfirmLaunchpadMerge({
-  slug,
+/**
+ * Core merge + deploy for client-link (no auth). Used by confirm-merge HTTP and agent poller.
+ * Idempotent when ChatHistory row already merged with the same SHA.
+ */
+async function executeClientLinkLaunchpadMerge(
+  project,
   releaseId,
-  commitSha = null,
+  commitSha,
   messageId = null,
-  clientEmail,
-}) {
-  const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
-  const release = await assertReleaseBelongs(releaseId, project.id);
-  assertReleaseNotLocked(release);
+) {
+  const requestedSha = typeof commitSha === "string" ? commitSha.trim() : "";
+  if (!GIT_SHA_RE.test(requestedSha)) {
+    throw new ApiError(400, "Applied commit SHA is required to confirm merge.");
+  }
+
+  const rid = Number(releaseId);
+  if (!Number.isInteger(rid) || rid < 1) {
+    throw new ApiError(400, "Invalid release.");
+  }
+
+  const msgId =
+    messageId != null && Number.isInteger(Number(messageId)) && Number(messageId) > 0
+      ? Number(messageId)
+      : null;
+
+  if (msgId != null) {
+    const existing = await prisma.chatHistory.findFirst({
+      where: {
+        id: msgId,
+        projectId: project.id,
+        releaseId: rid,
+        role: "user",
+      },
+      select: { mergedAt: true, appliedCommitSha: true },
+    });
+    if (
+      existing?.mergedAt &&
+      typeof existing.appliedCommitSha === "string" &&
+      existing.appliedCommitSha.trim().toLowerCase() === requestedSha.toLowerCase()
+    ) {
+      await prisma.figmaConversion.updateMany({
+        where: {
+          projectId: project.id,
+          releaseId: rid,
+          awaitingLaunchpadConfirmation: true,
+        },
+        data: { awaitingLaunchpadConfirmation: false },
+      });
+      return { ok: true, skipped: true };
+    }
+  }
 
   if (!process.env.CURSOR_API_KEY?.trim()) {
     throw new ApiError(503, "Chat is temporarily unavailable.");
   }
 
-  const requestedSha = typeof commitSha === "string" ? commitSha.trim() : "";
-  if (!GIT_SHA_RE.test(requestedSha)) {
-    throw new ApiError(400, "Applied commit SHA is required to confirm merge.");
-  }
   const projectRepo = await resolveClientChatRepository(project);
 
   const rows = await prisma.figmaConversion.findMany({
     where: {
       projectId: project.id,
-      releaseId: Number(releaseId),
+      releaseId: rid,
     },
     orderBy: { id: "desc" },
     select: {
@@ -840,10 +1175,6 @@ export async function clientLinkConfirmLaunchpadMerge({
     throw new ApiError(400, "Nothing to confirm for this release.");
   }
 
-  const msgId =
-    messageId != null && Number.isInteger(Number(messageId)) && Number(messageId) > 0
-      ? Number(messageId)
-      : null;
   const ordered = [];
   if (msgId != null) {
     const preferred = rows.filter((r) => r.pendingClientChatMessageId === msgId);
@@ -891,7 +1222,7 @@ export async function clientLinkConfirmLaunchpadMerge({
     await prisma.chatHistory.updateMany({
       where: {
         projectId: project.id,
-        releaseId: Number(releaseId),
+        releaseId: rid,
         id: msgId,
         role: "user",
       },
@@ -901,7 +1232,7 @@ export async function clientLinkConfirmLaunchpadMerge({
     await prisma.chatHistory.updateMany({
       where: {
         projectId: project.id,
-        releaseId: Number(releaseId),
+        releaseId: rid,
         role: "user",
         appliedCommitSha: requestedSha,
       },
@@ -910,6 +1241,269 @@ export async function clientLinkConfirmLaunchpadMerge({
   }
 
   return { ok: true };
+}
+
+/**
+ * Called from cursor poller when a deferred client-link agent finishes.
+ * Syncs SHA to ChatHistory, merges to launchpad, sets mergedAt.
+ * On failure, leaves awaitingLaunchpadConfirmation so manual confirm-merge can retry.
+ */
+export async function clientLinkAutoMergeFromAgentPoll(agentId) {
+  const aid =
+    typeof agentId === "string" ? agentId.trim() : String(agentId || "").trim();
+  if (!aid) return { ok: false, reason: "no_agent" };
+
+  if (!process.env.CURSOR_API_KEY?.trim()) {
+    console.warn("[chat] clientLinkAutoMergeFromAgentPoll: CURSOR_API_KEY missing");
+    return { ok: false, reason: "no_cursor_key" };
+  }
+
+  const conv = await prisma.figmaConversion.findFirst({
+    where: { agentId: aid },
+    select: {
+      id: true,
+      deferLaunchpadMerge: true,
+      pendingClientChatMessageId: true,
+      releaseId: true,
+      projectId: true,
+      targetBranchName: true,
+      agentId: true,
+    },
+  });
+  if (!conv?.deferLaunchpadMerge) {
+    return { ok: true, skipped: true, reason: "not_deferred" };
+  }
+
+  const release = await prisma.release.findFirst({
+    where: { id: conv.releaseId, projectId: conv.projectId },
+    select: { id: true, status: true },
+  });
+  if (!release) return { ok: false, reason: "no_release" };
+  if (release.status === ReleaseStatus.locked) {
+    console.warn("[chat] clientLinkAutoMergeFromAgentPoll: release locked", { agentId: aid });
+    return { ok: false, reason: "locked" };
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id: conv.projectId },
+    select: {
+      id: true,
+      slug: true,
+      assignedManagerId: true,
+      githubToken: true,
+      name: true,
+      gitRepoPath: true,
+      githubUsername: true,
+      stakeholderEmails: true,
+    },
+  });
+  if (!project?.githubToken?.trim()) {
+    return { ok: false, reason: "no_token" };
+  }
+
+  const pendingMid = Number(conv.pendingClientChatMessageId);
+  const pendingOk = Number.isInteger(pendingMid) && pendingMid > 0;
+
+  const syncConv = {
+    pendingClientChatMessageId: conv.pendingClientChatMessageId,
+    releaseId: conv.releaseId,
+    projectId: conv.projectId,
+  };
+  await syncPendingMessageCommitSha(project, syncConv);
+
+  let requestedSha = null;
+  if (pendingOk) {
+    const ch = await prisma.chatHistory.findFirst({
+      where: {
+        id: pendingMid,
+        projectId: project.id,
+        releaseId: conv.releaseId,
+        role: "user",
+      },
+      select: { appliedCommitSha: true },
+    });
+    requestedSha = ch?.appliedCommitSha?.trim() || null;
+  }
+  if (!requestedSha && conv.targetBranchName?.trim()) {
+    try {
+      const repo = await resolveClientChatRepository(project);
+      const head = await getBranchSha(
+        repo.owner,
+        repo.repo,
+        conv.targetBranchName.trim(),
+        repo.token,
+      );
+      requestedSha = head?.sha || null;
+      if (requestedSha && pendingOk) {
+        await prisma.chatHistory.updateMany({
+          where: {
+            id: pendingMid,
+            projectId: project.id,
+            releaseId: conv.releaseId,
+            role: "user",
+          },
+          data: { appliedCommitSha: requestedSha },
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const msgIdForMerge = pendingOk ? pendingMid : null;
+  if (!requestedSha || !GIT_SHA_RE.test(requestedSha)) {
+    console.warn("[chat] clientLinkAutoMergeFromAgentPoll: no valid SHA yet", { agentId: aid });
+    return { ok: false, reason: "no_sha" };
+  }
+
+  try {
+    await executeClientLinkLaunchpadMerge(project, conv.releaseId, requestedSha, msgIdForMerge);
+  } catch (err) {
+    console.error("[chat] clientLinkAutoMergeFromAgentPoll: merge failed", {
+      agentId: aid,
+      error: err?.message || err,
+    });
+    return { ok: false, reason: "merge_failed", error: err?.message };
+  }
+
+  return { ok: true };
+}
+
+/** Public: merge agent branch to launchpad after user confirms (client-link deferred flows only). */
+export async function clientLinkConfirmLaunchpadMerge({
+  slug,
+  releaseId,
+  commitSha = null,
+  messageId = null,
+  clientEmail,
+}) {
+  const project = await resolveProjectBySlug(slug);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  const release = await assertReleaseBelongs(releaseId, project.id);
+  assertReleaseNotLocked(release);
+
+  const msgId =
+    messageId != null && Number.isInteger(Number(messageId)) && Number(messageId) > 0
+      ? Number(messageId)
+      : null;
+
+  const requestedSha = typeof commitSha === "string" ? commitSha.trim() : "";
+  await executeClientLinkLaunchpadMerge(project, Number(releaseId), requestedSha, msgId);
+  return { ok: true };
+}
+
+/**
+ * Public: Point `launchpad` at this chat's merged commit (later merged chats drop off the live line),
+ * full deploy so preview matches, clear merged state for newer user messages on this release.
+ */
+export async function clientLinkRevertMergedMessage({
+  slug,
+  releaseId,
+  messageId,
+  clientEmail,
+}) {
+  const project = await resolveProjectBySlug(slug);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  const release = await assertReleaseBelongs(releaseId, project.id);
+  assertReleaseNotLocked(release);
+
+  const mid = Number(messageId);
+  if (!Number.isInteger(mid) || mid < 1) {
+    throw new ApiError(400, "Invalid message id.");
+  }
+
+  const row = await prisma.chatHistory.findFirst({
+    where: {
+      id: mid,
+      projectId: project.id,
+      releaseId: Number(releaseId),
+      role: "user",
+    },
+    select: {
+      id: true,
+      appliedCommitSha: true,
+      mergedAt: true,
+      revertedAt: true,
+      createdAt: true,
+    },
+  });
+  if (!row) {
+    throw new ApiError(404, "Message not found.");
+  }
+  if (!row.mergedAt) {
+    throw new ApiError(400, "Only merged messages can be restored from.");
+  }
+
+  const targetSha =
+    typeof row.appliedCommitSha === "string" ? row.appliedCommitSha.trim() : "";
+  if (!GIT_SHA_RE.test(targetSha)) {
+    throw new ApiError(400, "No valid commit SHA stored for this message.");
+  }
+
+  const repoCtx = await resolveClientChatRepository(project);
+  const { owner, repo, token } = repoCtx;
+
+  // Same deploy primitive as merge: force `launchpad` to this SHA. Do not require git ancestry to
+  // current launchpad — each chat uses its own agent branch; history is not always linear even when
+  // previews stack correctly. We only require the commit to still exist on GitHub.
+  const commitOk = await getCommitInfo(owner, repo, targetSha, token);
+  if (!commitOk.ok) {
+    throw new ApiError(
+      400,
+      "This chat's saved commit was not found on GitHub (it may have been removed or the SHA is invalid).",
+    );
+  }
+
+  const conversion = await prisma.figmaConversion.findFirst({
+    where: { projectId: project.id, releaseId: Number(releaseId) },
+    orderBy: { id: "desc" },
+    select: {
+      id: true,
+      projectId: true,
+      releaseId: true,
+      attemptedById: true,
+    },
+  });
+  if (!conversion) {
+    throw new ApiError(500, "No conversion record for this release.");
+  }
+
+  try {
+    await executeLaunchpadHeadDeploy(conversion, targetSha, "launchpad", {
+      skipShaDedupe: true,
+    });
+  } catch (deployErr) {
+    throw new ApiError(502, deployErr?.message || "Deploy after restore failed.");
+  }
+
+  await prisma.$transaction([
+    prisma.chatHistory.updateMany({
+      where: {
+        projectId: project.id,
+        releaseId: Number(releaseId),
+        role: "user",
+        OR: [
+          { createdAt: { gt: row.createdAt } },
+          {
+            AND: [{ createdAt: row.createdAt }, { id: { gt: mid } }],
+          },
+        ],
+      },
+      data: {
+        mergedAt: null,
+        revertedAt: null,
+        revertCommitSha: null,
+      },
+    }),
+    prisma.chatHistory.update({
+      where: { id: mid },
+      data: {
+        revertCommitSha: targetSha,
+      },
+    }),
+  ]);
+
+  return { ok: true, sha: targetSha };
 }
 
 /**

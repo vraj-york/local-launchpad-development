@@ -147,7 +147,7 @@ export function ClientLinkResponsivePreviewShell({
       <div
         ref={stageRef}
         className={cn(
-          "relative flex min-h-0 flex-1 items-stretch justify-center overflow-auto p-6",
+          "relative flex min-h-0 flex-1 items-stretch justify-center overflow-auto p-3",
           "bg-linear-to-b from-slate-100/90 via-slate-50/80 to-violet-50/30",
         )}
       >

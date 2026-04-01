@@ -305,6 +305,92 @@ export async function getTagCommitSha(owner, repo, tagName, token) {
  * Create a lightweight tag, or if it already exists: succeed if it points at the same commit,
  * otherwise force-move the tag to sha (recover from partial runs / retries).
  */
+/**
+ * Encode path for GitHub "contents" API URLs (per-segment).
+ * @param {string} filePath
+ * @returns {string}
+ */
+export function encodeGitHubContentsPath(filePath) {
+  return String(filePath || "")
+    .replace(/^\/+/, "")
+    .split("/")
+    .filter(Boolean)
+    .map((s) => encodeURIComponent(s))
+    .join("/");
+}
+
+/**
+ * GET /repos/:owner/:repo/contents/:path — metadata for update (sha).
+ * @returns {Promise<{ ok: true, sha: string } | { ok: false, status: number, notFound?: boolean, message?: string }>}
+ */
+export async function getRepositoryContentSha(owner, repo, filePath, ref, token) {
+  const enc = encodeGitHubContentsPath(filePath);
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${enc}?ref=${encodeURIComponent(ref)}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 404) {
+    return { ok: false, status: 404, notFound: true, message: "Not found" };
+  }
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      message: typeof data?.message === "string" ? data.message : res.statusText,
+    };
+  }
+  const sha = typeof data?.sha === "string" ? data.sha : null;
+  if (!sha) {
+    return { ok: false, status: 502, message: "GitHub contents response missing sha" };
+  }
+  return { ok: true, sha };
+}
+
+/**
+ * Create or update a file on a branch. PUT /repos/:owner/:repo/contents/:path
+ * @param {string} owner
+ * @param {string} repo
+ * @param {string} filePath
+ * @param {{ message: string, contentBase64: string, branch: string, token: string, fileSha?: string|null }} opts
+ * @returns {Promise<{ ok: true, path: string, commitSha?: string } | { ok: false, status: number, message?: string }>}
+ */
+export async function putRepositoryContents(owner, repo, filePath, opts) {
+  const { message, contentBase64, branch, token, fileSha = null } = opts;
+  const enc = encodeGitHubContentsPath(filePath);
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${enc}`;
+  const body = {
+    message,
+    content: contentBase64,
+    branch,
+  };
+  if (fileSha) body.sha = fileSha;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      message: typeof data?.message === "string" ? data.message : res.statusText,
+    };
+  }
+  const commitSha =
+    typeof data?.commit?.sha === "string" ? data.commit.sha : undefined;
+  return { ok: true, path: filePath, commitSha };
+}
+
 export async function createTagIdempotent(owner, repo, tagName, sha, token) {
   const first = await createTag(owner, repo, tagName, sha, token);
   if (first.ok) return { ok: true };

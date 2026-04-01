@@ -70,6 +70,9 @@ export const ClientLink = () => {
   const [feedbackCapturing, setFeedbackCapturing] = useState(false);
   const [visualPickMode, setVisualPickMode] = useState(false);
   const [pickedElementContext, setPickedElementContext] = useState(null);
+  /** Queued for next chat send: same image as preview replace, for Cursor + repo. */
+  const [stagedChatReplacementImage, setStagedChatReplacementImage] =
+    useState(null);
   const [previewIframeAccessible, setPreviewIframeAccessible] = useState(null);
   /** Version selected for iframe preview (may differ from live active). */
   const [previewMeta, setPreviewMeta] = useState(null);
@@ -311,12 +314,34 @@ export const ClientLink = () => {
   const handlePreviewPinnedChange = useCallback((ctx) => {
     setPickedElementContext(ctx);
     if (ctx) setVisualPickMode(false);
+    setStagedChatReplacementImage(null);
   }, []);
+
+  const handleReplacementStagedForRepo = useCallback((payload) => {
+    setStagedChatReplacementImage(payload);
+  }, []);
+
+  const handlePreviewReplaceImageResult = useCallback((r) => {
+    if (r?.ok) {
+      toast.success(
+        "Image updated in preview. Send a chat message so the agent can apply the same asset in the repository.",
+      );
+    } else {
+      toast.error(r?.message ?? "Could not replace image.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!pickedElementContext) {
+      setStagedChatReplacementImage(null);
+    }
+  }, [pickedElementContext]);
 
   useEffect(() => {
     if (!chatOpen) {
       setVisualPickMode(false);
       setPickedElementContext(null);
+      setStagedChatReplacementImage(null);
     }
   }, [chatOpen]);
 
@@ -334,6 +359,7 @@ export const ClientLink = () => {
     setPickedElementContext(null);
     setVisualPickMode(false);
     setPreviewIframeAccessible(null);
+    setStagedChatReplacementImage(null);
   }, [iframeSrc]);
 
   useEffect(() => {
@@ -698,6 +724,8 @@ export const ClientLink = () => {
                 }
                 pinned={pickedElementContext}
                 onPinnedChange={handlePreviewPinnedChange}
+                onReplaceImageResult={handlePreviewReplaceImageResult}
+                onReplacementStagedForRepo={handleReplacementStagedForRepo}
               />
             ) : null}
           </ClientLinkResponsivePreviewShell>
@@ -761,6 +789,11 @@ export const ClientLink = () => {
               visualPickMode={visualPickMode}
               onVisualPickModeChange={setVisualPickMode}
               previewIframeAccessible={previewIframeAccessible}
+              previewIframeRef={previewIframeRef}
+              onPreviewReplaceImageResult={handlePreviewReplaceImageResult}
+              stagedChatReplacementImage={stagedChatReplacementImage}
+              onStagedChatReplacementImageChange={setStagedChatReplacementImage}
+              onReplacementStagedForRepo={handleReplacementStagedForRepo}
             />
           </ResizablePanel>
         </ResizablePanelGroup>
