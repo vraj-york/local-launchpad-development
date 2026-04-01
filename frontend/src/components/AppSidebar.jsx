@@ -1,5 +1,5 @@
 import React from "react";
-import { LayoutDashboard, Folder, LogOut } from "lucide-react";
+import { LayoutDashboard, Folder, LogOut, Plug } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { HubProfileAvatar } from "./HubProfileAvatar";
@@ -32,6 +32,11 @@ export function AppSidebar() {
       title: "Projects",
       url: "/projects",
       icon: Folder,
+    },
+    {
+      title: "Integrations",
+      url: "/settings/integrations",
+      icon: Plug,
     },
   ];
 

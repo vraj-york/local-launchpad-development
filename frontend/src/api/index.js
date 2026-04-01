@@ -256,6 +256,70 @@ export const fetchManagers = async () => {
   }
 };
 
+/** OAuth / integrations (GitHub + Jira) — Bearer required via api interceptor */
+export const fetchIntegrationsStatus = async () => {
+  const { data } = await api.get("/api/integrations/status");
+  return data;
+};
+
+export const getGithubOAuthAuthorizeUrl = async (reconnectConnectionId) => {
+  const params = {};
+  if (reconnectConnectionId != null && reconnectConnectionId !== "") {
+    params.reconnectId = reconnectConnectionId;
+  }
+  const { data } = await api.get("/api/integrations/github/start", {
+    params,
+    headers: { Accept: "application/json" },
+  });
+  if (!data?.url) throw new Error("GitHub OAuth is not available");
+  return data.url;
+};
+
+export const getJiraOAuthAuthorizeUrl = async (reconnectConnectionId) => {
+  const params = {};
+  if (reconnectConnectionId != null && reconnectConnectionId !== "") {
+    params.reconnectId = reconnectConnectionId;
+  }
+  const { data } = await api.get("/api/integrations/jira/start", {
+    params,
+    headers: { Accept: "application/json" },
+  });
+  if (!data?.url) throw new Error("Jira OAuth is not available");
+  return data.url;
+};
+
+export const disconnectGithubIntegration = async (connectionId) => {
+  await api.delete(`/api/integrations/github/${connectionId}`);
+};
+
+export const disconnectJiraIntegration = async (connectionId) => {
+  await api.delete(`/api/integrations/jira/${connectionId}`);
+};
+
+/** Paginated GitHub repos visible to the OAuth connection (affiliation owner/collaborator/org member). */
+export const fetchGithubReposPage = async (connectionId, { page = 1, projectId } = {}) => {
+  const params = { connectionId, page };
+  if (projectId != null && projectId !== "") params.projectId = projectId;
+  const { data } = await api.get("/api/integrations/github/repos", { params });
+  return data;
+};
+
+/** Jira projects for an OAuth connection; includes jiraBaseUrl for the site. */
+export const fetchJiraProjectsForConnection = async (connectionId, { projectId } = {}) => {
+  const params = { connectionId };
+  if (projectId != null && projectId !== "") params.projectId = projectId;
+  const { data } = await api.get("/api/integrations/jira/projects", { params });
+  return data;
+};
+
+/** Creator's OAuth connections (for edit-project UI); creator or admin only. */
+export const fetchCreatorIntegrationConnections = async (projectId) => {
+  const { data } = await api.get(
+    `/api/integrations/creator-connections/${projectId}`,
+  );
+  return data;
+};
+
 // Function to create a new project
 export const createProject = async (projectData) => {
   try {

@@ -1,4 +1,5 @@
 import { PrismaClient, ReleaseStatus } from "@prisma/client";
+import { resolveGithubCredentialsFromProject } from "./integrationCredential.service.js";
 import path from "path";
 import fs from "fs-extra";
 import extract from "extract-zip";
@@ -202,22 +203,6 @@ function checkRateLimit() {
   githubApiCalls.set(now, true);
 }
 
-/**
- * Resolve GitHub credentials for a project from stored project fields only.
- * @param {Object} project - Project with githubUsername, githubToken
- * @returns {{ githubUsername: string, githubToken: string }}
- */
-function getProjectGitHubCredentials(project) {
-  const username = project?.githubUsername?.trim();
-  const token = project?.githubToken?.trim();
-  if (!username || !token) {
-    throw new ApiError(
-      "GitHub credentials not configured. Set githubUsername and githubToken on the project.",
-    );
-  }
-  return { githubUsername: username, githubToken: token };
-}
-
 export async function createGithubRepo(repoName, credentials = {}) {
   checkRateLimit();
 
@@ -233,7 +218,7 @@ export async function createGithubRepo(repoName, credentials = {}) {
   const response = await fetch(`https://api.github.com/user/repos`, {
     method: "POST",
     headers: {
-      Authorization: `token ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "User-Agent": "GitHub-Zip-Worker/1.0",
     },
@@ -339,7 +324,7 @@ export async function addGithubCollaborator(
   const response = await fetch(url, {
     method: "PUT",
     headers: {
-      Authorization: `token ${token}`,
+      Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github+json",
       "Content-Type": "application/json",
       "User-Agent": "GitHub-Zip-Worker/1.0",
@@ -378,7 +363,7 @@ export async function checkRepoExists(repoName, credentials = {}) {
     `https://api.github.com/repos/${username}/${repoName}`,
     {
       headers: {
-        Authorization: `token ${token}`,
+        Authorization: `Bearer ${token}`,
         "User-Agent": "GitHub-Zip-Worker/1.0",
       },
     },
@@ -444,7 +429,6 @@ export const listReleasesService = async (projectId, user) => {
       versions: {
         orderBy: { createdAt: "desc" },
         include: {
-          roadmapItems: true,
           uploader: {
             select: { id: true, name: true, email: true },
           },
@@ -473,7 +457,7 @@ export const getReleaseByIdService = async (releaseId, user) => {
         where: { isActive: true },
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { version: true, createdAt: true, roadmapItems: true },
+        select: { version: true, createdAt: true },
       },
     },
   });
@@ -1563,7 +1547,7 @@ export const uploadReleaseVersionService = async (
 
     const tag = `proj-${project.id}-rel-${releaseId}-${version}`;
 
-    const githubCreds = getProjectGitHubCredentials(project);
+    const githubCreds = await resolveGithubCredentialsFromProject(project);
     const validatedProjectName = projectRepoSlugFromDisplayName(project.name);
     const parsedProjectRepo = parseGitRepoPath(project.gitRepoPath || "");
     const remoteOwner = parsedProjectRepo?.owner || githubCreds.githubUsername;
@@ -1578,14 +1562,14 @@ export const uploadReleaseVersionService = async (
       fs.moveSync(permanentGitDir, localGitDir, { overwrite: true });
     }
 
-    const remoteUrl = `https://${githubCreds.githubUsername}:${githubCreds.githubToken}@github.com/${remoteOwner}/${remoteRepo}.git`;
+    const remoteUrl = `https://x-access-token:${githubCreds.githubToken}@github.com/${remoteOwner}/${remoteRepo}.git`;
     /* Initialize repo if first time */
     if (!fs.existsSync(localGitDir)) {
       runCommand("git init", gitWorkingDir);
       runCommand("git branch -m main", gitWorkingDir);
-      const gitUserName = project.githubUsername?.trim() || "Zip Worker";
-      const gitUserEmail = project.githubUsername?.trim()
-        ? `${project.githubUsername.trim()}@github-zip.com`
+      const gitUserName = githubCreds.githubUsername?.trim() || "Zip Worker";
+      const gitUserEmail = githubCreds.githubUsername?.trim()
+        ? `${githubCreds.githubUsername.trim()}@github-zip.com`
         : "worker@zip.com";
       runCommand(`git config user.name "${gitUserName}"`, gitWorkingDir);
       runCommand(`git config user.email "${gitUserEmail}"`, gitWorkingDir);

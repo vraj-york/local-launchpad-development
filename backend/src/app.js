@@ -13,6 +13,8 @@ import feedbackRoutes from "./routes/feedback.routes.js";
 import figmaRoutes, { figmaPendingByWriteKey } from "./routes/figma.routes.js";
 import cursorRoutes from "./routes/cursor.routes.js";
 import chatRoutes from "./routes/chat.routes.js";
+import integrationsRoutes from "./routes/oauth.routes.js";
+import { getPublicFrontendBaseUrl } from "./utils/publicFrontendUrl.js";
 
 dotenv.config();
 
@@ -52,7 +54,7 @@ app.use("/apps", express.static(getProjectsDir()));
 // Figma plugin: GET /login redirects to frontend /login?state=writeKey
 app.get("/login", (req, res) => {
     const stateParam = typeof req.query.state === "string" ? req.query.state.trim() : "";
-    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+    const frontendUrl = getPublicFrontendBaseUrl();
     if (stateParam && figmaPendingByWriteKey.has(stateParam)) {
         const loginUrl = `${frontendUrl}/login?state=${encodeURIComponent(stateParam)}`;
         res.redirect(302, loginUrl);
@@ -65,7 +67,7 @@ app.use("/static", express.static(path.join(process.cwd(), "public")));
 app.use("/api/feedback", feedbackRoutes);
 
 app.use("/api/auth", authRoutes);
-// app.use("/api/projects", projectRoutes);
+app.use("/api/integrations", integrationsRoutes);
 
 app.use("/api/figma", figmaRoutes);
 app.use("/api/cursor", cursorRoutes);

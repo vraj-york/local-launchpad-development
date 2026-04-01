@@ -1,5 +1,10 @@
-import React, { useState, useEffect, useMemo } from "react";
-import { createProject, fetchManagers, fetchExternalHubProjects } from "../api";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import {
+  createProject,
+  fetchManagers,
+  fetchExternalHubProjects,
+  fetchIntegrationsStatus,
+} from "../api";
 import {
   validateOptionalCommaSeparatedEmails,
   uniqueEmailsForHubProject,
@@ -20,26 +25,21 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNavigate } from "react-router-dom";
-import {
-  Loader2,
-  HelpCircle,
-  ChevronDown,
-  ChevronUp,
-  ExternalLink,
-  Info,
-} from "lucide-react";
+import { Loader2, Info } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { PageHeader } from "@/components/PageHeader";
+import ProjectGitJiraOAuthCard from "@/components/project/ProjectGitJiraOAuthCard";
 // import RoadMapManagement from "@/components/RoadMapManagement";
 import { toast } from "sonner";
 
 const CreateProject = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const gitJiraRef = useRef(null);
 
   // Form State — project name + external hub id come from Form hub dropdown
   const [externalHubProjects, setExternalHubProjects] = useState([]);
@@ -48,16 +48,8 @@ const CreateProject = () => {
   const [managers, setManagers] = useState([]);
   const [selectedManager, setSelectedManager] = useState("");
 
-  // GitHub Config State
-  const [githubToken, setGithubToken] = useState("");
-  const [githubUsername, setGithubUsername] = useState("");
-  const [gitRepoPath, setGitRepoPath] = useState("");
-
-  // Jira Config State
-  const [jiraBaseUrl, setJiraBaseUrl] = useState("");
-  const [jiraUsername, setJiraUsername] = useState("");
-  const [jiraApiToken, setJiraApiToken] = useState("");
-  const [jiraProjectKey, setJiraProjectKey] = useState("");
+  const [integrationsStatus, setIntegrationsStatus] = useState(null);
+  const [integrationsLoading, setIntegrationsLoading] = useState(true);
 
   const [assignedUserEmailTags, setAssignedUserEmailTags] = useState([]);
   const [stakeholderEmailTags, setStakeholderEmailTags] = useState([]);
@@ -69,8 +61,6 @@ const CreateProject = () => {
   const [managersLoading, setManagersLoading] = useState(false);
   const [hubProjectsLoading, setHubProjectsLoading] = useState(true);
   const [hubProjectsError, setHubProjectsError] = useState("");
-  const [showGithubGuide, setShowGithubGuide] = useState(false);
-  const [showJiraGuide, setShowJiraGuide] = useState(false);
 
   // Load managers if admin
   useEffect(() => {
@@ -90,6 +80,31 @@ const CreateProject = () => {
       loadManagers();
     }
   }, [user]);
+
+  const loadIntegrations = async () => {
+    setIntegrationsLoading(true);
+    try {
+      const data = await fetchIntegrationsStatus();
+      setIntegrationsStatus(data);
+    } catch (e) {
+      console.error(e);
+      setIntegrationsStatus(null);
+    } finally {
+      setIntegrationsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadIntegrations();
+  }, []);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") loadIntegrations();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -138,20 +153,10 @@ const CreateProject = () => {
     if (user?.role === "admin" && !selectedManager)
       errors.manager = "Manager is required";
 
-    // GitHub Validation (required)
-    if (!githubUsername.trim())
-      errors.githubUsername = "GitHub username is required";
-    if (!githubToken.trim())
-      errors.githubToken = "GitHub Personal Access Token is required";
-
-    // Jira Validation (required)
-    if (!jiraBaseUrl.trim()) errors.jiraBaseUrl = "Jira Base URL is required";
-    if (!jiraUsername.trim())
-      errors.jiraUsername = "Jira username (email) is required";
-    if (!jiraApiToken.trim())
-      errors.jiraApiToken = "Jira API Token is required";
-    if (!jiraProjectKey.trim())
-      errors.jiraProjectKey = "Jira Project Key is required";
+    Object.assign(
+      errors,
+      gitJiraRef.current?.validateCreate?.(integrationsLoading) ?? {},
+    );
 
     const assignedErr = validateOptionalCommaSeparatedEmails(
       emailsArrayToStorageString(assignedUserEmailTags),
@@ -235,18 +240,12 @@ const CreateProject = () => {
       );
       const projectName = selectedExternal?.title ?? "";
 
+      const oauthFields = gitJiraRef.current?.getCreatePayload?.() ?? {};
       const projectData = {
         name: projectName,
         projectId: selectedHubProjectId,
         description: projectDescription,
-        githubUsername: githubUsername,
-        githubToken: githubToken,
-        gitRepoPath: gitRepoPath.trim() || undefined,
-        // roadmaps: processedRoadmaps,
-        jiraBaseUrl: jiraBaseUrl,
-        jiraProjectKey: jiraProjectKey,
-        jiraUsername: jiraUsername,
-        jiraApiToken: jiraApiToken,
+        ...oauthFields,
         assignedUserEmails:
           emailsArrayToStorageString(assignedUserEmailTags) || undefined,
         stakeholderEmails:
@@ -476,292 +475,14 @@ const CreateProject = () => {
           </CardContent>
         </Card>
 
-        {/* GitHub Configuration Card */}
-        <Card className="border-slate-200 overflow-hidden">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-4">
-              <CardTitle className="text-lg font-semibold text-slate-800">
-                GitHub Configuration (Required)
-              </CardTitle>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-slate-600 hover:text-slate-900 shrink-0"
-                onClick={() => setShowGithubGuide((v) => !v)}
-              >
-                <HelpCircle className="h-4 w-4 mr-1.5" />
-                Where to find these?
-                {showGithubGuide ? (
-                  <ChevronUp className="h-4 w-4 ml-1" />
-                ) : (
-                  <ChevronDown className="h-4 w-4 ml-1" />
-                )}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {showGithubGuide && (
-              <div className="rounded-lg border border-slate-200 bg-linear-to-br from-slate-50 to-slate-100/80 p-4 text-sm text-slate-700 space-y-3">
-                <p className="font-medium text-slate-800">
-                  How to get your GitHub credentials
-                </p>
-                <ol className="list-decimal list-inside space-y-2">
-                  <li>
-                    <strong>Username</strong> — Your GitHub login (e.g. the part
-                    before{" "}
-                    <code className="bg-slate-200/80 px-1 rounded">
-                      github.com/your-username
-                    </code>
-                    ).
-                  </li>
-                  <li>
-                    <strong>Personal Access Token (PAT)</strong> — Create one at
-                    GitHub:
-                    <ul className="list-disc list-inside ml-4 mt-1 space-y-0.5">
-                      <li>
-                        Go to{" "}
-                        <a
-                          href="https://github.com/settings/tokens"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline inline-flex items-center gap-0.5"
-                        >
-                          github.com/settings/tokens{" "}
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      </li>
-                      <li>
-                        Click &quot;Generate new token&quot; → &quot;Generate
-                        new token (classic)&quot;
-                      </li>
-                      <li>
-                        Give it a name, choose expiry, and enable scopes:{" "}
-                        <code className="bg-slate-200/80 px-1 rounded">
-                          repo
-                        </code>
-                        , and{" "}
-                        <code className="bg-slate-200/80 px-1 rounded">
-                          read:user
-                        </code>{" "}
-                        (or as required)
-                      </li>
-                      <li>
-                        Copy the token (starts with{" "}
-                        <code className="bg-slate-200/80 px-1 rounded">
-                          ghp_
-                        </code>
-                        ) and paste it below. You won’t see it again.
-                      </li>
-                    </ul>
-                  </li>
-                </ol>
-              </div>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="githubUsername">GitHub Username</Label>
-                <Input
-                  id="githubUsername"
-                  placeholder="octocat (no @, from github.com/username)"
-                  value={githubUsername}
-                  onChange={(e) => setGithubUsername(e.target.value)}
-                  className={
-                    validationErrors.githubUsername ? "border-destructive" : ""
-                  }
-                />
-                {validationErrors.githubUsername && (
-                  <p className="text-sm text-destructive mt-1">
-                    {validationErrors.githubUsername}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="githubToken">
-                  GitHub Personal Access Token
-                </Label>
-                <Input
-                  id="githubToken"
-                  type="password"
-                  placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                  value={githubToken}
-                  onChange={(e) => setGithubToken(e.target.value)}
-                  className={
-                    validationErrors.githubToken ? "border-destructive" : ""
-                  }
-                />
-                {validationErrors.githubToken && (
-                  <p className="text-sm text-destructive mt-1">
-                    {validationErrors.githubToken}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="gitRepoPath">
-                  Existing Git repository path (optional)
-                </Label>
-                <Input
-                  id="gitRepoPath"
-                  placeholder="github.com/org/repository"
-                  value={gitRepoPath}
-                  onChange={(e) => setGitRepoPath(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  If this repo is accessible with your credentials, it will be linked to this project; otherwise a new repo is created automatically.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        {/* Jira Configuration Card */}
-        <Card className="border-slate-200 overflow-hidden">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-4">
-              <CardTitle className="text-lg font-semibold text-slate-800">
-                Jira Configuration (Required)
-              </CardTitle>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-slate-600 hover:text-slate-900 shrink-0"
-                onClick={() => setShowJiraGuide((v) => !v)}
-              >
-                <HelpCircle className="h-4 w-4 mr-1.5" />
-                Where to find these?
-                {showJiraGuide ? (
-                  <ChevronUp className="h-4 w-4 ml-1" />
-                ) : (
-                  <ChevronDown className="h-4 w-4 ml-1" />
-                )}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {showJiraGuide && (
-              <div className="rounded-lg border border-slate-200 bg-linear-to-br from-slate-50 to-slate-100/80 p-4 text-sm text-slate-700 space-y-3">
-                <p className="font-medium text-slate-800">
-                  How to get your Jira credentials
-                </p>
-                <ol className="list-decimal list-inside space-y-2">
-                  <li>
-                    <strong>Jira Base URL</strong> — The URL you use for Jira
-                    (e.g.{" "}
-                    <code className="bg-slate-200/80 px-1 rounded">
-                      https://yourcompany.atlassian.net
-                    </code>
-                    ). It’s in your browser when you’re in Jira.
-                  </li>
-                  <li>
-                    <strong>Jira Username</strong> — The email address you use
-                    to sign in to Jira/Atlassian.
-                  </li>
-                  <li>
-                    <strong>Jira API Token</strong> — Create one at Atlassian:
-                    <ul className="list-disc list-inside ml-4 mt-1 space-y-0.5">
-                      <li>
-                        Go to{" "}
-                        <a
-                          href="https://id.atlassian.com/manage-profile/security/api-tokens"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline inline-flex items-center gap-0.5"
-                        >
-                          id.atlassian.com → Security → API tokens{" "}
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      </li>
-                      <li>
-                        Click &quot;Create API token&quot;, name it, then copy
-                        the token and paste it below.
-                      </li>
-                    </ul>
-                  </li>
-                  <li>
-                    <strong>Project Key</strong> — In Jira, open your project →
-                    Project settings (or the project URL). The key is the short
-                    code (e.g.{" "}
-                    <code className="bg-slate-200/80 px-1 rounded">PROJ</code>,{" "}
-                    <code className="bg-slate-200/80 px-1 rounded">DEV</code>).
-                  </li>
-                </ol>
-              </div>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="jiraBaseUrl">Jira Base URL</Label>
-                <Input
-                  id="jiraBaseUrl"
-                  placeholder="https://mycompany.atlassian.net"
-                  value={jiraBaseUrl}
-                  onChange={(e) => setJiraBaseUrl(e.target.value)}
-                  className={
-                    validationErrors.jiraBaseUrl ? "border-destructive" : ""
-                  }
-                />
-                {validationErrors.jiraBaseUrl && (
-                  <p className="text-sm text-destructive mt-1">
-                    {validationErrors.jiraBaseUrl}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="jiraUsername">Jira Username (Email)</Label>
-                <Input
-                  id="jiraUsername"
-                  placeholder="you@company.com (Atlassian sign-in email)"
-                  value={jiraUsername}
-                  onChange={(e) => setJiraUsername(e.target.value)}
-                  className={
-                    validationErrors.jiraUsername ? "border-destructive" : ""
-                  }
-                />
-                {validationErrors.jiraUsername && (
-                  <p className="text-sm text-destructive mt-1">
-                    {validationErrors.jiraUsername}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="jiraProjectKey">Project Key</Label>
-              <Input
-                id="jiraProjectKey"
-                placeholder="PROJ or DEV (from project URL/settings)"
-                value={jiraProjectKey}
-                onChange={(e) => setJiraProjectKey(e.target.value)}
-                className={
-                  validationErrors.jiraProjectKey ? "border-destructive" : ""
-                }
-              />
-              {validationErrors.jiraProjectKey && (
-                <p className="text-sm text-destructive mt-1">
-                  {validationErrors.jiraProjectKey}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="jiraApiToken">Jira API Token</Label>
-              <Input
-                id="jiraApiToken"
-                type="password"
-                placeholder="ATATT3xFfGF0... (long token from id.atlassian.com)"
-                value={jiraApiToken}
-                onChange={(e) => setJiraApiToken(e.target.value)}
-                className={
-                  validationErrors.jiraApiToken ? "border-destructive" : ""
-                }
-              />
-              {validationErrors.jiraApiToken && (
-                <p className="text-sm text-destructive mt-1">
-                  {validationErrors.jiraApiToken}
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        <ProjectGitJiraOAuthCard
+          ref={gitJiraRef}
+          variant="create"
+          syncKey="create"
+          integrationsPayload={integrationsStatus}
+          integrationsLoading={integrationsLoading}
+          validationErrors={validationErrors}
+        />
 
         {/* Roadmap Configuration */}
         {/* <Card className="border-slate-200">
@@ -785,6 +506,7 @@ const CreateProject = () => {
           disabled={
             loading ||
             hubProjectsLoading ||
+            integrationsLoading ||
             (user?.role === "admin" && managersLoading)
           }
           className="px-8"
