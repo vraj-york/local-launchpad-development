@@ -6,22 +6,13 @@ import React, {
   useState,
 } from "react";
 import {
-  clientLinkConfirmMerge,
   clientLinkFetchAgentStatus,
   clientLinkFetchChatMessages,
   clientLinkFetchExecutionSummary,
-  clientLinkPreviewCommit,
+  clientLinkRevertMerge,
   clientLinkSendFollowup,
 } from "@/api";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
@@ -34,8 +25,8 @@ import {
   ArrowUp,
   Check,
   Crosshair,
-  RotateCcw,
   SquareMousePointer,
+  Undo2,
   User,
   X,
 } from "lucide-react";
@@ -50,6 +41,8 @@ import {
   parseContextBlockToInspectorCtx,
   splitFollowupWithElementContext,
 } from "@/components/ClientLinkPreviewPicker";
+import { parseDataUrlParts } from "@/lib/previewImageReplace";
+import { PreviewReplaceImageButton } from "@/components/PreviewReplaceImageButton";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import Lottie from "lottie-react";
@@ -297,24 +290,22 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   chatSending,
   chatPolling,
   chatHistoryLoading,
-  revertingMessageKey,
-  appliedMessageKey,
+  revertLoadingKey,
   chatMayMutate,
-  onApplyMessageChanges,
+  onRevertMergedMessage,
 }) {
   const rowKey = msg.id ?? msg.key ?? null;
   const isMerged = Boolean(msg?.isMerged);
-  const isApplied = appliedMessageKey === rowKey;
-  const isApplying = revertingMessageKey === rowKey;
-  const disableApply =
+  const isReverted = Boolean(msg?.isReverted);
+  const isRevertBusy = revertLoadingKey === rowKey;
+  const disableRevert =
     !chatMayMutate ||
-    isMerged ||
+    !isMerged ||
+    isReverted ||
     chatSending ||
     chatPolling ||
     chatHistoryLoading ||
-    revertingMessageKey != null ||
-    isApplied ||
-    isApplying;
+    revertLoadingKey != null;
 
   const systemTone = msg.role === "system" ? msg.tone || "neutral" : null;
   const systemClass =
@@ -352,41 +343,70 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
               variant="onPrimary"
             />
           </div>
+          {msg.attachmentPreviewUrl ? (
+            <div className="flex w-full justify-start">
+              <div className="overflow-hidden rounded-xl border border-white/25 bg-white/10 p-0.5 shadow-sm ring-1 ring-white/20">
+                <img
+                  src={msg.attachmentPreviewUrl}
+                  alt=""
+                  className="size-16 rounded-[10px] object-cover"
+                  draggable={false}
+                />
+              </div>
+            </div>
+          ) : null}
           <p className="w-full whitespace-pre-wrap break-words text-sm leading-relaxed">
             {elementSplit.userText}
           </p>
         </div>
       ) : (
-        msg.text
+        <>
+          {msg.role === "user" && msg.attachmentPreviewUrl ? (
+            <div className="mb-2 flex w-full justify-start">
+              <div className="overflow-hidden rounded-xl border border-white/25 bg-white/10 p-0.5 shadow-sm ring-1 ring-white/20">
+                <img
+                  src={msg.attachmentPreviewUrl}
+                  alt=""
+                  className="size-16 rounded-[10px] object-cover"
+                  draggable={false}
+                />
+              </div>
+            </div>
+          ) : null}
+          {msg.text}
+        </>
       )}
       {msg.role === "user" && msg.appliedCommitSha ? (
-        <div className="mt-2 flex justify-end">
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            disabled={disableApply}
-            className="h-7 rounded-lg border border-white/40 bg-white/15 px-2 text-[11px] font-semibold text-white hover:bg-white/25 disabled:text-white"
-            onClick={() => void onApplyMessageChanges(msg)}
-          >
-            {isApplying ? (
-              <span className="flex items-center gap-1">
-                <Spinner className="size-3" />
-                Applying...
-              </span>
-            ) : isMerged ? (
-              <span className="flex items-center gap-1">
-                Merged{mergedAtText ? ` - ${mergedAtText}` : ""}
-              </span>
-            ) : isApplied ? (
-              <span className="flex items-center gap-1">Applied</span>
-            ) : (
-              <span className="flex items-center gap-1">
-                <RotateCcw className="size-3" />
-                Apply changes
-              </span>
-            )}
-          </Button>
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+          {isMerged ? (
+            <span className="text-[11px] font-medium text-white/90">
+              {isReverted
+                ? "Superseded"
+                : `${mergedAtText ? ` ${mergedAtText}` : ""}`}
+            </span>
+          ) : null}
+          {isMerged && !isReverted ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={disableRevert}
+              className="h-7 rounded-lg border border-white/40 bg-white/15 px-2 text-[11px] font-semibold text-white hover:bg-white/25 disabled:text-white"
+              onClick={() => void onRevertMergedMessage(msg)}
+            >
+              {isRevertBusy ? (
+                <span className="flex items-center gap-1">
+                  <Spinner className="size-3" />
+                  Reverting…
+                </span>
+              ) : (
+                <span className="flex items-center gap-1">
+                  <Undo2 className="size-3" />
+                  Revert
+                </span>
+              )}
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -398,8 +418,6 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   effectiveChatReleaseId,
   isLocked,
   isOpen,
-  mergeTargetLabel,
-  onPreviewCommitApplied,
   onProjectReload,
   onResetPreview,
   onCloseChat,
@@ -408,17 +426,18 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   visualPickMode = false,
   onVisualPickModeChange = () => {},
   previewIframeAccessible = null,
+  previewIframeRef = null,
+  onPreviewReplaceImageResult = () => {},
+  stagedChatReplacementImage = null,
+  onStagedChatReplacementImageChange = () => {},
+  onReplacementStagedForRepo = () => {},
 }) {
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState([]);
   const [chatSending, setChatSending] = useState(false);
   const [chatPolling, setChatPolling] = useState(false);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
-  const [mergeAwaitingConfirm, setMergeAwaitingConfirm] = useState(false);
-  const [confirmingMerge, setConfirmingMerge] = useState(false);
-  const [confirmMergeOpen, setConfirmMergeOpen] = useState(false);
-  const [revertingMessageKey, setRevertingMessageKey] = useState(null);
-  const [appliedMessageKey, setAppliedMessageKey] = useState(null);
+  const [revertLoadingKey, setRevertLoadingKey] = useState(null);
   const [verifyBump, setVerifyBump] = useState(0);
   const [panelEmailInput, setPanelEmailInput] = useState("");
   const [gateInlineError, setGateInlineError] = useState("");
@@ -426,12 +445,6 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const [composerEmailDraft, setComposerEmailDraft] = useState("");
   const [composerEmailError, setComposerEmailError] = useState("");
 
-  const autoApplyArmedRef = useRef({ releaseId: null, armed: false });
-  const lastAutoAppliedRef = useRef({
-    releaseId: null,
-    messageId: null,
-    sha: null,
-  });
   const lastAgentSnapshotRef = useRef({
     releaseId: null,
     status: null,
@@ -528,6 +541,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
         appliedCommitSha: row.appliedCommitSha || null,
         isMerged: Boolean(row.isMerged),
         mergedAt: row.mergedAt || null,
+        revertedAt: row.revertedAt || null,
+        isReverted: Boolean(row.isReverted),
+        revertCommitSha: row.revertCommitSha || null,
       })),
     [],
   );
@@ -562,125 +578,34 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     setComposerEmailEditorOpen(false);
   }, [composerEmailDraft, refreshChatMessages]);
 
-  const selectedAppliedMessage = useMemo(
-    () =>
-      chatMessages.find(
-        (m) =>
-          m?.role === "user" &&
-          (m.id ?? m.key ?? null) === appliedMessageKey &&
-          typeof m?.appliedCommitSha === "string" &&
-          m.appliedCommitSha.trim(),
-      ) || null,
-    [appliedMessageKey, chatMessages],
-  );
-
-  const confirmMergeMessageSplit = useMemo(() => {
-    const t = selectedAppliedMessage?.text;
-    if (typeof t !== "string" || !t.trim()) return null;
-    return splitFollowupWithElementContext(t);
-  }, [selectedAppliedMessage?.text]);
-
-  const applyMessageToPreview = useCallback(
-    async (msg) => {
-      if (!projectSlug?.trim() || effectiveChatReleaseId == null) return false;
-      const sha =
-        typeof msg?.appliedCommitSha === "string"
-          ? msg.appliedCommitSha.trim()
-          : "";
-      if (!sha) {
-        toast.error("No commit is recorded for this message yet.");
-        return false;
+  const waitForClientLinkAutoMerge = useCallback(async () => {
+    if (!projectSlug?.trim() || effectiveChatReleaseId == null) return;
+    const rid = Number(effectiveChatReleaseId);
+    for (let i = 0; i < 25; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const rows = await refreshChatMessages(rid);
+      const latestUser = [...rows].reverse().find((m) => m?.role === "user");
+      if (
+        latestUser?.isMerged &&
+        typeof latestUser?.appliedCommitSha === "string" &&
+        latestUser.appliedCommitSha.trim()
+      ) {
+        return;
       }
-
-      const key = msg.id ?? msg.key ?? sha;
-      setRevertingMessageKey(key);
       try {
-        const preview = await clientLinkPreviewCommit(
-          projectSlug,
-          effectiveChatReleaseId,
-          sha,
-          false,
-          msg?.id,
-          identityEmail,
-        );
-        const baseUrl = String(preview?.buildUrl || "").trim();
-        if (!baseUrl)
-          throw new Error("Preview URL missing from server response.");
-        onPreviewCommitApplied?.({
-          buildUrl: baseUrl,
-          releaseId: Number(effectiveChatReleaseId),
-        });
-        setAppliedMessageKey(key);
-        toast.success(
-          `Applied commit ${String(preview?.commitSha || "").slice(0, 7)} to preview.`,
-        );
-        return true;
-      } catch (e) {
-        const msgText =
-          e?.response?.data?.error ||
-          e?.error ||
-          e?.message ||
-          "Could not preview this commit.";
-        toast.error(msgText);
-        return false;
-      } finally {
-        setRevertingMessageKey(null);
+        const st = await clientLinkFetchAgentStatus(projectSlug, rid);
+        if (
+          !st?.mergeConfirmationPending &&
+          !st?.awaitingLaunchpadConfirmation
+        ) {
+          await refreshChatMessages(rid);
+          return;
+        }
+      } catch {
+        /* ignore */
       }
-    },
-    [
-      effectiveChatReleaseId,
-      identityEmail,
-      onPreviewCommitApplied,
-      projectSlug,
-    ],
-  );
-
-  const autoApplyLatestChatCommit = useCallback(
-    async (rows, rid) => {
-      if (
-        !projectSlug?.trim() ||
-        rid == null ||
-        !Array.isArray(rows) ||
-        rows.length === 0
-      ) {
-        return false;
-      }
-      const latestAppliedUser = [...rows]
-        .reverse()
-        .find(
-          (m) =>
-            m?.role === "user" &&
-            typeof m?.appliedCommitSha === "string" &&
-            m.appliedCommitSha.trim(),
-        );
-      if (!latestAppliedUser) return false;
-
-      const sha = latestAppliedUser.appliedCommitSha.trim();
-      const mid = Number(latestAppliedUser.id);
-      if (
-        lastAutoAppliedRef.current.releaseId === Number(rid) &&
-        lastAutoAppliedRef.current.messageId ===
-          (Number.isInteger(mid) ? mid : null) &&
-        lastAutoAppliedRef.current.sha === sha
-      ) {
-        setAppliedMessageKey(
-          latestAppliedUser.id ?? latestAppliedUser.key ?? sha,
-        );
-        return true;
-      }
-
-      const applied = await applyMessageToPreview(latestAppliedUser);
-      if (applied) {
-        lastAutoAppliedRef.current = {
-          releaseId: Number(rid),
-          messageId: Number.isInteger(mid) ? mid : null,
-          sha,
-        };
-      }
-      return applied;
-    },
-    [applyMessageToPreview, projectSlug],
-  );
+    }
+  }, [effectiveChatReleaseId, projectSlug, refreshChatMessages]);
 
   const pollUntilAgentSettles = useCallback(async () => {
     if (!projectSlug?.trim() || effectiveChatReleaseId == null) return;
@@ -701,9 +626,6 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           st?.activity && typeof st.activity === "string"
             ? st.activity.trim()
             : "";
-
-        if (raw && !isCursorAgentSuccessTerminal(raw))
-          setMergeAwaitingConfirm(false);
 
         const last = lastAgentSnapshotRef.current;
         if (
@@ -740,38 +662,28 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           raw === "ERROR"
         ) {
           if (isCursorAgentSuccessTerminal(raw)) {
-            const needsMergeConfirm =
+            const deferStyle =
               Boolean(st?.mergeConfirmationPending) ||
               Boolean(st?.awaitingLaunchpadConfirmation) ||
               Boolean(st?.deferLaunchpadMerge);
-            if (needsMergeConfirm) {
-              setMergeAwaitingConfirm(true);
-              const rows = await refreshChatMessages(effectiveChatReleaseId);
-              const canAutoApply =
-                autoApplyArmedRef.current.armed &&
-                autoApplyArmedRef.current.releaseId ===
-                  Number(effectiveChatReleaseId);
-              if (canAutoApply) {
-                const applied = await autoApplyLatestChatCommit(
-                  rows,
-                  effectiveChatReleaseId,
-                );
-                if (applied) {
-                  autoApplyArmedRef.current = {
-                    releaseId: Number(effectiveChatReleaseId),
-                    armed: false,
-                  };
-                }
-              }
-              addSystemMessageOnce(
-                `merge-confirm:${effectiveChatReleaseId}`,
-                "The agent finished. Review the work, then confirm below to merge into launchpad and refresh the live site.",
-                "neutral",
-              );
+            if (deferStyle) {
+              await refreshChatMessages(effectiveChatReleaseId);
+              await waitForClientLinkAutoMerge();
+              setChatMessages((m) => [
+                ...m,
+                {
+                  role: "system",
+                  tone: "success",
+                  key: `merged-live:${effectiveChatReleaseId}:${Date.now()}`,
+                  text: "Changes merged to launchpad. Refreshing preview…",
+                },
+              ]);
+              await onProjectReload?.();
+              onResetPreview?.();
+              await refreshChatMessages(effectiveChatReleaseId);
               return;
             }
 
-            setMergeAwaitingConfirm(false);
             setChatMessages((m) => [
               ...m,
               {
@@ -790,12 +702,19 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                 effectiveChatReleaseId,
               );
               if (sum?.pendingMergeConfirmation) {
-                setMergeAwaitingConfirm(true);
-                addSystemMessageOnce(
-                  `merge-confirm-pending:${effectiveChatReleaseId}`,
-                  "Confirm merge to launchpad to create a new version and update the live preview.",
-                  "neutral",
-                );
+                await waitForClientLinkAutoMerge();
+                setChatMessages((m) => [
+                  ...m,
+                  {
+                    role: "system",
+                    tone: "success",
+                    key: `merged-live2:${effectiveChatReleaseId}:${Date.now()}`,
+                    text: "Changes merged to launchpad. Refreshing preview…",
+                  },
+                ]);
+                await onProjectReload?.();
+                onResetPreview?.();
+                await refreshChatMessages(effectiveChatReleaseId);
                 return;
               }
             } catch {
@@ -826,16 +745,43 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     }
   }, [
     addSystemMessageOnce,
-    autoApplyLatestChatCommit,
     effectiveChatReleaseId,
     onProjectReload,
     onResetPreview,
     projectSlug,
     refreshChatMessages,
+    waitForClientLinkAutoMerge,
   ]);
 
   const handleSendChat = useCallback(async () => {
-    const userPart = chatInput.trim();
+    const replacementPayload =
+      stagedChatReplacementImage &&
+      pickedElementContext?.selector &&
+      stagedChatReplacementImage.selector === pickedElementContext.selector
+        ? (() => {
+            const raw = stagedChatReplacementImage.previewDataUrl;
+            const parts =
+              typeof raw === "string" ? parseDataUrlParts(raw) : null;
+            if (!parts?.base64) return null;
+            return {
+              data: parts.base64,
+              mimeType:
+                stagedChatReplacementImage.mimeType || parts.mimeType || "image/png",
+              width: stagedChatReplacementImage.width,
+              height: stagedChatReplacementImage.height,
+            };
+          })()
+        : null;
+
+    let userPart = chatInput.trim();
+    if (
+      !userPart &&
+      replacementPayload &&
+      pickedElementContext?.replacementKind
+    ) {
+      userPart =
+        "Replace the selected asset with the attached reference image. Save it under src/assets/ (e.g. src/assets/images/) and update imports or references in code.";
+    }
     if (!userPart || !projectSlug?.trim()) {
       toast.error("Enter a message.");
       return;
@@ -853,14 +799,32 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       ? `${formatPickedElementForPrompt(pickedElementContext)}\n\n${userPart}`
       : userPart;
 
+    const attachmentPreviewUrl =
+      replacementPayload && stagedChatReplacementImage?.previewDataUrl
+        ? stagedChatReplacementImage.previewDataUrl
+        : null;
+
     const rid = Number(effectiveChatReleaseId);
     setChatSending(true);
     try {
-      setChatMessages((m) => [...m, { role: "user", text }]);
+      setChatMessages((m) => [
+        ...m,
+        {
+          role: "user",
+          text,
+          ...(attachmentPreviewUrl ? { attachmentPreviewUrl } : {}),
+        },
+      ]);
       setChatInput("");
       onPickedElementContextChange(null);
-      await clientLinkSendFollowup(projectSlug, rid, text, identityEmail);
-      autoApplyArmedRef.current = { releaseId: rid, armed: true };
+      onStagedChatReplacementImageChange(null);
+      await clientLinkSendFollowup(
+        projectSlug,
+        rid,
+        text,
+        identityEmail,
+        replacementPayload,
+      );
       lastAgentSnapshotRef.current = {
         releaseId: rid,
         status: null,
@@ -897,56 +861,54 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     identityEmail,
     isLocked,
     onPickedElementContextChange,
+    onStagedChatReplacementImageChange,
     pickedElementContext,
     pollUntilAgentSettles,
     projectSlug,
+    stagedChatReplacementImage,
   ]);
 
-  const handleConfirmMerge = useCallback(async () => {
-    if (!projectSlug?.trim() || effectiveChatReleaseId == null) return;
-    const selected = selectedAppliedMessage;
-    const selectedSha =
-      typeof selected?.appliedCommitSha === "string"
-        ? selected.appliedCommitSha.trim()
-        : "";
-    if (!selectedSha) {
-      toast.error("Apply a chat change first, then confirm merge.");
-      return;
-    }
-    setConfirmingMerge(true);
-    try {
-      await clientLinkConfirmMerge(
-        projectSlug,
-        effectiveChatReleaseId,
-        selectedSha,
-        selected?.id ?? null,
-        identityEmail,
-      );
-      setMergeAwaitingConfirm(false);
-      setConfirmMergeOpen(false);
-      toast.success("Changes merged to launchpad");
-      await onProjectReload?.();
-      onResetPreview?.();
-      await refreshChatMessages(effectiveChatReleaseId);
-    } catch (e) {
-      const msg =
-        e?.response?.data?.error ||
-        e?.error ||
-        e?.message ||
-        "Could not merge to launchpad.";
-      toast.error(msg);
-    } finally {
-      setConfirmingMerge(false);
-    }
-  }, [
-    effectiveChatReleaseId,
-    onProjectReload,
-    onResetPreview,
-    projectSlug,
-    refreshChatMessages,
-    selectedAppliedMessage,
-    identityEmail,
-  ]);
+  const handleRevertMergedMessage = useCallback(
+    async (msg) => {
+      if (!projectSlug?.trim() || effectiveChatReleaseId == null) return;
+      const mid = Number(msg?.id);
+      if (!Number.isInteger(mid) || mid < 1) {
+        toast.error("Invalid message.");
+        return;
+      }
+      const key = msg.id ?? msg.key ?? mid;
+      setRevertLoadingKey(key);
+      try {
+        await clientLinkRevertMerge(
+          projectSlug,
+          effectiveChatReleaseId,
+          mid,
+          identityEmail,
+        );
+        toast.success("Reverted to this chat's merge.");
+        await onProjectReload?.();
+        onResetPreview?.();
+        await refreshChatMessages(effectiveChatReleaseId);
+      } catch (e) {
+        const msgText =
+          e?.response?.data?.error ||
+          e?.error ||
+          e?.message ||
+          "Could not revert.";
+        toast.error(msgText);
+      } finally {
+        setRevertLoadingKey(null);
+      }
+    },
+    [
+      effectiveChatReleaseId,
+      identityEmail,
+      onProjectReload,
+      onResetPreview,
+      projectSlug,
+      refreshChatMessages,
+    ],
+  );
 
   useEffect(() => {
     if (
@@ -980,76 +942,10 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     showMainChatUi,
   ]);
 
-  useEffect(() => {
-    if (
-      !isOpen ||
-      effectiveChatReleaseId == null ||
-      !projectSlug?.trim() ||
-      !showMainChatUi
-    )
-      return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const st = await clientLinkFetchAgentStatus(
-          projectSlug,
-          effectiveChatReleaseId,
-        );
-        if (cancelled) return;
-        const raw = st?.status
-          ? String(st.status).trim().toUpperCase().replace(/\s+/g, "_")
-          : "";
-        if (
-          isCursorAgentSuccessTerminal(raw) &&
-          (st?.mergeConfirmationPending ||
-            st?.awaitingLaunchpadConfirmation ||
-            st?.deferLaunchpadMerge)
-        ) {
-          setMergeAwaitingConfirm(true);
-          const rows = await refreshChatMessages(effectiveChatReleaseId);
-          const canAutoApply =
-            autoApplyArmedRef.current.armed &&
-            autoApplyArmedRef.current.releaseId ===
-              Number(effectiveChatReleaseId);
-          if (canAutoApply) {
-            const applied = await autoApplyLatestChatCommit(
-              rows,
-              effectiveChatReleaseId,
-            );
-            if (applied) {
-              autoApplyArmedRef.current = {
-                releaseId: Number(effectiveChatReleaseId),
-                armed: false,
-              };
-            }
-          }
-          addSystemMessageOnce(
-            `merge-confirm:${effectiveChatReleaseId}`,
-            "The agent finished. Review the work, then confirm below to merge into launchpad and refresh the live site.",
-            "neutral",
-          );
-        }
-      } catch {
-        /* ignore */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    addSystemMessageOnce,
-    autoApplyLatestChatCommit,
-    effectiveChatReleaseId,
-    isOpen,
-    showMainChatUi,
-    projectSlug,
-    refreshChatMessages,
-  ]);
-
   return (
     <>
-      <div className="flex h-full min-h-0 flex-col border-l border-border bg-card text-card-foreground">
-        <div className="border-b border-border bg-muted/50 px-4 py-2">
+      <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden border-l border-border bg-card text-card-foreground">
+        <div className="shrink-0 border-b border-border bg-muted/50 px-4 py-2">
           <div className="flex items-center justify-between gap-2">
             <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
               <img src={logo} alt="launchpad logo" className="w-7 h-7" />
@@ -1068,10 +964,10 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {!showMainChatUi && (
             <>
-              <div className="space-y-3 px-4 py-3">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
                 <p className="text-xs text-muted-foreground">
                   Enter your email to continue. Chat permissions are verified
                   securely on the server.
@@ -1112,7 +1008,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
             </>
           )}
           {showMainChatUi && !canViewChat && effectiveChatReleaseId == null && (
-            <p className="text-xs text-muted-foreground px-4py-3">
+            <p className="px-4 py-3 text-xs text-muted-foreground">
               Choose a version in the header dropdown so we know which release
               to update.
             </p>
@@ -1125,8 +1021,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           )}
 
           {showMainChatUi ? (
-            <>
-              <div className="min-h-[200px] flex-1 space-y-3 overflow-y-auto px-4 py-3">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3">
                 {chatMessages.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     Describe the change you want (e.g. &quot;Make the hero
@@ -1146,10 +1042,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                     chatSending={chatSending}
                     chatPolling={chatPolling}
                     chatHistoryLoading={chatHistoryLoading}
-                    revertingMessageKey={revertingMessageKey}
-                    appliedMessageKey={appliedMessageKey}
+                    revertLoadingKey={revertLoadingKey}
                     chatMayMutate={canMutateChat}
-                    onApplyMessageChanges={applyMessageToPreview}
+                    onRevertMergedMessage={handleRevertMergedMessage}
                   />
                 ))}
                 {(chatSending || chatPolling) && (
@@ -1185,49 +1080,76 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
               </div>
 
               <div className="shrink-0 space-y-2 border-t border-border bg-card px-4 py-3">
-                {mergeAwaitingConfirm && !isLocked && (
-                  <>
-                    {!selectedAppliedMessage ? (
-                      <p className="text-xs text-muted-foreground">
-                        Apply one chat change in preview first, then confirm
-                        merge.
-                      </p>
-                    ) : (
-                      <Button
-                        type="button"
-                        disabled={
-                          !canMutateChat ||
-                          chatSending ||
-                          chatPolling ||
-                          confirmingMerge ||
-                          chatHistoryLoading
-                        }
-                        size="sm"
-                        className="w-full bg-linear-to-r from-violet-600 to-indigo-600 font-semibold text-white shadow-md hover:from-violet-700 hover:to-indigo-700"
-                        onClick={() => setConfirmMergeOpen(true)}
-                      >
-                        {confirmingMerge ? (
-                          <span className="flex items-center justify-center gap-2">
-                            <Spinner className="size-4" />
-                            Merging...
-                          </span>
-                        ) : (
-                          "Confirm changes"
-                        )}
-                      </Button>
-                    )}
-                  </>
-                )}
                 <div className="rounded-lg border border-slate-200/90 bg-white shadow-sm dark:border-border dark:bg-card">
                   <div className="flex flex-col min-h-[48px] items-start gap-0 px-2 py-2">
                     {pickedElementContext ? (
-                      <ElementContextChip
-                        tag={pickedElementContext.tag}
-                        inspectorCtx={pickedElementContext}
-                        onRemove={() => onPickedElementContextChange(null)}
-                        variant="composer"
-                        className="self-start"
-                      />
+                      <div className="flex w-full flex-col gap-1.5 self-stretch">
+                        <div className="flex w-full flex-wrap items-center gap-2">
+                          <ElementContextChip
+                            tag={pickedElementContext.tag}
+                            inspectorCtx={pickedElementContext}
+                            onRemove={() => onPickedElementContextChange(null)}
+                            variant="composer"
+                            className="self-start"
+                          />
+                          {pickedElementContext.replacementKind &&
+                          previewIframeAccessible === true &&
+                          previewIframeRef ? (
+                            <PreviewReplaceImageButton
+                              iframeRef={previewIframeRef}
+                              context={pickedElementContext}
+                              disabled={
+                                !canMutateChat ||
+                                chatSending ||
+                                chatPolling ||
+                                chatHistoryLoading
+                              }
+                              onResult={onPreviewReplaceImageResult}
+                              onStagedForRepo={onReplacementStagedForRepo}
+                              buttonClassName="h-8 rounded-full px-3"
+                            />
+                          ) : null}
+                        </div>
+                        {stagedChatReplacementImage &&
+                        stagedChatReplacementImage.selector ===
+                          pickedElementContext.selector &&
+                        stagedChatReplacementImage.previewDataUrl ? (
+                          <div className="flex flex-wrap items-start gap-2 px-0.5 pt-0.5">
+                            <div className="group relative shrink-0">
+                              <div
+                                className="overflow-hidden rounded-xl border border-slate-200/90 bg-linear-to-br from-slate-50 to-violet-50/80 p-0.5 shadow-sm ring-1 ring-violet-500/25 dark:border-border dark:from-violet-950/40 dark:to-indigo-950/30 dark:ring-violet-400/20"
+                                title="Queued for this message"
+                              >
+                                <img
+                                  src={stagedChatReplacementImage.previewDataUrl}
+                                  alt=""
+                                  className="size-16 rounded-[10px] object-cover"
+                                  draggable={false}
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-slate-200/90 bg-white text-slate-600 shadow-md transition hover:bg-red-50 hover:text-red-600 dark:border-border dark:bg-card dark:hover:bg-red-950/50 dark:hover:text-red-300"
+                                aria-label="Remove queued image"
+                                disabled={
+                                  !canMutateChat ||
+                                  chatSending ||
+                                  chatPolling ||
+                                  chatHistoryLoading
+                                }
+                                onClick={() => onStagedChatReplacementImageChange(null)}
+                              >
+                                <X className="size-3.5" aria-hidden />
+                              </button>
+                            </div>
+                            <p className="min-w-0 max-w-[14rem] pt-1 text-[10px] font-medium leading-snug text-emerald-800 dark:text-emerald-300/95">
+                              Attached — will send with your next message. Agent
+                              saves under{" "}
+                              <span className="font-mono text-[9px]">src/assets/</span>.
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
                     <Textarea
                       placeholder="Type here to reflect changes..."
@@ -1390,77 +1312,10 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                   </div>
                 </div>
               </div>
-            </>
+            </div>
           ) : null}
         </div>
       </div>
-      <Dialog open={confirmMergeOpen} onOpenChange={setConfirmMergeOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Confirm changes?</DialogTitle>
-            <DialogDescription>
-              These changes will be merged into Release{" "}
-              <span className="font-medium text-foreground">
-                {mergeTargetLabel || "the selected release/version"}
-              </span>{" "}
-              and update the live website.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Chat message</p>
-            <div className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-foreground">
-              {!selectedAppliedMessage?.text ? (
-                <span className="text-muted-foreground">
-                  No applied chat message selected.
-                </span>
-              ) : confirmMergeMessageSplit ? (
-                <div className="flex flex-col gap-2.5">
-                  <div className="flex justify-start">
-                    <ElementContextChip
-                      tag={confirmMergeMessageSplit.tag}
-                      contextBlock={confirmMergeMessageSplit.contextBlock}
-                      variant="composer"
-                      className="self-start"
-                    />
-                  </div>
-                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                    {confirmMergeMessageSplit.userText}
-                  </p>
-                </div>
-              ) : (
-                <p className="whitespace-pre-wrap break-words leading-relaxed">
-                  {selectedAppliedMessage.text}
-                </p>
-              )}
-            </div>
-          </div>
-          <DialogFooter showCloseButton={false}>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setConfirmMergeOpen(false)}
-              disabled={confirmingMerge}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              className="bg-linear-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-700 hover:to-indigo-700"
-              onClick={() => void handleConfirmMerge()}
-              disabled={confirmingMerge || !selectedAppliedMessage}
-            >
-              {confirmingMerge ? (
-                <span className="flex items-center gap-2">
-                  <Spinner className="size-4" />
-                  Merging...
-                </span>
-              ) : (
-                "Confirm changes"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 });

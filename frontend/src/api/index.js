@@ -396,13 +396,32 @@ export const publicLockRelease = async (releaseId, lockedBy) => {
 };
 
 /** Public client-link chat (routes under /api/chat). No JWT. */
-export const clientLinkSendFollowup = async (slug, releaseId, text, clientEmail) => {
+export const clientLinkSendFollowup = async (
+  slug,
+  releaseId,
+  text,
+  clientEmail,
+  replacementImage = null,
+) => {
   const enc = encodeURIComponent(String(slug).trim());
-  const response = await api.post(`/api/chat/${enc}/followup`, {
+  const body = {
     r: Number(releaseId),
     t: text,
     clientEmail: String(clientEmail || "").trim(),
-  });
+  };
+  if (
+    replacementImage &&
+    typeof replacementImage === "object" &&
+    typeof replacementImage.data === "string"
+  ) {
+    body.replacementImage = {
+      data: replacementImage.data,
+      mimeType: replacementImage.mimeType || "image/png",
+      width: Number(replacementImage.width) || 512,
+      height: Number(replacementImage.height) || 512,
+    };
+  }
+  const response = await api.post(`/api/chat/${enc}/followup`, body);
   return response.data;
 };
 
@@ -451,6 +470,22 @@ export const clientLinkConfirmMerge = async (
     body.m = mid;
   }
   const response = await api.post(`/api/chat/${enc}/confirm-merge`, body);
+  return response.data;
+};
+
+/** Public: git-revert a merged chat message on launchpad. */
+export const clientLinkRevertMerge = async (
+  slug,
+  releaseId,
+  messageId,
+  clientEmail = "",
+) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const response = await api.post(`/api/chat/${enc}/revert-merge`, {
+    r: Number(releaseId),
+    m: Number(messageId),
+    clientEmail: String(clientEmail || "").trim(),
+  });
   return response.data;
 };
 

@@ -86,6 +86,31 @@ export function SelectClientLinkVersion({
   const getVersionLabel = (version) =>
     formatProjectVersionLabel(version.version);
 
+  /** R1 → "Revision 1"; otherwise same as getVersionLabel (e.g. v1.0.0). */
+  const getRevisionLabelForDropdown = (versionStr) => {
+    if (versionStr == null || versionStr === "") return "";
+    const s = String(versionStr);
+    const m = /^R(\d+)$/i.exec(s);
+    if (m) return `Revision ${m[1]}`;
+    return formatProjectVersionLabel(s);
+  };
+
+  /** "1.0.0" → "Release 1.0.0"; does not prefix if the name already starts with "Release". */
+  const formatReleaseNameForDisplay = (name) => {
+    const t = (name ?? "").trim();
+    if (!t) return "";
+    if (/^release(\s|$)/i.test(t)) return t;
+    return `Release ${t}`;
+  };
+
+  const getFullVersionOptionLabel = (release, version) => {
+    const rev = getRevisionLabelForDropdown(version.version);
+    const rn = formatReleaseNameForDisplay(release?.name ?? "");
+    if (rn && rev) return `${rn} - ${rev}`;
+    if (rev) return rev;
+    return getVersionLabel(version);
+  };
+
   const hasAnyVersions = releases.some(
     (r) => Array.isArray(r.versions) && r.versions.length > 0,
   );
@@ -132,17 +157,25 @@ export function SelectClientLinkVersion({
                 if (!currentId) return null;
                 const version = getVersionById(currentId);
                 const release = getReleaseByVersionId(currentId);
-                const versionLabel = version ? getVersionLabel(version) : "";
-                const releaseName = release?.name ?? "";
                 const activeSuffix = version?.isActive ? " (Active)" : "";
-                return releaseName
-                  ? `${releaseName} – ${versionLabel}${activeSuffix}`
-                  : `${versionLabel}${activeSuffix}`;
+                const main =
+                  version && release
+                    ? getFullVersionOptionLabel(release, version)
+                    : version
+                      ? getVersionLabel(version)
+                      : "";
+                return `${main}${activeSuffix}`;
               })()}
             </SelectValue>
           )}
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent
+          position="popper"
+          sideOffset={4}
+          className={cn(
+            "select-viewport-scrollbar max-h-[min(18rem,var(--radix-select-content-available-height))] min-h-0 max-w-[min(28rem,calc(100vw-1.5rem))]",
+          )}
+        >
           {releases.map((release) => {
             const versions = release.versions || [];
             if (versions.length === 0) return null;
@@ -152,7 +185,7 @@ export function SelectClientLinkVersion({
                   <SelectLabel
                     className={`${isReleaseLocked(release) ? "text-red-500" : "text-green-500"}`}
                   >
-                    {release.name}
+                    {formatReleaseNameForDisplay(release.name)}
                   </SelectLabel>{" "}
                   {isReleaseLocked(release) ? (
                     <Lock className="w-4 h-4 text-red-500" />
@@ -169,7 +202,7 @@ export function SelectClientLinkVersion({
                         "bg-primary text-primary-foreground focus:bg-primary focus:text-primary-foreground ",
                     )}
                   >
-                    {getVersionLabel(version)}
+                    {getFullVersionOptionLabel(release, version)}
                     {version.isActive && " (Active)"}
                   </SelectItem>
                 ))}

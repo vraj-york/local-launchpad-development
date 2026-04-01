@@ -48,7 +48,7 @@ const ProjectCard = ({ project }) => {
           <div className="flex justify-between items-start gap-2">
             <CardTitle className="text-lg leading-tight ">
               <Link
-                to={`/projects/${project.id}`}
+                to={`/projects/details/${project.id}`}
                 className="text-emerald-600 hover:text-emerald-700 hover:underline font-semibold"
               >
                 {project.name}

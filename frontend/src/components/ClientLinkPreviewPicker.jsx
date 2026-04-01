@@ -1,4 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
+import {
+  detectReplacementKind,
+  resolveReplacementElement,
+} from "@/lib/previewImageReplace";
+import { PreviewReplaceImageButton } from "@/components/PreviewReplaceImageButton";
 
 const MAX_OUTER_HTML = 800;
 const MAX_TEXT = 200;
@@ -175,8 +181,37 @@ function refinePickTarget(el) {
   return el;
 }
 
+function computeAssetSrcHint(el) {
+  if (!el || el.nodeType !== 1) return "";
+  const tag = el.tagName?.toUpperCase();
+  if (tag === "IMG") return (el.getAttribute("src") || "").slice(0, 800);
+  if (tag === "PICTURE") {
+    const im = el.querySelector("img");
+    return im ? (im.getAttribute("src") || "").slice(0, 800) : "";
+  }
+  if (tag === "SVG") {
+    const im = el.querySelector("image");
+    const href =
+      (im &&
+        (im.getAttribute("href") ||
+          im.getAttributeNS?.("http://www.w3.org/1999/xlink", "href"))) ||
+      "";
+    return String(href).slice(0, 800);
+  }
+  const pics = el.querySelectorAll("picture");
+  if (pics.length === 1) {
+    const im = pics[0].querySelector("img");
+    if (im) return (im.getAttribute("src") || "").slice(0, 800);
+  }
+  const imgs = el.querySelectorAll("img");
+  if (imgs.length === 1) return (imgs[0].getAttribute("src") || "").slice(0, 800);
+  return "";
+}
+
 export function serializePickedElement(el, win) {
-  if (!el || el.nodeType !== 1) return null;
+  const target = resolveReplacementElement(el);
+  if (!target || target.nodeType !== 1) return null;
+  el = target;
   const doc = el.ownerDocument;
   const w = win || doc?.defaultView;
   let path = "";
@@ -222,6 +257,8 @@ export function serializePickedElement(el, win) {
     textPreview: truncate((el.innerText || "").trim().replace(/\s+/g, " "), MAX_TEXT),
     outerHTML: truncate(el.outerHTML || "", MAX_OUTER_HTML),
     computedStyles,
+    replacementKind: detectReplacementKind(el),
+    assetSrcHint: computeAssetSrcHint(el),
   };
 }
 
@@ -256,6 +293,13 @@ export function formatPickedElementForPrompt(ctx) {
     ctx.computedStyles
       ? `- Computed styles (snapshot): ${JSON.stringify(ctx.computedStyles)}`
       : null,
+    ctx.replacementKind
+      ? `- Image replace mode: ${ctx.replacementKind}`
+      : null,
+    ctx.assetSrcHint
+      ? `- Preview asset URL hint (src): ${ctx.assetSrcHint}`
+      : null,
+    `- Target asset path (required): store this replacement under src/assets/ (e.g. src/assets/images/) and update imports/references in code accordingly.`,
     "",
     "User request:",
   ];
@@ -290,6 +334,8 @@ export function parseContextBlockToInspectorCtx(block) {
     outerHTML: "",
     domPath: "",
     computedStyles: null,
+    replacementKind: null,
+    assetSrcHint: "",
   };
   const lines = block.split("\n");
   for (const line of lines) {
@@ -327,6 +373,8 @@ export function parseContextBlockToInspectorCtx(block) {
         }
       }
     } else if (key.startsWith("HTML (truncated)")) ctx.outerHTML = val;
+    else if (key.startsWith("Image replace mode")) ctx.replacementKind = val;
+    else if (key.startsWith("Preview asset URL hint")) ctx.assetSrcHint = val;
     else if (key.startsWith("Computed styles (snapshot)")) {
       try {
         ctx.computedStyles = JSON.parse(val);
@@ -413,6 +461,8 @@ export function ClientLinkPreviewPicker({
   active,
   pinned,
   onPinnedChange,
+  onReplaceImageResult,
+  onReplacementStagedForRepo,
 }) {
   const overlayRef = useRef(null);
   const [hoverBox, setHoverBox] = useState(null);
@@ -475,6 +525,7 @@ export function ClientLinkPreviewPicker({
         return;
       }
       el = refinePickTarget(el);
+      el = resolveReplacementElement(el);
       const topTag = el.tagName?.toUpperCase();
       if (topTag === "HTML" || topTag === "BODY") {
         setHoverBox(null);
@@ -509,20 +560,19 @@ export function ClientLinkPreviewPicker({
     if (!active) {
       setHoverBox(null);
       setHoverTag("");
-      setPinnedBox(null);
     }
   }, [active]);
 
   const refreshPinnedBox = useCallback(() => {
     const iframe = iframeRef?.current;
     const overlay = overlayRef.current;
-    if (!active || !pinned?.selector || !iframe || !overlay) {
+    if (!pinned?.selector?.trim() || !iframe || !overlay) {
       setPinnedBox(null);
       return;
     }
     const box = measurePinnedBox(iframe, overlay, pinned.selector);
     setPinnedBox(box);
-  }, [active, iframeRef, pinned?.selector]);
+  }, [iframeRef, pinned?.selector]);
 
   useEffect(() => {
     refreshPinnedBox();
@@ -530,7 +580,8 @@ export function ClientLinkPreviewPicker({
 
   useEffect(() => {
     const iframe = iframeRef?.current;
-    if (!active || !iframe || !canAccessIframeDocument(iframe)) return;
+    const tracking = active || Boolean(pinned?.selector?.trim());
+    if (!tracking || !iframe || !canAccessIframeDocument(iframe)) return;
 
     let win;
     try {
@@ -542,15 +593,19 @@ export function ClientLinkPreviewPicker({
 
     const onScroll = () => {
       refreshPinnedBox();
-      const last = lastPointerRef.current;
-      if (last) scheduleHover(last.x, last.y);
+      if (active) {
+        const last = lastPointerRef.current;
+        if (last) scheduleHover(last.x, last.y);
+      }
     };
 
     win.addEventListener("scroll", onScroll, true);
     const onResize = () => {
       refreshPinnedBox();
-      const last = lastPointerRef.current;
-      if (last) scheduleHover(last.x, last.y);
+      if (active) {
+        const last = lastPointerRef.current;
+        if (last) scheduleHover(last.x, last.y);
+      }
     };
     win.addEventListener("resize", onResize);
     window.addEventListener("resize", onResize);
@@ -559,7 +614,7 @@ export function ClientLinkPreviewPicker({
       win.removeEventListener("resize", onResize);
       window.removeEventListener("resize", onResize);
     };
-  }, [active, iframeRef, scheduleHover, refreshPinnedBox]);
+  }, [active, pinned?.selector, iframeRef, scheduleHover, refreshPinnedBox]);
 
   const lastPointerRef = useRef(null);
 
@@ -601,22 +656,31 @@ export function ClientLinkPreviewPicker({
     while (el && el.nodeType !== 1) el = el.parentElement;
     if (!el) return;
     el = refinePickTarget(el);
+    el = resolveReplacementElement(el);
     const top = el.tagName?.toUpperCase();
     if (top === "HTML" || top === "BODY") return;
     const serialized = serializePickedElement(el, win);
     if (serialized) onPinnedChange?.(serialized);
   };
 
-  if (!active) return null;
+  const showOverlay =
+    active || Boolean(pinned?.selector?.trim());
+  if (!showOverlay) return null;
+
+  const iframe = iframeRef?.current;
+  const iframeOk = iframe && canAccessIframeDocument(iframe);
 
   return (
     <div
       ref={overlayRef}
       role="presentation"
-      className="pointer-events-auto absolute inset-0 z-[1000005] cursor-crosshair"
-      onPointerMove={handlePointerMove}
-      onPointerLeave={handlePointerLeave}
-      onClick={handleClick}
+      className={cn(
+        "absolute inset-0 z-[1000005]",
+        active ? "pointer-events-auto cursor-crosshair" : "pointer-events-none",
+      )}
+      onPointerMove={active ? handlePointerMove : undefined}
+      onPointerLeave={active ? handlePointerLeave : undefined}
+      onClick={active ? handleClick : undefined}
     >
       {pinnedBox ? (
         <div
@@ -628,6 +692,25 @@ export function ClientLinkPreviewPicker({
             height: Math.max(pinnedBox.height, 4),
           }}
         />
+      ) : null}
+      {pinnedBox && pinned?.replacementKind && iframeOk ? (
+        <div
+          className="pointer-events-auto absolute z-[1000006]"
+          style={{
+            left: Math.max(
+              0,
+              pinnedBox.left + Math.max(pinnedBox.width, 4) - 148,
+            ),
+            top: pinnedBox.top + Math.max(pinnedBox.height, 4) + 8,
+          }}
+        >
+          <PreviewReplaceImageButton
+            iframeRef={iframeRef}
+            context={pinned}
+            onResult={onReplaceImageResult}
+            onStagedForRepo={onReplacementStagedForRepo}
+          />
+        </div>
       ) : null}
       {hoverBox && (
         <>
@@ -656,3 +739,5 @@ export function ClientLinkPreviewPicker({
     </div>
   );
 }
+
+export { applyPreviewImageReplacement } from "@/lib/previewImageReplace";

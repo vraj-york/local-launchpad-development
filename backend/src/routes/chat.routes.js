@@ -7,6 +7,7 @@ import {
   clientLinkConfirmLaunchpadMerge,
   clientLinkPreviewCommit,
   clientLinkRestoreVersion,
+  clientLinkRevertMergedMessage,
 } from "../services/chat.service.js";
 import ApiError from "../utils/apiError.js";
 
@@ -42,11 +43,19 @@ router.post("/:slug/followup", async (req, res) => {
     if (!releaseId) {
       return res.status(400).json({ error: "Release (r) required" });
     }
+    const replacementImage =
+      req.body?.replacementImage != null &&
+      typeof req.body.replacementImage === "object" &&
+      !Array.isArray(req.body.replacementImage)
+        ? req.body.replacementImage
+        : null;
+
     const result = await clientLinkFollowup({
       slug,
       releaseId,
       promptText: t,
       clientEmail: readClientEmail(req.body),
+      replacementImage,
     });
     return res.json(result);
   } catch (err) {
@@ -102,6 +111,35 @@ router.get("/:slug/messages", async (req, res) => {
   try {
     if (!releaseId) return res.status(400).json({ error: "Release (r) required" });
     const result = await clientLinkListChatMessages({ slug, releaseId });
+    return res.json(result);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+/** POST /api/chat/:slug/revert-merge — point launchpad at this message's merged SHA and redeploy */
+router.post("/:slug/revert-merge", async (req, res) => {
+  const slug = req.params.slug;
+  const releaseId = readReleaseId(req.body, req.query);
+  const rawMsgId = req.body?.m ?? req.body?.messageId;
+  const messageId =
+    rawMsgId != null && rawMsgId !== ""
+      ? Number(Array.isArray(rawMsgId) ? rawMsgId[0] : rawMsgId)
+      : null;
+  try {
+    if (!releaseId) return res.status(400).json({ error: "Release (r) required" });
+    if (!Number.isInteger(messageId) || messageId < 1) {
+      return res.status(400).json({ error: "Message id (m) required" });
+    }
+    const result = await clientLinkRevertMergedMessage({
+      slug,
+      releaseId,
+      messageId,
+      clientEmail: readClientEmail(req.body),
+    });
     return res.json(result);
   } catch (err) {
     if (err instanceof ApiError) {

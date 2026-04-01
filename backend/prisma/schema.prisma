@@ -161,6 +161,7 @@ model Release {
   changeLogs  ReleaseChangeLog[]
   chatHistory ChatHistory[]
 
+
 }
 
 model ReleaseChangeLog {
@@ -215,6 +216,8 @@ model ChatHistory {
   msgKey    String?
   appliedCommitSha String?
   mergedAt  DateTime?
+  revertedAt       DateTime?
+  revertCommitSha  String?
   createdAt DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
