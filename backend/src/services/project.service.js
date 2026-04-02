@@ -537,6 +537,7 @@ export const createProjectService = async ({ userId, body }) => {
     githubUsername,
     githubToken,
     gitRepoPath,
+    developerRepoUrl,
   } = body;
 
   const jiraKeyTrim = (jiraProjectKey && String(jiraProjectKey).trim()) || "";
@@ -729,6 +730,31 @@ export const createProjectService = async ({ userId, body }) => {
       }
     }
 
+    let persistedDeveloperRepoUrl = null;
+    const requestedDeveloperRepo = normalizeGitRepoPathValue(developerRepoUrl);
+    if (requestedDeveloperRepo) {
+      const parsedDev = parseGitRepoPath(requestedDeveloperRepo);
+      const metaDev = await getRepositoryMetadata(
+        parsedDev.owner,
+        parsedDev.repo,
+        githubCreds.githubToken,
+      );
+      if (!metaDev.ok) {
+        throw new ApiError(
+          400,
+          `Cannot access developer repository: ${metaDev.message || "validation failed"}`,
+        );
+      }
+      const mainNorm = normalizeGitRepoPathValue(persistedGitRepoPath);
+      if (mainNorm && requestedDeveloperRepo === mainNorm) {
+        throw new ApiError(
+          400,
+          "developerRepoUrl must differ from the platform Git repository (gitRepoPath).",
+        );
+      }
+      persistedDeveloperRepoUrl = requestedDeveloperRepo;
+    }
+
     // 4. Directory Prep
     await fsExtra.ensureDir(absoluteProjectPath);
     await fsExtra.ensureDir(nginxAvailableDir);
@@ -789,6 +815,7 @@ export const createProjectService = async ({ userId, body }) => {
           stakeholderEmails: stakeholderEmailsDb,
           gitRepoPath:
             persistedGitRepoPath || path.join(relativeProjectPath, ".git"),
+          developerRepoUrl: persistedDeveloperRepoUrl,
           nginxConfigPath: path.join('nginx-configs', configFileName),
         },
       });
@@ -1451,6 +1478,7 @@ const PROJECT_UPDATE_KEYS = [
   "githubToken",
   "githubConnectionId",
   "gitRepoPath",
+  "developerRepoUrl",
   "assignedUserEmails",
   "stakeholderEmails",
 ];
@@ -1507,6 +1535,20 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
           throw new ApiError(400, "gitRepoPath must be a valid GitHub repository path");
         }
         data.gitRepoPath = normalized;
+        continue;
+      }
+      if (key === "developerRepoUrl") {
+        if (raw === null || raw === "") {
+          data.developerRepoUrl = null;
+        } else if (typeof raw === "string") {
+          const normalized = normalizeGitRepoPathValue(raw);
+          if (!normalized) {
+            throw new ApiError(400, "developerRepoUrl must be a valid GitHub repository path");
+          }
+          data.developerRepoUrl = normalized;
+        } else {
+          throw new ApiError(400, "developerRepoUrl must be a string or null");
+        }
         continue;
       }
       if (key === "githubConnectionId" || key === "jiraConnectionId") {
@@ -1634,6 +1676,43 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
       throw new ApiError(
         400,
         `Cannot access destination repository: ${metadata.message || "validation failed"}`,
+      );
+    }
+  }
+
+  if (data.developerRepoUrl !== undefined && data.developerRepoUrl !== null) {
+    const parsedDev = parseGitRepoPath(data.developerRepoUrl);
+    if (!parsedDev) {
+      throw new ApiError(400, "developerRepoUrl must be a valid GitHub repository path");
+    }
+    let ghForDev;
+    try {
+      ghForDev = (await resolveGithubCredentialsFromProject(merged)).githubToken;
+    } catch (e) {
+      throw new ApiError(
+        400,
+        e?.message || "GitHub credentials are required to validate developerRepoUrl",
+      );
+    }
+    if (!ghForDev?.trim()) {
+      throw new ApiError(400, "GitHub token is required to validate developerRepoUrl");
+    }
+    const metaDev = await getRepositoryMetadata(
+      parsedDev.owner,
+      parsedDev.repo,
+      ghForDev,
+    );
+    if (!metaDev.ok) {
+      throw new ApiError(
+        400,
+        `Cannot access developer repository: ${metaDev.message || "validation failed"}`,
+      );
+    }
+    const mainNorm = normalizeGitRepoPathValue(merged.gitRepoPath);
+    if (mainNorm && data.developerRepoUrl === mainNorm) {
+      throw new ApiError(
+        400,
+        "developerRepoUrl must differ from the platform Git repository (gitRepoPath).",
       );
     }
   }

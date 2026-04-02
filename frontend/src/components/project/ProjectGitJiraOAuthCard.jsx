@@ -27,6 +27,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
+const GH_REPO_PATH_RE =
+  /^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i;
+
 /**
  * Shared GitHub + Jira OAuth UI for create project and edit project (creator/admin).
  * @typedef {{ github?: { connections?: Array<{id:number, login?:string|null}> }, jira?: { connections?: Array<{id:number, baseUrl?:string|null}> } }} IntegrationsPayload
@@ -57,6 +60,8 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
   const [reposPage, setReposPage] = useState(1);
   const [reposHasMore, setReposHasMore] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
+  const [developerRepoUrlInput, setDeveloperRepoUrlInput] = useState("");
+  const [devRepoPickNonce, setDevRepoPickNonce] = useState(0);
   const [jiraProjects, setJiraProjects] = useState([]);
   const [jiraProjectsLoading, setJiraProjectsLoading] = useState(false);
   const [jiraBaseUrlResolved, setJiraBaseUrlResolved] = useState("");
@@ -95,6 +100,8 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       setGitRepoPathManual("");
       setRepoSearch("");
       setJiraProjectKey(editProject.jiraProjectKey ?? "");
+      setDeveloperRepoUrlInput(String(editProject.developerRepoUrl ?? ""));
+      setDevRepoPickNonce(0);
       setGithubRepos([]);
       setReposHasMore(false);
       setReposPage(1);
@@ -107,6 +114,8 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       setPickedRepoPath("");
       setGitRepoPathManual("");
       setRepoSearch("");
+      setDeveloperRepoUrlInput("");
+      setDevRepoPickNonce(0);
       setJiraProjectKey("");
     }
   }, [syncKey, isEdit, editProject]);
@@ -267,6 +276,11 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
           errors.gitRepoPath = "Choose a repository from the list";
         }
       }
+      const dev = developerRepoUrlInput.trim();
+      if (dev && !GH_REPO_PATH_RE.test(dev)) {
+        errors.developerRepoUrl =
+          "Enter a valid GitHub path (e.g. github.com/org/other-repo)";
+      }
       return errors;
     },
     [
@@ -277,6 +291,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       repoMode,
       gitRepoPathManual,
       pickedRepoPath,
+      developerRepoUrlInput,
     ],
   );
 
@@ -311,6 +326,11 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
           errors.gitRepoPath = "Choose a repository from the list";
         }
       }
+      const dev = developerRepoUrlInput.trim();
+      if (dev && !GH_REPO_PATH_RE.test(dev)) {
+        errors.developerRepoUrl =
+          "Enter a valid GitHub path (e.g. github.com/org/other-repo)";
+      }
       return errors;
     },
     [
@@ -321,6 +341,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       repoMode,
       gitRepoPathManual,
       pickedRepoPath,
+      developerRepoUrlInput,
     ],
   );
 
@@ -339,6 +360,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       githubConnectionId: Number(selectedGithubConnectionId),
       jiraConnectionId: Number(selectedJiraConnectionId),
       gitRepoPath: gitRepoPathOut,
+      developerRepoUrl: developerRepoUrlInput.trim() || undefined,
       jiraProjectKey: jiraProjectKey.trim(),
       jiraBaseUrl: jiraBaseUrlResolved || jiConn?.baseUrl || undefined,
     };
@@ -349,6 +371,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     repoMode,
     gitRepoPathManual,
     pickedRepoPath,
+    developerRepoUrlInput,
     jiraProjectKey,
     jiraBaseUrlResolved,
   ]);
@@ -391,6 +414,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
         const jiConn = jiConns.find((c) => String(c.id) === selectedJiraConnectionId);
         return jiraBaseUrlResolved || jiConn?.baseUrl || "";
       },
+      getDeveloperRepoUrl: () => developerRepoUrlInput.trim(),
     }),
     [
       validateCreate,
@@ -402,6 +426,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       jiraProjectKey,
       jiraBaseUrlResolved,
       integrationsPayload,
+      developerRepoUrlInput,
     ],
   );
 
@@ -640,6 +665,48 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
             )}
           {validationErrors.gitRepoPath && (
             <p className="text-sm text-destructive">{validationErrors.gitRepoPath}</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="developerRepoUrl-shared">Developer repository (optional)</Label>
+          <p className="text-xs text-muted-foreground">
+            Customer repo that receives the platform repo as a git submodule at{" "}
+            <code className="text-xs">launchpad-frontend/</code>. On lock:{" "}
+            <code className="text-xs">git fetch</code> / <code className="text-xs">git checkout</code>{" "}
+            to the active version commit in that folder, then commit and push the parent repo
+            (default message: &quot;Update the Launchpad branch&quot;).
+          </p>
+          <Input
+            id="developerRepoUrl-shared"
+            placeholder="github.com/org/customer-repo"
+            value={developerRepoUrlInput}
+            onChange={(e) => setDeveloperRepoUrlInput(e.target.value)}
+            className={validationErrors.developerRepoUrl ? "border-destructive" : ""}
+          />
+          {selectedGithubConnectionId && filteredGithubRepos.length > 0 && (
+            <Select
+              key={devRepoPickNonce}
+              onValueChange={(v) => {
+                setDeveloperRepoUrlInput(v);
+                setDevRepoPickNonce((n) => n + 1);
+              }}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="Or choose from your repositories…" />
+              </SelectTrigger>
+              <SelectContent className="max-h-60">
+                {filteredGithubRepos.map((r) => (
+                  <SelectItem key={`devrepo-${r.gitRepoPath}`} value={r.gitRepoPath}>
+                    {r.fullName}
+                    {r.private ? " (private)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {validationErrors.developerRepoUrl && (
+            <p className="text-sm text-destructive">{validationErrors.developerRepoUrl}</p>
           )}
         </div>
 

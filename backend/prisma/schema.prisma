@@ -29,6 +29,7 @@ model User {
 enum OAuthProvider {
   github
   jira_atlassian
+  bitbucket
 }
 
 /// Multiple OAuth connections per user per provider; projects pick a specific connection id.
@@ -45,6 +46,8 @@ model UserOAuthConnection {
   jiraBaseUrl            String?
   atlassianAccountEmail  String?
   atlassianCloudId       String?
+  bitbucketUuid          String?
+  bitbucketUsername      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -52,6 +55,7 @@ model UserOAuthConnection {
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   projectsGithub  Project[] @relation("ProjectGithubConnection")
   projectsJira    Project[] @relation("ProjectJiraConnection")
+  projectsBitbucket Project[] @relation("ProjectBitbucketConnection")
 
   @@index([userId])
   @@index([userId, provider])
@@ -69,6 +73,8 @@ model Project {
   
   githubUsername   String?
   githubToken      String?
+  bitbucketUsername String?
+  bitbucketToken   String?
 
   jiraBaseUrl      String?
   jiraProjectKey   String?
@@ -79,6 +85,8 @@ model Project {
   port              Int?     @unique
   projectPath       String?
   gitRepoPath       String?
+  /// Optional customer/developer repo (GitHub). On release lock, platform source is synced as a submodule at this tag.
+  developerRepoUrl  String?
   nginxConfigPath   String?
   projectId String?  
   /// Optional comma-separated list of assignee emails (external / hub); validated as emails.
@@ -88,6 +96,7 @@ model Project {
 
   githubConnectionId Int?
   jiraConnectionId   Int?
+  bitbucketConnectionId Int?
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -96,6 +105,7 @@ model Project {
   assignedManager   User     @relation("ManagedProjects", fields: [assignedManagerId], references: [id])
   githubConnection  UserOAuthConnection? @relation("ProjectGithubConnection", fields: [githubConnectionId], references: [id], onDelete: SetNull)
   jiraConnection    UserOAuthConnection? @relation("ProjectJiraConnection", fields: [jiraConnectionId], references: [id], onDelete: SetNull)
+  bitbucketConnection UserOAuthConnection? @relation("ProjectBitbucketConnection", fields: [bitbucketConnectionId], references: [id], onDelete: SetNull)
   versions          ProjectVersion[]
   releases          Release[]
   roadmaps          Roadmap[]
@@ -196,6 +206,8 @@ model FigmaConversion {
   /// When true (client-link flows), agent FINISHED does not auto-merge; user must confirm.
   deferLaunchpadMerge           Boolean  @default(false)
   awaitingLaunchpadConfirmation Boolean  @default(false)
+  /// When true (e.g. post-lock developer-repo agent), poller does not merge to platform launchpad.
+  skipLaunchpadAutomation       Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

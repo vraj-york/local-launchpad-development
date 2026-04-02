@@ -149,6 +149,12 @@ export const createProjectValidation = [
         .matches(/^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
         .withMessage("gitRepoPath must be a valid GitHub repository path"),
 
+    body("developerRepoUrl")
+        .optional({ checkFalsy: true })
+        .trim()
+        .matches(/^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
+        .withMessage("developerRepoUrl must be a valid GitHub repository path"),
+
     optionalEmailList("assignedUserEmails"),
     optionalEmailList("stakeholderEmails"),
 
@@ -243,6 +249,16 @@ export const updateProjectValidation = [
         .trim()
         .matches(/^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
         .withMessage("gitRepoPath must be a valid GitHub repository path"),
+
+    body("developerRepoUrl")
+        .optional({ nullable: true })
+        .custom((value) => {
+            if (value === undefined) return true;
+            if (value === null || value === "") return true;
+            const s = String(value).trim();
+            return /^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i.test(s);
+        })
+        .withMessage("developerRepoUrl must be a valid GitHub repository path"),
 
     body("slug")
         .optional({ nullable: true })

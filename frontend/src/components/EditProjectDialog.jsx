@@ -48,6 +48,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+const GH_REPO_PATH_RE =
+  /^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i;
+
 function normEmailListField(v) {
   if (v == null || String(v).trim() === "") return null;
   return String(v).trim();
@@ -66,6 +69,7 @@ function buildUpdatePayload({
   jiraProjectKey,
   jiraApiToken,
   gitRepoPath,
+  developerRepoUrl,
   assignedUserEmails,
   stakeholderEmails,
   project,
@@ -121,6 +125,12 @@ function buildUpdatePayload({
   const repoPath = gitRepoPath.trim();
   if (repoPath && repoPath !== String(project?.gitRepoPath || "").trim()) {
     payload.gitRepoPath = repoPath;
+  }
+
+  const prevDev = String(project?.developerRepoUrl ?? "").trim();
+  const devTrim = developerRepoUrl.trim();
+  if (devTrim !== prevDev) {
+    payload.developerRepoUrl = devTrim === "" ? null : devTrim;
   }
 
   if (
@@ -183,6 +193,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const [jiraApiToken, setJiraApiToken] = useState("");
   const [jiraProjectKey, setJiraProjectKey] = useState("");
   const [gitRepoPath, setGitRepoPath] = useState("");
+  const [developerRepoUrl, setDeveloperRepoUrl] = useState("");
 
   const [assignedUserEmailTags, setAssignedUserEmailTags] = useState([]);
   const [stakeholderEmailTags, setStakeholderEmailTags] = useState([]);
@@ -204,6 +215,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const [jiraProjectsEdit, setJiraProjectsEdit] = useState([]);
   const [jiraProjectsLoadingEdit, setJiraProjectsLoadingEdit] = useState(false);
   const [githubRepoPickSeq, setGithubRepoPickSeq] = useState(0);
+  const [developerRepoPickSeq, setDeveloperRepoPickSeq] = useState(0);
 
   useEffect(() => {
     if (!open || !project) return;
@@ -215,6 +227,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
     setJiraProjectKey(project.jiraProjectKey ?? "");
     setJiraApiToken(project.jiraApiToken ?? "");
     setGitRepoPath(project.gitRepoPath ?? "");
+    setDeveloperRepoUrl(String(project.developerRepoUrl ?? ""));
     setAssignedUserEmailTags(
       storageStringToEmailsArray(project.assignedUserEmails),
     );
@@ -361,6 +374,12 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         errors.gitRepoPath = "Git repository path is required";
       }
 
+      const devLegacy = developerRepoUrl.trim();
+      if (devLegacy && !GH_REPO_PATH_RE.test(devLegacy)) {
+        errors.developerRepoUrl =
+          "Enter a valid GitHub path (e.g. github.com/org/other-repo)";
+      }
+
       if (useOAuthGithub) {
         if (!githubUsername.trim() && !project?.githubUsername?.trim()) {
           errors.githubUsername = "GitHub login missing; reconnect under Integrations";
@@ -428,6 +447,9 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
       const resolvedGitPath = useSharedOAuthCard
         ? gitJiraRef.current?.getEditResolvedGitRepoPath?.(project) ?? ""
         : gitRepoPath;
+      const resolvedDeveloperRepo = useSharedOAuthCard
+        ? gitJiraRef.current?.getDeveloperRepoUrl?.() ?? ""
+        : developerRepoUrl;
       const resolvedJiraKey = useSharedOAuthCard
         ? gitJiraRef.current?.getJiraProjectKey?.() ?? ""
         : jiraProjectKey;
@@ -450,6 +472,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         jiraProjectKey: resolvedJiraKey,
         jiraApiToken,
         gitRepoPath: resolvedGitPath,
+        developerRepoUrl: resolvedDeveloperRepo,
         assignedUserEmails: emailsArrayToStorageString(assignedUserEmailTags),
         stakeholderEmails: emailsArrayToStorageString(stakeholderEmailTags),
         project,
@@ -772,6 +795,49 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                         project must appear on the new remote after migration.
                       </p>
                     )}
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="edit-developerRepoUrl">Developer repository (optional)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    On lock, the server clones the developer repo, pins the platform repo as a
+                    submodule at <code className="text-xs">launchpad-frontend/</code>, runs{" "}
+                    <code className="text-xs">git fetch</code> /{" "}
+                    <code className="text-xs">git checkout &lt;commit&gt;</code> there for the active
+                    version, then <code className="text-xs">git commit</code> /{" "}
+                    <code className="text-xs">git push</code> on the parent. Commit message: env{" "}
+                    <code className="text-xs">DEVELOPER_SUBMODULE_PARENT_COMMIT_MESSAGE</code> or
+                    &quot;Update the Launchpad branch&quot;.
+                  </p>
+                  <Input
+                    id="edit-developerRepoUrl"
+                    placeholder="github.com/org/customer-repo"
+                    value={developerRepoUrl}
+                    onChange={(e) => setDeveloperRepoUrl(e.target.value)}
+                    className={validationErrors.developerRepoUrl ? "border-destructive" : ""}
+                  />
+                  {githubReposEdit.length > 0 && useOAuthGithub && canEditOAuthLinks && (
+                    <Select
+                      key={developerRepoPickSeq}
+                      onValueChange={(v) => {
+                        setDeveloperRepoUrl(v);
+                        setDeveloperRepoPickSeq((s) => s + 1);
+                      }}
+                    >
+                      <SelectTrigger className="h-9" disabled={reposLoadingEdit}>
+                        <SelectValue placeholder="Or pick developer repo from list…" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-52">
+                        {githubReposEdit.map((r) => (
+                          <SelectItem key={`edit-dev-${r.gitRepoPath}`} value={r.gitRepoPath}>
+                            {r.fullName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {validationErrors.developerRepoUrl && (
+                    <p className="text-sm text-destructive">{validationErrors.developerRepoUrl}</p>
+                  )}
                 </div>
                 {!useOAuthGithub && (
                   <div className="space-y-2 sm:col-span-2">

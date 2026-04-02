@@ -843,6 +843,47 @@ export const lockReleaseService = async (releaseId, locked, user) => {
     throw new ApiError(400, "Release is already locked");
   }
 
+  const [projectFull, releaseRow] = await Promise.all([
+    prisma.project.findUnique({ where: { id: release.projectId } }),
+    prisma.release.findUnique({
+      where: { id: releaseId },
+      select: { name: true },
+    }),
+  ]);
+  if (!projectFull) {
+    throw new ApiError(404, "Project not found");
+  }
+
+  if (
+    String(projectFull.developerRepoUrl || "").trim() &&
+    !process.env.CURSOR_API_KEY?.trim()
+  ) {
+    throw new ApiError(
+      503,
+      "CURSOR_API_KEY is required to lock a release when developerRepoUrl is set on the project.",
+    );
+  }
+
+  const { syncDeveloperRepoSubmoduleForReleaseLock } = await import(
+    "./developerRepoSubmodule.service.js"
+  );
+  await syncDeveloperRepoSubmoduleForReleaseLock({
+    releaseId,
+    project: projectFull,
+    releaseName: releaseRow?.name,
+  });
+
+  if (String(projectFull.developerRepoUrl || "").trim()) {
+    const { startPostLockDeveloperRepoCursorAgent } = await import(
+      "./cursor.service.js"
+    );
+    await startPostLockDeveloperRepoCursorAgent({
+      projectId: release.projectId,
+      releaseId,
+      attemptedById: userId,
+    });
+  }
+
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.release.update({
       where: { id: releaseId },
@@ -1771,6 +1812,43 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
 
   if (release.status === ReleaseStatus.locked) {
     throw new ApiError(400, "Release is already locked");
+  }
+
+  const projectFull = await prisma.project.findUnique({
+    where: { id: release.project.id },
+  });
+  if (!projectFull) {
+    throw new ApiError(404, "Project not found");
+  }
+
+  if (
+    String(projectFull.developerRepoUrl || "").trim() &&
+    !process.env.CURSOR_API_KEY?.trim()
+  ) {
+    throw new ApiError(
+      503,
+      "CURSOR_API_KEY is required to lock a release when developerRepoUrl is set on the project.",
+    );
+  }
+
+  const { syncDeveloperRepoSubmoduleForReleaseLock } = await import(
+    "./developerRepoSubmodule.service.js"
+  );
+  await syncDeveloperRepoSubmoduleForReleaseLock({
+    releaseId,
+    project: projectFull,
+    releaseName: release.name,
+  });
+
+  if (String(projectFull.developerRepoUrl || "").trim()) {
+    const { startPostLockDeveloperRepoCursorAgent } = await import(
+      "./cursor.service.js"
+    );
+    await startPostLockDeveloperRepoCursorAgent({
+      projectId: release.project.id,
+      releaseId,
+      attemptedById: projectFull.createdById,
+    });
   }
 
   const updatedRelease = await prisma.$transaction(async (tx) => {

@@ -22,6 +22,7 @@ import {
 } from "./release.service.js";
 import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
 import { resolveGithubCredentialsFromProject } from "./integrationCredential.service.js";
+import ApiError from "../utils/apiError.js";
 
 const CURSOR_BASE_URL = "https://api.cursor.com";
 const prisma = new PrismaClient();
@@ -73,10 +74,22 @@ export async function cursorRequest({ method, path, body, silent = false }) {
     console.log("[cursor] API request", { method: httpMethod, path });
   }
 
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const postWireBody =
+    body !== undefined && body !== null ? JSON.stringify(body) : undefined;
+  if (
+    !silent &&
+    httpMethod === "POST" &&
+    normalizedPath === "/v0/agents" &&
+    postWireBody !== undefined
+  ) {
+    console.log("[cursor] POST /v0/agents exact request body (wire):", postWireBody);
+  }
+
   const res = await fetch(url, {
     method: method || "GET",
     headers,
-    body: body !== undefined && body !== null ? JSON.stringify(body) : undefined,
+    body: postWireBody,
   });
 
   let data;
@@ -215,6 +228,7 @@ export function resolveCursorRepositoryUrl(project) {
  *   target?: unknown,
  *   webhook?: unknown,
  *   deferLaunchpadMerge?: boolean,
+ *   skipLaunchpadAutomation?: boolean — if true, poller does not run launchpad merge (developer-repo lock agent)
  *   omitTargetFromBody?: boolean — if true, do not send `target` in POST /v0/agents (client-link chat)
  *   silentCursorApiLog?: boolean — if true, skip [cursor] API request line for POST /v0/agents (client-link logs its own input)
  * }} params
@@ -231,6 +245,7 @@ export async function createAgentForProjectRelease({
   target,
   webhook,
   deferLaunchpadMerge = false,
+  skipLaunchpadAutomation = false,
   omitTargetFromBody = false,
   silentCursorApiLog = false,
 }) {
@@ -392,6 +407,7 @@ export async function createAgentForProjectRelease({
         status: data.status || "CREATING",
         deferLaunchpadMerge: Boolean(deferLaunchpadMerge),
         awaitingLaunchpadConfirmation: false,
+        skipLaunchpadAutomation: Boolean(skipLaunchpadAutomation),
       },
     });
   } catch (dbErr) {
@@ -399,6 +415,96 @@ export async function createAgentForProjectRelease({
   }
   startAgentPolling(data.id);
   return { ok: true, status, data };
+}
+
+const DEFAULT_DEVELOPER_LOCK_CURSOR_PROMPT = `You are working in the developer integration repository, which includes the Launchpad platform UI as a git submodule at launchpad-frontend/.
+
+Use launchpad-frontend/ as the reference for Launchpad patterns and behavior. Compare launchpad-frontend/ with Frontend/ in this repository (for example using git diff or an equivalent approach) and apply the necessary changes under the Frontend/ folder so it aligns with or correctly reflects patterns from the submodule.
+
+Create a file named backend.md at the repository root that documents how to implement or connect a backend that supports this Frontend: APIs, data contracts, auth or session notes if relevant, deployment considerations, and concrete integration steps.`;
+
+/**
+ * After release lock + submodule sync: start a Cursor agent on the developer repo (main) with a
+ * fixed integration prompt. Skips if developerRepoUrl is unset. Requires CURSOR_API_KEY.
+ *
+ * @param {{ projectId: number, releaseId: number, attemptedById: number }} params
+ * @returns {Promise<{ skipped: true, reason: string } | { skipped: false, agentId: string, status: number }>}
+ */
+export async function startPostLockDeveloperRepoCursorAgent({
+  projectId,
+  releaseId,
+  attemptedById,
+}) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { developerRepoUrl: true },
+  });
+  const devUrl = project?.developerRepoUrl != null ? String(project.developerRepoUrl).trim() : "";
+  if (!devUrl) {
+    return { skipped: true, reason: "no_developer_repo" };
+  }
+  if (!process.env.CURSOR_API_KEY?.trim()) {
+    throw new ApiError(
+      503,
+      "CURSOR_API_KEY is not configured; it is required to start the post-lock Cursor agent when developerRepoUrl is set.",
+    );
+  }
+
+  const parsed = parseGitRepoPath(devUrl);
+  if (!parsed) {
+    throw new ApiError(400, "Invalid developerRepoUrl; expected a GitHub owner/repo path.");
+  }
+  const repositoryUrl = `https://github.com/${parsed.owner}/${parsed.repo}`;
+
+  const envPrompt = process.env.DEVELOPER_LOCK_CURSOR_PROMPT_TEMPLATE?.trim();
+  const promptText = envPrompt && envPrompt.length > 0 ? envPrompt : DEFAULT_DEVELOPER_LOCK_CURSOR_PROMPT;
+  const prompt = { text: promptText };
+
+  let result;
+  try {
+    result = await createAgentForProjectRelease({
+      projectId,
+      releaseId,
+      attemptedById,
+      prompt,
+      source: { repository: repositoryUrl, ref: "main" },
+      skipLaunchpadAutomation: true,
+    });
+  } catch (e) {
+    const code = e?.code;
+    if (code === "PROJECT_NOT_FOUND") {
+      throw new ApiError(404, e.message);
+    }
+    if (
+      code === "GITHUB_NOT_CONFIGURED" ||
+      code === "REPO_UNRESOLVED" ||
+      code === "REPO_INACCESSIBLE"
+    ) {
+      throw new ApiError(400, e.message);
+    }
+    if (e instanceof ApiError) throw e;
+    throw new ApiError(502, e?.message || "Cursor agent creation failed");
+  }
+
+  if (!result.ok) {
+    const body = result.data;
+    const msg =
+      typeof body?.error === "string"
+        ? body.error
+        : typeof body?.message === "string"
+          ? body.message
+          : JSON.stringify(body ?? {});
+    throw new ApiError(
+      result.status >= 400 && result.status < 600 ? result.status : 502,
+      (msg || "Cursor API rejected agent creation").slice(0, 800),
+    );
+  }
+
+  return {
+    skipped: false,
+    agentId: result.data.id,
+    status: result.status,
+  };
 }
 
 /**
@@ -781,6 +887,7 @@ export function startAgentPolling(agentId) {
           projectId: true,
           releaseId: true,
           deferLaunchpadMerge: true,
+          skipLaunchpadAutomation: true,
         },
       });
 
@@ -794,6 +901,13 @@ export function startAgentPolling(agentId) {
       });
 
       if (isCursorAgentSuccessTerminal(agentStatus)) {
+        if (convRow?.skipLaunchpadAutomation) {
+          console.log(
+            "[cursor] poll: agent complete — skipLaunchpadAutomation (no platform merge)",
+            { agentId: id },
+          );
+          return;
+        }
         if (convRow?.deferLaunchpadMerge) {
           try {
             await prisma.$transaction([
