@@ -231,12 +231,15 @@ model ChatHistory {
   mergedAt  DateTime?
   revertedAt       DateTime?
   revertCommitSha  String?
+  /// When false, row is kept for audit but omitted from the client-link chat panel.
+  isActiveChat     Boolean  @default(true)
   createdAt DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   release Release @relation(fields: [releaseId], references: [id], onDelete: Cascade)
 
   @@index([projectId, releaseId, createdAt])
+  @@index([projectId, releaseId, isActiveChat])
   @@index([projectId, releaseId, appliedCommitSha])
 }
 

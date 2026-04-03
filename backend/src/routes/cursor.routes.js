@@ -138,11 +138,20 @@ router.post(
     }
 
     try {
-      console.log("[cursor] manager followup", {
+      const promptText =
+        typeof body.prompt?.text === "string" ? body.prompt.text : "";
+      console.log("[cursor] POST /agents/:id/followup (manager)", {
         agentIdPrefix: id.slice(0, 8),
         projectId: conversion.projectId,
+        promptLength: promptText.length,
+        hasImages: Array.isArray(body.prompt?.images) && body.prompt.images.length > 0,
       });
       const { status, data } = await postCursorAgentFollowup(id, body.prompt);
+      console.log("[cursor] POST /agents/:id/followup (manager) response", {
+        agentIdPrefix: id.slice(0, 8),
+        httpStatus: status,
+        agentStatus: data?.status ?? null,
+      });
       return res.status(status).json(data);
     } catch (err) {
       if (err.code === "CURSOR_KEY_MISSING") {

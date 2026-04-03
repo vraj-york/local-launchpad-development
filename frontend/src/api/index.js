@@ -476,28 +476,6 @@ export const clientLinkFetchChatMessages = async (slug, releaseId) => {
   return response.data;
 };
 
-/** Public: merge Cursor agent branch to launchpad after user confirms. */
-export const clientLinkConfirmMerge = async (
-  slug,
-  releaseId,
-  commitSha,
-  messageId = null,
-  clientEmail = "",
-) => {
-  const enc = encodeURIComponent(String(slug).trim());
-  const mid = Number(messageId);
-  const body = {
-    r: Number(releaseId),
-    sha: String(commitSha || "").trim(),
-    clientEmail: String(clientEmail || "").trim(),
-  };
-  if (Number.isInteger(mid) && mid > 0) {
-    body.m = mid;
-  }
-  const response = await api.post(`/api/chat/${enc}/confirm-merge`, body);
-  return response.data;
-};
-
 /** Public: git-revert a merged chat message on launchpad. */
 export const clientLinkRevertMerge = async (
   slug,
@@ -514,45 +492,6 @@ export const clientLinkRevertMerge = async (
   return response.data;
 };
 
-/** Public: restore live site to a saved release version. */
-export const clientLinkRestoreLiveVersion = async (
-  slug,
-  releaseId,
-  versionId,
-  clientEmail = "",
-) => {
-  const enc = encodeURIComponent(String(slug).trim());
-  const response = await api.post(`/api/chat/${enc}/restore-version`, {
-    r: Number(releaseId),
-    versionId: Number(versionId),
-    clientEmail: String(clientEmail || "").trim(),
-  });
-  return response.data;
-};
-
-/** Public: build temporary preview at commit SHA (or parent commit). */
-export const clientLinkPreviewCommit = async (
-  slug,
-  releaseId,
-  commitSha,
-  before = false,
-  messageId = null,
-  clientEmail = "",
-) => {
-  const enc = encodeURIComponent(String(slug).trim());
-  const mid = Number(messageId);
-  const body = {
-    r: Number(releaseId),
-    sha: String(commitSha || "").trim(),
-    before: Boolean(before),
-    clientEmail: String(clientEmail || "").trim(),
-  };
-  if (Number.isInteger(mid) && mid > 0) {
-    body.m = mid;
-  }
-  const response = await api.post(`/api/chat/${enc}/preview-commit`, body);
-  return response.data;
-};
 
 // Function to upload ZIP to a release
 export const uploadToRelease = async (releaseId, file, roadmapItemIds) => {

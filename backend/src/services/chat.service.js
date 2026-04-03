@@ -5,7 +5,6 @@ import ApiError from "../utils/apiError.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import {
   createAgentForProjectRelease,
-  executeLaunchpadHeadDeploy,
   getCursorAgentById,
   isCursorAgentSuccessTerminal,
   performMergeToLaunchpadAtCommit,
@@ -20,6 +19,17 @@ import {
   scmGetRepositoryMetadata,
   scmPutRepositoryContents,
 } from "./scmFacade.service.js";
+
+import {
+  compareRefs,
+  parseGitRepoPath,
+  getBranchSha,
+  getCommitInfo,
+  getRepositoryMetadata,
+  putRepositoryContents,
+  revertCommitOnRemoteBranch,
+  ensureBranchFrom,
+} from "./github.service.js";
 import {
   buildProjectPreviewFromGitRef,
   deployVersionArtifactsToProjectFolder,
@@ -317,14 +327,23 @@ function mapCursorChatErrorMessageForClient(httpStatus, rawError, fallback) {
   return raw;
 }
 
-function latestConversionForRelease(projectId, releaseId) {
+/**
+ * Client-link chat rows are created with deferLaunchpadMerge=true. Other Cursor runs on the same
+ * release (e.g. Figma) use deferLaunchpadMerge=false; they must not win findFirst(orderBy id desc)
+ * or every chat message would look "legacy" and spawn a new agent.
+ */
+function latestClientLinkConversionForRelease(projectId, releaseId) {
   const pid = Number(projectId);
   const rid = Number(releaseId);
   if (!Number.isInteger(pid) || pid < 1 || !Number.isInteger(rid) || rid < 1) {
     return Promise.resolve(null);
   }
   return prisma.figmaConversion.findFirst({
-    where: { projectId: pid, releaseId: rid },
+    where: {
+      projectId: pid,
+      releaseId: rid,
+      deferLaunchpadMerge: true,
+    },
     orderBy: { id: "desc" },
     select: {
       id: true,
@@ -341,13 +360,19 @@ function latestConversionForRelease(projectId, releaseId) {
   });
 }
 
-function shouldCreateFreshClientAgent(conv) {
-  if (!conv?.agentId) return true;
-  // Legacy or non-client-link runs can auto-merge; never reuse them.
-  if (!conv.deferLaunchpadMerge) return true;
-  // If this conversion was already merged, start a new conversion cycle.
-  if (conv.projectVersionId != null) return true;
-  return false;
+/**
+ * Client-link chat should keep one Cursor agent per release and use POST /v0/agents/:id/followup
+ * for subsequent messages so work stays on the same agent branch. Only create a new agent when
+ * there is no agent yet or the row is a legacy non-deferred conversion.
+ */
+function getClientChatAgentReuseDecision(conv) {
+  if (!conv?.agentId) {
+    return { needFreshAgent: true, reason: "no_agent_id" };
+  }
+  if (!conv.deferLaunchpadMerge) {
+    return { needFreshAgent: true, reason: "legacy_non_deferred_merge" };
+  }
+  return { needFreshAgent: false, reason: "reuse_followup_same_branch" };
 }
 
 function extractAgentActivity(agentData) {
@@ -488,6 +513,7 @@ async function syncPendingMessageCommitSha(project, conv) {
           projectId: project.id,
           releaseId,
           role: "user",
+          isActiveChat: true,
         },
         data: { appliedCommitSha: head.sha },
       }),
@@ -496,6 +522,15 @@ async function syncPendingMessageCommitSha(project, conv) {
         data: { pendingClientChatMessageId: null },
       }),
     ]);
+    console.log("[client-chat] syncPendingMessageCommitSha: stored appliedCommitSha", {
+      projectId: project.id,
+      releaseId,
+      chatHistoryId,
+      conversionId: figmaRow.id,
+      agentIdPrefix: String(figmaRow.agentId || "").slice(0, 8),
+      branch,
+      commitShaPrefix: String(head.sha).slice(0, 7),
+    });
     return head.sha;
   } catch {
     return null;
@@ -517,7 +552,11 @@ async function assertShaOnTrackedAgentBranch(project, releaseId, sha, chatHistor
   }
 
   const rows = await prisma.figmaConversion.findMany({
-    where: { projectId: pid, releaseId: rid },
+    where: {
+      projectId: pid,
+      releaseId: rid,
+      deferLaunchpadMerge: true,
+    },
     orderBy: { id: "desc" },
     select: {
       id: true,
@@ -593,10 +632,41 @@ async function createClientChatAgent({
   forceLaunchpadBase = false,
   promptImages = null,
 }) {
-  const { repositoryUrl, sourceRef } = await resolveClientChatGitSource(
+  const { repositoryUrl, sourceRef, parsed, token } = await resolveClientChatGitSource(
     project,
     forceLaunchpadBase,
   );
+
+  const meta = await getRepositoryMetadata(parsed.owner, parsed.repo, token);
+  if (!meta.ok) {
+    const err = new Error(
+      typeof meta.message === "string" ? meta.message : "Could not read GitHub repository.",
+    );
+    err.code = "REPO_INACCESSIBLE";
+    throw err;
+  }
+  const defaultBranch = meta.defaultBranch?.trim() || "main";
+  const ensured = await ensureBranchFrom(
+    parsed.owner,
+    parsed.repo,
+    "launchpad",
+    defaultBranch,
+    token,
+  );
+  if (!ensured.ok) {
+    const err = new Error(ensured.error || "Could not ensure launchpad branch exists.");
+    err.code = "REPO_UNRESOLVED";
+    throw err;
+  }
+
+  console.log("[client-chat] createAgent: resolved git source for POST /v0/agents", {
+    projectId: project.id,
+    releaseId: Number(releaseId),
+    sourceRef,
+    forceLaunchpadBase,
+    targetBranchName: "launchpad",
+    hasImages: Array.isArray(promptImages) && promptImages.length > 0,
+  });
 
   const prompt =
     Array.isArray(promptImages) && promptImages.length > 0
@@ -610,7 +680,11 @@ async function createClientChatAgent({
     prompt,
     model: "composer-1.5",
     deferLaunchpadMerge: true,
-    omitTargetFromBody: true,
+    omitTargetFromBody: false,
+    target: {
+      branchName: "launchpad",
+      autoCreatePr: false,
+    },
     source: {
       repository: repositoryUrl,
       ref: sourceRef,
@@ -680,6 +754,7 @@ export async function clientLinkFollowup({
         projectId: project.id,
         releaseId: Number(releaseId),
         role: "user",
+        isActiveChat: true,
         mergedAt: { not: null },
       },
       select: { id: true },
@@ -688,8 +763,26 @@ export async function clientLinkFollowup({
   const forceLaunchpadBase =
     Boolean(priorVersionedConversion) || Boolean(priorMergedChat);
 
-  let conv = await latestConversionForRelease(project.id, Number(releaseId));
-  const needFreshAgent = shouldCreateFreshClientAgent(conv);
+  let conv = await latestClientLinkConversionForRelease(project.id, Number(releaseId));
+  const { needFreshAgent, reason: agentReuseReason } =
+    getClientChatAgentReuseDecision(conv);
+
+  console.log("[client-chat] followup: start", {
+    projectId: project.id,
+    releaseId: Number(releaseId),
+    userMessageId: userMessage.id,
+    hasReplacementImage: Boolean(sanitizedReplacement),
+    conversionId: conv?.id ?? null,
+    agentIdPrefix: conv?.agentId ? String(conv.agentId).slice(0, 8) : null,
+    needFreshAgent,
+    agentReuseReason,
+    deferLaunchpadMerge: Boolean(conv?.deferLaunchpadMerge),
+    hasProjectVersion: conv?.projectVersionId != null,
+    targetBranchName:
+      typeof conv?.targetBranchName === "string" && conv.targetBranchName.trim()
+        ? conv.targetBranchName.trim()
+        : null,
+  });
 
   if (sanitizedReplacement) {
     try {
@@ -741,6 +834,13 @@ export async function clientLinkFollowup({
   }
 
   if (needFreshAgent) {
+    console.log("[client-chat] followup: creating new Cursor agent (POST /v0/agents)", {
+      projectId: project.id,
+      releaseId: Number(releaseId),
+      userMessageId: userMessage.id,
+      forceLaunchpadBase,
+      agentReuseReason,
+    });
     try {
       const result = await createClientChatAgent({
         project,
@@ -772,6 +872,13 @@ export async function clientLinkFollowup({
           data: { pendingClientChatMessageId: userMessage.id },
         });
       }
+      console.log("[client-chat] followup: new agent created", {
+        projectId: project.id,
+        releaseId: Number(releaseId),
+        userMessageId: userMessage.id,
+        agentIdPrefix: result.data?.id ? String(result.data.id).slice(0, 8) : null,
+        agentStatus: result.data?.status ?? null,
+      });
       return {
         ok: true,
         agentId: result.data?.id ?? null,
@@ -800,6 +907,15 @@ export async function clientLinkFollowup({
   let status;
   let data;
   try {
+    console.log("[client-chat] followup: reusing agent (POST /v0/agents/:id/followup)", {
+      projectId: project.id,
+      releaseId: Number(releaseId),
+      userMessageId: userMessage.id,
+      conversionId: conv.id,
+      agentIdPrefix: String(conv.agentId).slice(0, 8),
+      agentReuseReason,
+      hasImages: cursorImages.length > 0,
+    });
     await prisma.figmaConversion.update({
       where: { id: conv.id },
       data: {
@@ -835,6 +951,15 @@ export async function clientLinkFollowup({
     );
   }
 
+  console.log("[client-chat] followup: followup accepted", {
+    projectId: project.id,
+    releaseId: Number(releaseId),
+    userMessageId: userMessage.id,
+    agentIdPrefix: String(conv.agentId).slice(0, 8),
+    httpStatus: status,
+    agentStatus: data?.status ?? null,
+  });
+
   return {
     ok: true,
     agentId: conv.agentId,
@@ -849,7 +974,7 @@ export async function clientLinkAgentStatus({ slug, releaseId }) {
   const project = await resolveProjectBySlug(slug);
   await assertReleaseBelongs(releaseId, project.id);
 
-  const conv = await latestConversionForRelease(project.id, Number(releaseId));
+  const conv = await latestClientLinkConversionForRelease(project.id, Number(releaseId));
   if (!conv?.agentId) {
     return { hasAgent: false, status: null };
   }
@@ -918,7 +1043,7 @@ export async function clientLinkExecutionSummary({ slug, releaseId }) {
   const project = await resolveProjectBySlug(slug);
   await assertReleaseBelongs(releaseId, project.id);
 
-  const conv = await latestConversionForRelease(project.id, Number(releaseId));
+  const conv = await latestClientLinkConversionForRelease(project.id, Number(releaseId));
   if (!conv?.id) {
     return {
       ok: false,
@@ -1100,7 +1225,7 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
   await assertReleaseBelongs(releaseId, project.id);
 
   // Backfill commit SHA lazily if polling reached success but row has not been synced yet.
-  const conv = await latestConversionForRelease(project.id, Number(releaseId));
+  const conv = await latestClientLinkConversionForRelease(project.id, Number(releaseId));
   if (
     conv?.agentId &&
     conv.pendingClientChatMessageId != null &&
@@ -1121,6 +1246,7 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
       projectId: project.id,
       releaseId: Number(releaseId),
       role: { not: "system" },
+      isActiveChat: true,
     },
     orderBy: { createdAt: "asc" },
     take: Math.min(Math.max(Number(limit) || 200, 1), 500),
@@ -1188,6 +1314,7 @@ async function executeClientLinkLaunchpadMerge(
         projectId: project.id,
         releaseId: rid,
         role: "user",
+        isActiveChat: true,
       },
       select: { mergedAt: true, appliedCommitSha: true },
     });
@@ -1218,6 +1345,7 @@ async function executeClientLinkLaunchpadMerge(
     where: {
       projectId: project.id,
       releaseId: rid,
+      deferLaunchpadMerge: true,
     },
     orderBy: { id: "desc" },
     select: {
@@ -1282,6 +1410,7 @@ async function executeClientLinkLaunchpadMerge(
         releaseId: rid,
         id: msgId,
         role: "user",
+        isActiveChat: true,
       },
       data: { mergedAt: new Date() },
     });
@@ -1292,6 +1421,7 @@ async function executeClientLinkLaunchpadMerge(
         releaseId: rid,
         role: "user",
         appliedCommitSha: requestedSha,
+        isActiveChat: true,
       },
       data: { mergedAt: new Date() },
     });
@@ -1314,6 +1444,8 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
     console.warn("[chat] clientLinkAutoMergeFromAgentPoll: CURSOR_API_KEY missing");
     return { ok: false, reason: "no_cursor_key" };
   }
+
+  console.log("[client-chat] autoMergePoll: entered", { agentIdPrefix: aid.slice(0, 8) });
 
   const conv = await prisma.figmaConversion.findFirst({
     where: { agentId: aid },
@@ -1383,6 +1515,7 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
         projectId: project.id,
         releaseId: conv.releaseId,
         role: "user",
+        isActiveChat: true,
       },
       select: { appliedCommitSha: true },
     });
@@ -1406,6 +1539,7 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
             projectId: project.id,
             releaseId: conv.releaseId,
             role: "user",
+            isActiveChat: true,
           },
           data: { appliedCommitSha: requestedSha },
         });
@@ -1430,6 +1564,14 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
     });
     return { ok: false, reason: "merge_failed", error: err?.message };
   }
+
+  console.log("[client-chat] autoMergePoll: merge finished", {
+    agentIdPrefix: aid.slice(0, 8),
+    projectId: project.id,
+    releaseId: conv.releaseId,
+    messageId: msgIdForMerge,
+    commitShaPrefix: requestedSha.slice(0, 7),
+  });
 
   return { ok: true };
 }
@@ -1458,8 +1600,10 @@ export async function clientLinkConfirmLaunchpadMerge({
 }
 
 /**
- * Public: Point `launchpad` at this chat's merged commit (later merged chats drop off the live line),
- * full deploy so preview matches, clear merged state for newer user messages on this release.
+ * Public: `git revert` the chat’s merged commit on the agent `targetBranchName`, then merge that
+ * branch tip to `launchpad` (tag + deploy like confirm-merge). Sets `isActiveChat` false for all
+ * rows after this message (same ordering as the thread) so they stay in the DB but are hidden in
+ * the panel. Clears pending conversion pointers for those message ids.
  */
 export async function clientLinkRevertMergedMessage({
   slug,
@@ -1483,6 +1627,7 @@ export async function clientLinkRevertMergedMessage({
       projectId: project.id,
       releaseId: Number(releaseId),
       role: "user",
+      isActiveChat: true,
     },
     select: {
       id: true,
@@ -1520,55 +1665,149 @@ export async function clientLinkRevertMergedMessage({
   }
 
   const conversion = await prisma.figmaConversion.findFirst({
-    where: { projectId: project.id, releaseId: Number(releaseId) },
+    where: {
+      projectId: project.id,
+      releaseId: Number(releaseId),
+      deferLaunchpadMerge: true,
+    },
     orderBy: { id: "desc" },
     select: {
       id: true,
       projectId: true,
       releaseId: true,
       attemptedById: true,
+      agentId: true,
+      targetBranchName: true,
     },
   });
-  if (!conversion) {
-    throw new ApiError(500, "No conversion record for this release.");
+  if (!conversion?.agentId) {
+    throw new ApiError(500, "No client-link agent record for this release.");
   }
+
+  let branch =
+    typeof conversion.targetBranchName === "string"
+      ? conversion.targetBranchName.trim()
+      : "";
+  if (!branch) {
+    try {
+      const { status, data } = await getCursorAgentById(String(conversion.agentId));
+      const fromApi =
+        status === 200 && typeof data?.target?.branchName === "string"
+          ? data.target.branchName.trim()
+          : "";
+      if (fromApi) {
+        branch = fromApi;
+        await prisma.figmaConversion
+          .update({
+            where: { id: conversion.id },
+            data: { targetBranchName: branch },
+          })
+          .catch(() => {});
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!branch) {
+    throw new ApiError(
+      400,
+      "Could not determine the agent branch name to run git revert on. Open chat once so the branch is recorded, then try again.",
+    );
+  }
+
+  console.log("[client-chat] revert: git revert on agent branch", {
+    projectId: project.id,
+    releaseId: Number(releaseId),
+    messageId: mid,
+    branch,
+    revertCommitPrefix: targetSha.slice(0, 7),
+    agentIdPrefix: String(conversion.agentId).slice(0, 8),
+  });
+
+  const revertResult = await revertCommitOnRemoteBranch(
+    owner,
+    repo,
+    token,
+    branch,
+    targetSha,
+  );
+  if (!revertResult.ok) {
+    throw new ApiError(
+      502,
+      revertResult.message || "git revert on the agent branch failed.",
+    );
+  }
+
+  const newHeadSha = revertResult.newHeadSha;
 
   try {
-    await executeLaunchpadHeadDeploy(conversion, targetSha, "launchpad", {
-      skipShaDedupe: true,
-    });
-  } catch (deployErr) {
-    throw new ApiError(502, deployErr?.message || "Deploy after restore failed.");
+    await performMergeToLaunchpadAtCommit(
+      String(conversion.agentId),
+      newHeadSha,
+      branch,
+      { skipShaDedupe: true },
+    );
+  } catch (mergeErr) {
+    throw new ApiError(502, mergeErr?.message || "Merge revert result to launchpad failed.");
   }
 
-  await prisma.$transaction([
-    prisma.chatHistory.updateMany({
-      where: {
-        projectId: project.id,
-        releaseId: Number(releaseId),
-        role: "user",
-        OR: [
-          { createdAt: { gt: row.createdAt } },
-          {
-            AND: [{ createdAt: row.createdAt }, { id: { gt: mid } }],
-          },
-        ],
+  console.log("[client-chat] revert: launchpad updated after revert", {
+    projectId: project.id,
+    releaseId: Number(releaseId),
+    branch,
+    newHeadPrefix: newHeadSha.slice(0, 7),
+    revertedCommitPrefix: targetSha.slice(0, 7),
+  });
+
+  const afterRevertWhere = {
+    projectId: project.id,
+    releaseId: Number(releaseId),
+    isActiveChat: true,
+    OR: [
+      { createdAt: { gt: row.createdAt } },
+      {
+        AND: [{ createdAt: row.createdAt }, { id: { gt: mid } }],
       },
-      data: {
-        mergedAt: null,
-        revertedAt: null,
-        revertCommitSha: null,
-      },
-    }),
-    prisma.chatHistory.update({
+    ],
+  };
+
+  await prisma.$transaction(async (tx) => {
+    const toHide = await tx.chatHistory.findMany({
+      where: afterRevertWhere,
+      select: { id: true },
+    });
+    const hideIds = toHide.map((d) => d.id);
+    if (hideIds.length > 0) {
+      await tx.figmaConversion.updateMany({
+        where: {
+          projectId: project.id,
+          releaseId: Number(releaseId),
+          pendingClientChatMessageId: { in: hideIds },
+        },
+        data: {
+          pendingClientChatMessageId: null,
+          awaitingLaunchpadConfirmation: false,
+        },
+      });
+      await tx.chatHistory.updateMany({
+        where: { id: { in: hideIds } },
+        data: { isActiveChat: false },
+      });
+    }
+    await tx.chatHistory.update({
       where: { id: mid },
       data: {
         revertCommitSha: targetSha,
+        revertedAt: new Date(),
       },
-    }),
-  ]);
+    });
+  });
 
-  return { ok: true, sha: targetSha };
+  return {
+    ok: true,
+    sha: newHeadSha,
+    revertedCommitSha: targetSha,
+  };
 }
 
 /**

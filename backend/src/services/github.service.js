@@ -1,7 +1,37 @@
+import { execFileSync } from "child_process";
+import crypto from "crypto";
+import fs from "fs-extra";
+import path from "path";
 import fetch from "node-fetch";
 import { parseScmRepoPath } from "../utils/scmPath.js";
+import { getBackendRoot } from "../utils/instanceRoot.js";
 
 const GITHUB_API = "https://api.github.com";
+
+const GIT_REVERT_IDENTITY = [
+  "-c",
+  "user.email=client-link-revert@noreply.local",
+  "-c",
+  "user.name=Client Link Revert",
+];
+
+function gitStderrFromError(err) {
+  if (!err || typeof err !== "object") return String(err || "git failed");
+  const b = err.stderr;
+  if (Buffer.isBuffer(b)) return b.toString("utf8").trim();
+  if (typeof b === "string") return b.trim();
+  return String(err.message || "git failed");
+}
+
+function gitExecInDir(args, cwd) {
+  execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 50 * 1024 * 1024,
+    timeout: 600000,
+  });
+}
 
 /**
  * Parse gitRepoPath for GitHub only (e.g. github.com/owner/repo). Bitbucket paths return null.
@@ -408,4 +438,87 @@ export async function createTagIdempotent(owner, repo, tagName, sha, token) {
     status: moved.status,
     message: moved.message || first.message || "Failed to create or move tag",
   };
+}
+
+/**
+ * Clone `branchName`, run `git revert <commitSha>` on it, push to origin.
+ * Requires the `git` CLI on the server. Used for client-link “revert merged chat” on the agent branch.
+ *
+ * @param {string} owner
+ * @param {string} repo
+ * @param {string} token
+ * @param {string} branchName
+ * @param {string} commitSha — full or short SHA of the commit to revert (the chat’s applied commit)
+ * @returns {Promise<{ ok: true, newHeadSha: string } | { ok: false, message: string }>}
+ */
+export async function revertCommitOnRemoteBranch(owner, repo, token, branchName, commitSha) {
+  const branch = String(branchName || "").trim();
+  const sha = String(commitSha || "").trim();
+  if (!branch || !sha) {
+    return { ok: false, message: "Branch and commit SHA are required." };
+  }
+
+  const cmp = await compareRefs(owner, repo, sha, branch, token);
+  if (!cmp.ok) {
+    return {
+      ok: false,
+      message: cmp.message || "Could not verify commit is on the agent branch.",
+    };
+  }
+  const st = String(cmp.data?.status || "").toLowerCase();
+  if (st !== "ahead" && st !== "identical") {
+    return {
+      ok: false,
+      message:
+        "That commit is not an ancestor of the agent branch tip; cannot revert it on that branch.",
+    };
+  }
+
+  const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+  const tmp = path.join(
+    getBackendRoot(),
+    "_tmp_git_revert",
+    `rv_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
+  );
+
+  try {
+    await fs.ensureDir(tmp);
+    gitExecInDir(["clone", "--branch", branch, "--single-branch", cloneUrl, "."], tmp);
+
+    try {
+      gitExecInDir([...GIT_REVERT_IDENTITY, "revert", sha, "--no-edit"], tmp);
+    } catch (e1) {
+      const t1 = gitStderrFromError(e1);
+      if (/merge commit/i.test(t1) && !/-m\s+/.test(t1)) {
+        try {
+          gitExecInDir([...GIT_REVERT_IDENTITY, "revert", "-m", "1", sha, "--no-edit"], tmp);
+        } catch (e2) {
+          return {
+            ok: false,
+            message: gitStderrFromError(e2) || "git revert failed for merge commit (-m 1).",
+          };
+        }
+      } else {
+        return {
+          ok: false,
+          message: t1 || "git revert failed (resolve conflicts locally if needed).",
+        };
+      }
+    }
+
+    gitExecInDir(["push", "origin", `HEAD:refs/heads/${branch}`], tmp);
+
+    const head = await getBranchSha(owner, repo, branch, token);
+    if (!head?.sha) {
+      return { ok: false, message: "Revert pushed but could not read branch HEAD from GitHub." };
+    }
+    return { ok: true, newHeadSha: head.sha };
+  } catch (err) {
+    return {
+      ok: false,
+      message: gitStderrFromError(err) || err?.message || "Git revert or push failed.",
+    };
+  } finally {
+    await fs.remove(tmp).catch(() => {});
+  }
 }

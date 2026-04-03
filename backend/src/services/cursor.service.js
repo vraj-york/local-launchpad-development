@@ -913,42 +913,76 @@ export function startAgentPolling(agentId) {
         }
         if (convRow?.deferLaunchpadMerge) {
           try {
-            await prisma.$transaction([
-              prisma.figmaConversion.updateMany({
+            const { clientLinkAutoMergeFromAgentPoll } = await import("./chat.service.js");
+            const mergeRes = await clientLinkAutoMergeFromAgentPoll(id);
+            if (!mergeRes?.ok) {
+              await prisma.$transaction([
+                prisma.figmaConversion.updateMany({
+                  where: {
+                    releaseId: convRow.releaseId,
+                    projectId: convRow.projectId,
+                    id: { not: convRow.id },
+                  },
+                  data: { awaitingLaunchpadConfirmation: false },
+                }),
+                prisma.figmaConversion.update({
+                  where: { id: convRow.id },
+                  data: {
+                    awaitingLaunchpadConfirmation: true,
+                    ...(branchNameFromAgent
+                      ? { targetBranchName: branchNameFromAgent }
+                      : {}),
+                  },
+                }),
+              ]);
+              console.warn("[cursor] poll: client-link auto-merge deferred to manual confirm", {
+                agentId: id,
+                reason: mergeRes?.reason,
+              });
+            } else {
+              await prisma.figmaConversion.updateMany({
                 where: {
                   releaseId: convRow.releaseId,
                   projectId: convRow.projectId,
                   id: { not: convRow.id },
                 },
                 data: { awaitingLaunchpadConfirmation: false },
-              }),
-              prisma.figmaConversion.update({
-                where: { id: convRow.id },
-                data: {
-                  awaitingLaunchpadConfirmation: true,
-                  ...(branchNameFromAgent
-                    ? { targetBranchName: branchNameFromAgent }
-                    : {}),
-                },
-              }),
-            ]);
-            console.log("[cursor] poll: agent complete — auto-merge to launchpad (client-link)", {
-              agentId: id,
-            });
-          } catch (deferErr) {
-            console.error("[cursor] poll: defer merge flags failed", {
-              agentId: id,
-              error: deferErr?.message || deferErr,
-            });
-          }
-          try {
-            const { clientLinkAutoMergeFromAgentPoll } = await import("./chat.service.js");
-            await clientLinkAutoMergeFromAgentPoll(id);
+              });
+              console.log("[cursor] poll: agent complete — merged to launchpad (client-link)", {
+                agentId: id,
+              });
+            }
           } catch (autoErr) {
             console.error("[cursor] poll: client-link auto-merge failed", {
               agentId: id,
               error: autoErr?.message || autoErr,
             });
+            try {
+              await prisma.$transaction([
+                prisma.figmaConversion.updateMany({
+                  where: {
+                    releaseId: convRow.releaseId,
+                    projectId: convRow.projectId,
+                    id: { not: convRow.id },
+                  },
+                  data: { awaitingLaunchpadConfirmation: false },
+                }),
+                prisma.figmaConversion.update({
+                  where: { id: convRow.id },
+                  data: {
+                    awaitingLaunchpadConfirmation: true,
+                    ...(branchNameFromAgent
+                      ? { targetBranchName: branchNameFromAgent }
+                      : {}),
+                  },
+                }),
+              ]);
+            } catch (deferErr) {
+              console.error("[cursor] poll: defer merge flags failed", {
+                agentId: id,
+                error: deferErr?.message || deferErr,
+              });
+            }
           }
           return;
         }

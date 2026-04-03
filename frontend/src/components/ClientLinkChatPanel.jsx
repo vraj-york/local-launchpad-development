@@ -13,6 +13,14 @@ import {
   clientLinkSendFollowup,
 } from "@/api";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
@@ -292,7 +300,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   chatHistoryLoading,
   revertLoadingKey,
   chatMayMutate,
-  onRevertMergedMessage,
+  onRequestRevertConfirm,
 }) {
   const rowKey = msg.id ?? msg.key ?? null;
   const isMerged = Boolean(msg?.isMerged);
@@ -381,7 +389,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
           {isMerged ? (
             <span className="text-[11px] font-medium text-white/90">
               {isReverted
-                ? "Superseded"
+                ? "Reverted"
                 : `${mergedAtText ? ` ${mergedAtText}` : ""}`}
             </span>
           ) : null}
@@ -392,7 +400,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
               variant="secondary"
               disabled={disableRevert}
               className="h-7 rounded-lg border border-white/40 bg-white/15 px-2 text-[11px] font-semibold text-white hover:bg-white/25 disabled:text-white"
-              onClick={() => void onRevertMergedMessage(msg)}
+              onClick={() => onRequestRevertConfirm?.(msg)}
             >
               {isRevertBusy ? (
                 <span className="flex items-center gap-1">
@@ -438,6 +446,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const [chatPolling, setChatPolling] = useState(false);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
   const [revertLoadingKey, setRevertLoadingKey] = useState(null);
+  const [revertConfirmOpen, setRevertConfirmOpen] = useState(false);
+  const [revertPendingMsg, setRevertPendingMsg] = useState(null);
   const [verifyBump, setVerifyBump] = useState(0);
   const [panelEmailInput, setPanelEmailInput] = useState("");
   const [gateInlineError, setGateInlineError] = useState("");
@@ -885,7 +895,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           mid,
           identityEmail,
         );
-        toast.success("Reverted to this chat's merge.");
+        toast.success("Reverted to this message.");
         await onProjectReload?.();
         onResetPreview?.();
         await refreshChatMessages(effectiveChatReleaseId);
@@ -909,6 +919,25 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       refreshChatMessages,
     ],
   );
+
+  const handleOpenRevertConfirm = useCallback((msg) => {
+    setRevertPendingMsg(msg);
+    setRevertConfirmOpen(true);
+  }, []);
+
+  const revertFollowUpCount = useMemo(() => {
+    if (revertPendingMsg == null || revertPendingMsg.id == null) return 0;
+    const idx = chatMessages.findIndex((m) => m.id === revertPendingMsg.id);
+    if (idx < 0) return 0;
+    return Math.max(0, chatMessages.length - idx - 1);
+  }, [chatMessages, revertPendingMsg]);
+
+  const handleRevertConfirmProceed = useCallback(async () => {
+    const msg = revertPendingMsg;
+    setRevertConfirmOpen(false);
+    setRevertPendingMsg(null);
+    if (msg) await handleRevertMergedMessage(msg);
+  }, [revertPendingMsg, handleRevertMergedMessage]);
 
   useEffect(() => {
     if (
@@ -1044,7 +1073,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                     chatHistoryLoading={chatHistoryLoading}
                     revertLoadingKey={revertLoadingKey}
                     chatMayMutate={canMutateChat}
-                    onRevertMergedMessage={handleRevertMergedMessage}
+                    onRequestRevertConfirm={handleOpenRevertConfirm}
                   />
                 ))}
                 {(chatSending || chatPolling) && (
@@ -1316,6 +1345,46 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           ) : null}
         </div>
       </div>
+
+      <Dialog
+        open={revertConfirmOpen}
+        onOpenChange={(open) => {
+          setRevertConfirmOpen(open);
+          if (!open) setRevertPendingMsg(null);
+        }}
+      >
+        <DialogContent showCloseButton className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Discard all changes up to this checkpoint?</DialogTitle>
+            <DialogDescription className="space-y-2 pt-1 text-left">
+              <span className="block">
+              This will remove all changes made up to this checkpoint. This action cannot be undone.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-lg"
+              onClick={() => {
+                setRevertConfirmOpen(false);
+                setRevertPendingMsg(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={revertLoadingKey != null}
+              className="rounded-lg font-semibold text-white shadow-md disabled:opacity-50"
+              onClick={() => void handleRevertConfirmProceed()}
+            >
+              Revert
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 });
