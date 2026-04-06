@@ -12,19 +12,19 @@ import {
   postCursorAgentFollowup,
   resolveCursorRepositoryUrl,
 } from "./cursor.service.js";
+import { parseScmRepoPath } from "../utils/scmPath.js";
 import {
-  compareRefs,
-  parseGitRepoPath,
-  getBranchSha,
-  getCommitInfo,
-  getRepositoryMetadata,
-  putRepositoryContents,
-} from "./github.service.js";
+  scmCompareRefs,
+  scmGetBranchSha,
+  scmGetCommitInfo,
+  scmGetRepositoryMetadata,
+  scmPutRepositoryContents,
+} from "./scmFacade.service.js";
 import {
   buildProjectPreviewFromGitRef,
   deployVersionArtifactsToProjectFolder,
 } from "./project.service.js";
-import { resolveGithubCredentialsFromProject } from "./integrationCredential.service.js";
+import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
 
 const prisma = new PrismaClient();
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
@@ -87,13 +87,13 @@ function replacementMimeToExt(mimeType) {
 
 /**
  * Base Git ref for client-link Cursor agents (persist git path; launchpad vs default branch).
- * @throws {Error} with .code REPO_UNRESOLVED | GITHUB_NOT_CONFIGURED
+ * @throws {Error} with .code REPO_UNRESOLVED | SCM_NOT_CONFIGURED
  */
 async function resolveClientChatGitSource(project, forceLaunchpadBase = false) {
   const resolved = resolveCursorRepositoryUrl(project);
   if (!resolved.repositoryUrl) {
     const err = new Error(
-      "Could not resolve GitHub repository for this project. Set gitRepoPath or GitHub username.",
+      "Could not resolve repository for this project. Set gitRepoPath or connect GitHub/Bitbucket.",
     );
     err.code = "REPO_UNRESOLVED";
     throw err;
@@ -106,27 +106,47 @@ async function resolveClientChatGitSource(project, forceLaunchpadBase = false) {
     project.gitRepoPath = resolved.gitRepoPathToPersist;
   }
   let sourceRef = "launchpad";
-  let parsed = parseGitRepoPath(project.gitRepoPath || "");
+  let parsed = parseScmRepoPath(project.gitRepoPath || "");
   if (!parsed && resolved.repositoryUrl) {
-    parsed = parseGitRepoPath(resolved.repositoryUrl);
+    parsed = parseScmRepoPath(resolved.repositoryUrl);
   }
-  const token = project.githubToken?.trim();
   if (!parsed) {
     const err = new Error(
-      "Could not resolve GitHub repository for this project.",
+      "Could not resolve repository owner/slug for this project.",
     );
     err.code = "REPO_UNRESOLVED";
     throw err;
   }
-  if (!token) {
-    const err = new Error("GitHub token is not configured for this project.");
-    err.code = "GITHUB_NOT_CONFIGURED";
+  let scm;
+  try {
+    scm = await resolveScmCredentialsFromProject(project);
+  } catch (e) {
+    const err = new Error(
+      typeof e?.message === "string"
+        ? e.message
+        : "Repository credentials are not configured for this project.",
+    );
+    err.code = "SCM_NOT_CONFIGURED";
     throw err;
   }
-  const lp = await getBranchSha(parsed.owner, parsed.repo, "launchpad", token);
+  const token = scm.token?.trim() || "";
+  if (!token) {
+    const err = new Error("Repository token is not configured for this project.");
+    err.code = "SCM_NOT_CONFIGURED";
+    throw err;
+  }
+  if (scm.provider !== parsed.provider) {
+    const err = new Error(
+      `gitRepoPath points to ${parsed.provider} but project credentials are for ${scm.provider}.`,
+    );
+    err.code = "REPO_UNRESOLVED";
+    throw err;
+  }
+  const lp = await scmGetBranchSha(parsed.provider, parsed.owner, parsed.repo, "launchpad", token);
   const launchpadMissing = !lp?.sha;
   if (launchpadMissing && !forceLaunchpadBase) {
-    const meta = await getRepositoryMetadata(
+    const meta = await scmGetRepositoryMetadata(
+      parsed.provider,
       parsed.owner,
       parsed.repo,
       token,
@@ -165,6 +185,7 @@ async function resolveAgentTargetBranchForFollowup(conv) {
  * @returns {Promise<{ ok: true, path: string, branch: string } | { ok: false, message: string }>}
  */
 async function commitClientLinkReplacementToBranch({
+  provider,
   owner,
   repo,
   token,
@@ -172,17 +193,17 @@ async function commitClientLinkReplacementToBranch({
   userMessageId,
   sanitized,
 }) {
-  const branchHead = await getBranchSha(owner, repo, branch, token);
+  const branchHead = await scmGetBranchSha(provider, owner, repo, branch, token);
   if (!branchHead?.sha) {
     return {
       ok: false,
-      message: `Branch "${branch}" was not found on GitHub.`,
+      message: `Branch "${branch}" was not found on the remote.`,
     };
   }
   const ext = replacementMimeToExt(sanitized.mimeType);
   const suffix = crypto.randomBytes(4).toString("hex");
   const filePath = `src/assets/images/client-link-${userMessageId}-${suffix}.${ext}`;
-  const put = await putRepositoryContents(owner, repo, filePath, {
+  const put = await scmPutRepositoryContents(provider, owner, repo, filePath, {
     message: `chore(client-link): add replacement image (chat #${userMessageId})`,
     contentBase64: sanitized.data,
     branch,
@@ -195,7 +216,7 @@ async function commitClientLinkReplacementToBranch({
       message:
         typeof put.message === "string"
           ? put.message
-          : "GitHub refused the file upload.",
+          : "The repository host refused the file upload.",
     };
   }
   return { ok: true, path: filePath, branch };
@@ -218,6 +239,9 @@ export async function resolveProjectBySlug(slug) {
       githubUsername: true,
       stakeholderEmails: true,
       githubConnectionId: true,
+      bitbucketConnectionId: true,
+      bitbucketToken: true,
+      bitbucketUsername: true,
       createdById: true,
     },
   });
@@ -350,7 +374,7 @@ async function resolveClientChatRepository(project) {
   if (!resolved.repositoryUrl) {
     throw new ApiError(
       400,
-      "Could not determine the GitHub repository URL for this project.",
+      "Could not determine the repository URL for this project.",
     );
   }
 
@@ -362,20 +386,32 @@ async function resolveClientChatRepository(project) {
     project.gitRepoPath = resolved.gitRepoPathToPersist;
   }
 
-  const parsed = parseGitRepoPath(resolved.repositoryUrl);
+  const parsed =
+    parseScmRepoPath(project.gitRepoPath || "") ||
+    parseScmRepoPath(resolved.repositoryUrl);
   if (!parsed) {
-    throw new ApiError(400, "Invalid GitHub repository URL format.");
+    throw new ApiError(400, "Invalid repository URL format.");
   }
   let token = "";
+  let provider = parsed.provider;
   try {
-    token = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
-  } catch {
+    const scm = await resolveScmCredentialsFromProject(project);
+    if (scm.provider !== parsed.provider) {
+      throw new ApiError(
+        400,
+        `Repository path does not match connected ${scm.provider} credentials.`,
+      );
+    }
+    token = scm.token?.trim() || "";
+    provider = scm.provider;
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
     token = "";
   }
   if (!token) {
-    throw new ApiError(400, "GitHub token is not configured for this project.");
+    throw new ApiError(400, "Repository token is not configured for this project.");
   }
-  return { owner: parsed.owner, repo: parsed.repo, token };
+  return { owner: parsed.owner, repo: parsed.repo, token, provider };
 }
 
 /**
@@ -435,7 +471,13 @@ async function syncPendingMessageCommitSha(project, conv) {
 
   try {
     const repo = await resolveClientChatRepository(project);
-    const head = await getBranchSha(repo.owner, repo.repo, branch, repo.token);
+    const head = await scmGetBranchSha(
+      repo.provider,
+      repo.owner,
+      repo.repo,
+      branch,
+      repo.token,
+    );
     if (!head?.sha) {
       return null;
     }
@@ -514,7 +556,14 @@ async function assertShaOnTrackedAgentBranch(project, releaseId, sha, chatHistor
 
   let lastCompareError = "";
   for (const branch of branches) {
-    const cmp = await compareRefs(repo.owner, repo.repo, sha, branch, repo.token);
+    const cmp = await scmCompareRefs(
+      repo.provider,
+      repo.owner,
+      repo.repo,
+      sha,
+      branch,
+      repo.token,
+    );
     if (!cmp.ok) {
       lastCompareError = cmp.message || "compare failed";
       continue;
@@ -659,6 +708,7 @@ export async function clientLinkFollowup({
         );
       }
       const commit = await commitClientLinkReplacementToBranch({
+        provider: repoCtx.provider,
         owner: repoCtx.owner,
         repo: repoCtx.repo,
         token: repoCtx.token,
@@ -677,6 +727,7 @@ export async function clientLinkFollowup({
       if (err instanceof ApiError) throw err;
       if (
         err.code === "GITHUB_NOT_CONFIGURED" ||
+        err.code === "SCM_NOT_CONFIGURED" ||
         err.code === "REPO_UNRESOLVED"
       ) {
         throw new ApiError(400, err.message);
@@ -730,6 +781,7 @@ export async function clientLinkFollowup({
       if (err instanceof ApiError) throw err;
       if (
         err.code === "GITHUB_NOT_CONFIGURED" ||
+        err.code === "SCM_NOT_CONFIGURED" ||
         err.code === "REPO_UNRESOLVED" ||
         err.code === "REPO_INACCESSIBLE"
       ) {
@@ -948,44 +1000,48 @@ export async function clientLinkExecutionSummary({ slug, releaseId }) {
     };
   }
 
-  let ghTok = "";
+  let scmTok = "";
+  let scmProvider = "github";
   try {
-    ghTok = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+    const scm = await resolveScmCredentialsFromProject(project);
+    scmTok = scm.token?.trim() || "";
+    scmProvider = scm.provider;
   } catch {
-    ghTok = "";
+    scmTok = "";
   }
-  if (!ghTok?.trim() || !project.gitRepoPath?.trim()) {
+  if (!scmTok || !project.gitRepoPath?.trim()) {
     return {
       ok: true,
       ready: true,
       summaryLines: [
         `Created version ${currentVersion.version} (${currentVersion.gitTag}).`,
-        "Could not compare against previous version because GitHub token/repository path is not configured.",
+        "Could not compare against previous version because repository credentials or gitRepoPath are not configured.",
       ],
       stats: null,
       files: [],
     };
   }
-  const parsedRepo = parseGitRepoPath(project.gitRepoPath);
-  if (!parsedRepo) {
+  const parsedRepo = parseScmRepoPath(project.gitRepoPath);
+  if (!parsedRepo || parsedRepo.provider !== scmProvider) {
     return {
       ok: true,
       ready: true,
       summaryLines: [
         `Created version ${currentVersion.version} (${currentVersion.gitTag}).`,
-        "Could not compare versions because gitRepoPath format is invalid.",
+        "Could not compare versions because gitRepoPath format is invalid or does not match the connected host.",
       ],
       stats: null,
       files: [],
     };
   }
 
-  const compare = await compareRefs(
+  const compare = await scmCompareRefs(
+    scmProvider,
     parsedRepo.owner,
     parsedRepo.repo,
     previousVersion.gitTag,
     currentVersion.gitTag,
-    ghTok.trim(),
+    scmTok,
   );
   if (!compare.ok) {
     return {
@@ -993,7 +1049,7 @@ export async function clientLinkExecutionSummary({ slug, releaseId }) {
       ready: true,
       summaryLines: [
         `Created version ${currentVersion.version} (${currentVersion.gitTag}).`,
-        `Could not generate GitHub compare summary: ${compare.message}.`,
+        `Could not generate compare summary: ${compare.message}.`,
       ],
       stats: null,
       files: [],
@@ -1187,7 +1243,8 @@ async function executeClientLinkLaunchpadMerge(
     const branch =
       typeof row.targetBranchName === "string" ? row.targetBranchName.trim() : "";
     if (!branch) continue;
-    const cmp = await compareRefs(
+    const cmp = await scmCompareRefs(
+      projectRepo.provider,
       projectRepo.owner,
       projectRepo.repo,
       requestedSha,
@@ -1291,13 +1348,20 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
       slug: true,
       assignedManagerId: true,
       githubToken: true,
+      githubUsername: true,
+      githubConnectionId: true,
+      bitbucketConnectionId: true,
+      bitbucketToken: true,
+      bitbucketUsername: true,
+      createdById: true,
       name: true,
       gitRepoPath: true,
-      githubUsername: true,
       stakeholderEmails: true,
     },
   });
-  if (!project?.githubToken?.trim()) {
+  try {
+    await resolveScmCredentialsFromProject(project);
+  } catch {
     return { ok: false, reason: "no_token" };
   }
 
@@ -1327,7 +1391,8 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
   if (!requestedSha && conv.targetBranchName?.trim()) {
     try {
       const repo = await resolveClientChatRepository(project);
-      const head = await getBranchSha(
+      const head = await scmGetBranchSha(
+        repo.provider,
         repo.owner,
         repo.repo,
         conv.targetBranchName.trim(),
@@ -1441,16 +1506,16 @@ export async function clientLinkRevertMergedMessage({
   }
 
   const repoCtx = await resolveClientChatRepository(project);
-  const { owner, repo, token } = repoCtx;
+  const { owner, repo, token, provider } = repoCtx;
 
   // Same deploy primitive as merge: force `launchpad` to this SHA. Do not require git ancestry to
   // current launchpad — each chat uses its own agent branch; history is not always linear even when
-  // previews stack correctly. We only require the commit to still exist on GitHub.
-  const commitOk = await getCommitInfo(owner, repo, targetSha, token);
+  // previews stack correctly. We only require the commit to still exist on the remote.
+  const commitOk = await scmGetCommitInfo(provider, owner, repo, targetSha, token);
   if (!commitOk.ok) {
     throw new ApiError(
       400,
-      "This chat's saved commit was not found on GitHub (it may have been removed or the SHA is invalid).",
+      "This chat's saved commit was not found on the repository (it may have been removed or the SHA is invalid).",
     );
   }
 
@@ -1597,7 +1662,13 @@ export async function clientLinkPreviewCommit({
   );
   let targetSha = inputSha;
   if (before) {
-    const commit = await getCommitInfo(repo.owner, repo.repo, inputSha, repo.token);
+    const commit = await scmGetCommitInfo(
+      repo.provider,
+      repo.owner,
+      repo.repo,
+      inputSha,
+      repo.token,
+    );
     if (!commit.ok) {
       throw new ApiError(400, `Could not resolve commit parent: ${commit.message}`);
     }

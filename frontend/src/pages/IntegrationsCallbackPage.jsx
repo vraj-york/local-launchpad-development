@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 
 /**
- * OAuth return URL (GitHub / Jira). Backend redirects here with ?provider=&ok=1 or ?error=
+ * OAuth return URL (GitHub / Bitbucket / Jira). Backend redirects here with ?provider=&ok=1 or ?error=
  */
 const IntegrationsCallbackPage = () => {
   const [params] = useSearchParams();
@@ -20,9 +20,11 @@ const IntegrationsCallbackPage = () => {
     const label =
       provider === "github"
         ? "GitHub"
-        : provider === "jira"
-          ? "Jira"
-          : "Integration";
+        : provider === "bitbucket"
+          ? "Bitbucket"
+          : provider === "jira"
+            ? "Jira"
+            : "Integration";
     if (err) {
       toast.error(`${label}: ${decodeURIComponent(err)}`);
     } else if (ok === "1") {
@@ -30,7 +32,9 @@ const IntegrationsCallbackPage = () => {
     }
 
     if (!user) {
-      toast.error("Session not found — log in again, then retry connecting GitHub or Jira.");
+      toast.error(
+        "Session not found — log in again, then retry connecting GitHub, Bitbucket, or Jira.",
+      );
       navigate("/login", { replace: true });
       return;
     }

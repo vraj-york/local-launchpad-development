@@ -1,24 +1,17 @@
 import fetch from "node-fetch";
+import { parseScmRepoPath } from "../utils/scmPath.js";
 
 const GITHUB_API = "https://api.github.com";
 
 /**
- * Parse gitRepoPath (e.g. "github.com/owner/repo" or "https://github.com/owner/repo") into { owner, repo }.
+ * Parse gitRepoPath for GitHub only (e.g. github.com/owner/repo). Bitbucket paths return null.
  * @param {string} gitRepoPath
  * @returns {{ owner: string, repo: string } | null}
  */
 export function parseGitRepoPath(gitRepoPath) {
-  const s = typeof gitRepoPath === "string" ? gitRepoPath.trim() : "";
-  if (!s) return null;
-  let path = s
-    .replace(/^https?:\/\//i, "")
-    .replace(/\.git$/i, "")
-    .replace(/^github\.com\/?/i, "");
-  const parts = path.split("/").filter(Boolean);
-  if (parts.length >= 2) {
-    return { owner: parts[0], repo: parts[1] };
-  }
-  return null;
+  const p = parseScmRepoPath(gitRepoPath);
+  if (!p || p.provider !== "github") return null;
+  return { owner: p.owner, repo: p.repo };
 }
 
 /**

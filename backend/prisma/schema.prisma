@@ -43,6 +43,9 @@ model UserOAuthConnection {
   encryptedRefreshToken  String         @db.Text
   accessTokenExpiresAt   DateTime?
   githubLogin            String?
+  /// Bitbucket Cloud account UUID (dedupe on OAuth reconnect).
+  bitbucketUuid          String?
+  bitbucketUsername      String?
   jiraBaseUrl            String?
   atlassianAccountEmail  String?
   atlassianCloudId       String?
@@ -54,6 +57,7 @@ model UserOAuthConnection {
 
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   projectsGithub  Project[] @relation("ProjectGithubConnection")
+  projectsBitbucket Project[] @relation("ProjectBitbucketConnection")
   projectsJira    Project[] @relation("ProjectJiraConnection")
   projectsBitbucket Project[] @relation("ProjectBitbucketConnection")
 
@@ -76,6 +80,9 @@ model Project {
   bitbucketUsername String?
   bitbucketToken   String?
 
+  bitbucketUsername String?
+  bitbucketToken    String?
+
   jiraBaseUrl      String?
   jiraProjectKey   String?
   jiraApiToken  String?
@@ -94,7 +101,8 @@ model Project {
   /// Optional comma-separated stakeholder emails; public release lock only allowed for these addresses.
   stakeholderEmails   String?
 
-  githubConnectionId Int?
+  githubConnectionId   Int?
+  bitbucketConnectionId Int?
   jiraConnectionId   Int?
   bitbucketConnectionId Int?
 
@@ -104,6 +112,7 @@ model Project {
   createdBy         User     @relation("CreatedProjects", fields: [createdById], references: [id])
   assignedManager   User     @relation("ManagedProjects", fields: [assignedManagerId], references: [id])
   githubConnection  UserOAuthConnection? @relation("ProjectGithubConnection", fields: [githubConnectionId], references: [id], onDelete: SetNull)
+  bitbucketConnection UserOAuthConnection? @relation("ProjectBitbucketConnection", fields: [bitbucketConnectionId], references: [id], onDelete: SetNull)
   jiraConnection    UserOAuthConnection? @relation("ProjectJiraConnection", fields: [jiraConnectionId], references: [id], onDelete: SetNull)
   bitbucketConnection UserOAuthConnection? @relation("ProjectBitbucketConnection", fields: [bitbucketConnectionId], references: [id], onDelete: SetNull)
   versions          ProjectVersion[]

@@ -24,18 +24,27 @@ import {
   setReleaseStatusService as applyReleaseStatus,
 } from "./release.service.js";
 import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
+import { parseScmRepoPath } from "../utils/scmPath.js";
+import {
+  createBitbucketRepository,
+  getBitbucketRepositoryMetadata,
+  getDefaultBitbucketWorkspace,
+} from "./bitbucket.service.js";
 import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
 import { normalizeOptionalEmailListString } from "../utils/emailList.utils.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import { maskProjectSecrets } from "../utils/secretMasking.js";
 import {
+  assertBitbucketConnectionOwned,
   assertGithubConnectionOwned,
   assertJiraConnectionOwned,
   resolveGithubCredentialsFromProject,
   resolveJiraCredentialsFromProject,
+  resolveScmCredentialsFromProject,
   jiraIntegrationConfigFromResolved,
 } from "./integrationCredential.service.js";
 import {
+  ensureFreshBitbucketConnection,
   ensureFreshGithubConnection,
   ensureFreshJiraConnection,
   getIntegrationsStatus,
@@ -74,9 +83,10 @@ const execAsync = promisify(exec);
 
 function normalizeGitRepoPathValue(raw) {
   if (raw == null) return null;
-  const parsed = parseGitRepoPath(String(raw));
+  const parsed = parseScmRepoPath(String(raw));
   if (!parsed) return null;
-  return `github.com/${parsed.owner}/${parsed.repo}`;
+  const host = parsed.provider === "bitbucket" ? "bitbucket.org" : "github.com";
+  return `${host}/${parsed.owner}/${parsed.repo}`;
 }
 
 function buildGitRemoteUrl(gitRepoPath, token) {
@@ -225,7 +235,7 @@ function refreshSharedGitCacheRemote(gitRepoPath, githubToken, backendRoot) {
 async function withPreviewBuildLock(projectId, task) {
   const key = Number(projectId);
   const previous = previewBuildLocks.get(key) || Promise.resolve();
-  const current = previous.catch(() => {}).then(task);
+  const current = previous.catch(() => { }).then(task);
   const chain = current.finally(() => {
     if (previewBuildLocks.get(key) === chain) {
       previewBuildLocks.delete(key);
@@ -279,7 +289,7 @@ function deleteLocalGitTag(gitDir, tag) {
 export async function assertProjectAccess(projectId, user) {
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
-    select: { id: true, assignedManagerId: true, assignedUserEmails: true },
+    select: { id: true, createdById: true, assignedUserEmails: true },
   });
 
   if (!project) {
@@ -288,10 +298,11 @@ export async function assertProjectAccess(projectId, user) {
 
   const { role, id: userId } = user;
 
-  const hasAccess =
-    role === "admin" ||
-    (role === "manager" && project.assignedManagerId === userId);
-  if (hasAccess) {
+  if (role === "admin") {
+    return project;
+  }
+
+  if (Number(project.createdById) === Number(userId)) {
     return project;
   }
 
@@ -342,7 +353,7 @@ export async function getCreatorIntegrationConnectionsForEditor(projectId, user)
 export async function assertProjectReadAccess(projectId, user) {
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
-    select: { id: true, assignedManagerId: true, assignedUserEmails: true },
+    select: { id: true, createdById: true, assignedUserEmails: true },
   });
   if (!project) {
     throw new ApiError(404, "Project not found");
@@ -350,7 +361,7 @@ export async function assertProjectReadAccess(projectId, user) {
 
   const { role, id: userId } = user || {};
   if (role === "admin") return project;
-  if (role === "manager" && project.assignedManagerId === userId) return project;
+  if (Number(project.createdById) === Number(userId)) return project;
 
   const email = await resolveUserEmail(user);
   const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
@@ -360,18 +371,16 @@ export async function assertProjectReadAccess(projectId, user) {
   throw new ApiError(403, "Forbidden");
 }
 
-/** Allow admin, project creator, or assigned manager to delete. */
+/** Allow admin, project creator, or listed assignee emails to delete. */
 export async function assertProjectDeleteAccess(projectId, user) {
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
-    select: { id: true, createdById: true, assignedManagerId: true, assignedUserEmails: true },
+    select: { id: true, createdById: true, assignedUserEmails: true },
   });
   if (!project) throw new ApiError(404, "Project not found");
   const { role, id: userId } = user;
   const allowed =
-    role === "admin" ||
-    project.createdById === userId ||
-    (role === "manager" && project.assignedManagerId === userId);
+    role === "admin" || Number(project.createdById) === Number(userId);
   if (allowed) return project;
   const email = await resolveUserEmail(user);
   const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
@@ -405,15 +414,15 @@ const validateJiraConnection = async (
   let url;
   const headers = oauthAccessToken
     ? {
-        Authorization: `Bearer ${oauthAccessToken}`,
-        Accept: "application/json",
-      }
+      Authorization: `Bearer ${oauthAccessToken}`,
+      Accept: "application/json",
+    }
     : {
-        Authorization: `Basic ${Buffer.from(`${email}:${apiToken}`).toString("base64")}`,
-        Accept: "application/json",
-        "X-Atlassian-Token": "no-check",
-      };
-console.log("oauthAccessToken", oauthAccessToken);
+      Authorization: `Basic ${Buffer.from(`${email}:${apiToken}`).toString("base64")}`,
+      Accept: "application/json",
+      "X-Atlassian-Token": "no-check",
+    };
+  console.log("oauthAccessToken", oauthAccessToken);
   if (oauthAccessToken) {
     const cloud = atlassianCloudId && String(atlassianCloudId).trim();
     if (!cloud) {
@@ -550,6 +559,10 @@ export const createProjectService = async ({ userId, body }) => {
     body.jiraConnectionId != null && String(body.jiraConnectionId).trim() !== ""
       ? Number(body.jiraConnectionId)
       : null;
+  const bitbucketConnectionId =
+    body.bitbucketConnectionId != null && String(body.bitbucketConnectionId).trim() !== ""
+      ? Number(body.bitbucketConnectionId)
+      : null;
 
   let assignedUserEmailsDb = null;
   let stakeholderEmailsDb = null;
@@ -590,16 +603,44 @@ export const createProjectService = async ({ userId, body }) => {
       }
     }
 
-    // 2. Validate Manager
-    const managerExists = await prisma.user.findFirst({
-      where: { id: Number(assignedManagerId), role: "manager" },
+    // 2. Assigned manager field (legacy FK): default to creator; must be an existing user
+    const effectiveAssignedManagerId =
+      assignedManagerId != null && String(assignedManagerId).trim() !== ""
+        ? Number(assignedManagerId)
+        : Number(userId);
+    if (
+      !Number.isInteger(effectiveAssignedManagerId) ||
+      effectiveAssignedManagerId < 1
+    ) {
+      throw new ApiError(400, "Invalid assigned manager");
+    }
+    const assigneeUser = await prisma.user.findUnique({
+      where: { id: effectiveAssignedManagerId },
       select: { id: true },
     });
-    if (!managerExists) throw new ApiError(400, "Assigned manager not found");
+    if (!assigneeUser) throw new ApiError(400, "Assigned manager user not found");
+
+    if (
+      Number.isInteger(githubConnectionId) &&
+      githubConnectionId > 0 &&
+      Number.isInteger(bitbucketConnectionId) &&
+      bitbucketConnectionId > 0
+    ) {
+      throw new ApiError(400, "Choose either GitHub or Bitbucket OAuth for this project, not both.");
+    }
 
     let effGithubUsername = (githubUsername && String(githubUsername).trim()) || "";
     let effGithubToken = (githubToken && String(githubToken).trim()) || "";
-    if (githubConnectionId) {
+    let effBitbucketUsername = "";
+    let effBitbucketToken = "";
+    if (bitbucketConnectionId) {
+      const bbRow = await assertBitbucketConnectionOwned(userId, bitbucketConnectionId);
+      const fresh = await ensureFreshBitbucketConnection(bbRow);
+      effBitbucketUsername = (fresh.bitbucketUsername || "").trim();
+      effBitbucketToken = fresh.accessToken;
+      effGithubUsername = "";
+      effGithubToken = "";
+    } else if (githubConnectionId) {
       const ghRow = await assertGithubConnectionOwned(userId, githubConnectionId);
       const fresh = await ensureFreshGithubConnection(ghRow);
       effGithubUsername = fresh.githubLogin || effGithubUsername;
@@ -627,21 +668,31 @@ export const createProjectService = async ({ userId, body }) => {
     if (!jiraOAuthAccess && (!effJiraUser || !effJiraToken)) {
       throw new ApiError(400, "Jira account email and API token are required unless using Jira OAuth");
     }
-    if (!effGithubUsername || !effGithubToken) {
+    if (bitbucketConnectionId) {
+      if (!effBitbucketUsername || !effBitbucketToken) {
+        throw new ApiError(400, "Bitbucket connection is incomplete (missing username or token).");
+      }
+    } else if (!effGithubUsername || !effGithubToken) {
       throw new ApiError(400, "GitHub username and access are required (connect GitHub or provide a token)");
     }
 
-    await Promise.all([
-      validateJiraConnection(
-        effJiraBase,
-        jiraKeyTrim,
-        effJiraUser,
-        effJiraToken,
-        jiraOAuthAccess,
-        jiraAtlassianCloudId,
-      ),
-      validateGithubConnection(effGithubUsername, effGithubToken),
-    ]);
+    await validateJiraConnection(
+      effJiraBase,
+      jiraKeyTrim,
+      effJiraUser,
+      effJiraToken,
+      jiraOAuthAccess,
+      jiraAtlassianCloudId,
+    );
+    if (bitbucketConnectionId) {
+      try {
+        await getDefaultBitbucketWorkspace(effBitbucketToken);
+      } catch (e) {
+        throw new ApiError(400, `Bitbucket: ${e.message}`);
+      }
+    } else {
+      await validateGithubConnection(effGithubUsername, effGithubToken);
+    }
     // 2. Paths: projects and nginx-configs live under backend (backend/projects, backend/nginx-configs)
     const backendRoot = getBackendRoot();
     const baseSlug = projectRepoSlugFromDisplayName(nameTrimmed);
@@ -670,14 +721,48 @@ export const createProjectService = async ({ userId, body }) => {
       );
     }
 
-    // 4a. GitHub repo (create once at project create; upload release skips create if repo exists)
+    // 4a. Remote Git repo (GitHub or Bitbucket; create once at project create when needed)
     const githubCreds = {
       githubUsername: effGithubUsername,
       githubToken: effGithubToken,
     };
     let gitRepoUrl = null;
     let persistedGitRepoPath = null;
-    if (githubCreds.githubUsername && githubCreds.githubToken) {
+    if (bitbucketConnectionId && effBitbucketToken) {
+      try {
+        const requestedGitRepoPath = normalizeGitRepoPathValue(gitRepoPath);
+        if (requestedGitRepoPath) {
+          const requestedParsed = parseScmRepoPath(requestedGitRepoPath);
+          if (requestedParsed?.provider === "bitbucket") {
+            const metadata = await getBitbucketRepositoryMetadata(
+              requestedParsed.owner,
+              requestedParsed.repo,
+              effBitbucketToken,
+            );
+            if (metadata.ok) {
+              persistedGitRepoPath = requestedGitRepoPath;
+              gitRepoUrl = `https://bitbucket.org/${requestedParsed.owner}/${requestedParsed.repo}`;
+            } else {
+              console.warn(
+                `[createProject] Bitbucket gitRepoPath not accessible, creating repo instead: ${metadata.message || "validation failed"}`,
+              );
+            }
+          }
+        }
+        if (!persistedGitRepoPath) {
+          const ws = await getDefaultBitbucketWorkspace(effBitbucketToken);
+          await createBitbucketRepository(ws, slug, effBitbucketToken);
+          persistedGitRepoPath = `bitbucket.org/${ws}/${slug}`;
+          gitRepoUrl = `https://bitbucket.org/${ws}/${slug}`;
+        }
+      } catch (e) {
+        console.warn("[createProject] Bitbucket repo:", e.message);
+        throw new ApiError(
+          502,
+          `Bitbucket setup failed: ${e.message}. Fix credentials or repo name and retry.`,
+        );
+      }
+    } else if (githubCreds.githubUsername && githubCreds.githubToken) {
       try {
         const requestedGitRepoPath = normalizeGitRepoPathValue(gitRepoPath);
         if (requestedGitRepoPath) {
@@ -704,7 +789,6 @@ export const createProjectService = async ({ userId, body }) => {
         }
 
         const collaboratorRepo = parseGitRepoPath(persistedGitRepoPath);
-        // Collaborator + invitation email (GitHub notifies invitee)
         const defaultCollaborator =
           process.env.GITHUB_DEFAULT_COLLABORATOR || "kalrav@york.ie";
         if (collaboratorRepo) {
@@ -733,17 +817,8 @@ export const createProjectService = async ({ userId, body }) => {
     let persistedDeveloperRepoUrl = null;
     const requestedDeveloperRepo = normalizeGitRepoPathValue(developerRepoUrl);
     if (requestedDeveloperRepo) {
-      const parsedDev = parseGitRepoPath(requestedDeveloperRepo);
-      const metaDev = await getRepositoryMetadata(
-        parsedDev.owner,
-        parsedDev.repo,
-        githubCreds.githubToken,
-      );
-      if (!metaDev.ok) {
-        throw new ApiError(
-          400,
-          `Cannot access developer repository: ${metaDev.message || "validation failed"}`,
-        );
+      if (!parseScmRepoPath(requestedDeveloperRepo)) {
+        throw new ApiError(400, "developerRepoUrl must be a valid GitHub or Bitbucket repository path");
       }
       const mainNorm = normalizeGitRepoPathValue(persistedGitRepoPath);
       if (mainNorm && requestedDeveloperRepo === mainNorm) {
@@ -794,11 +869,15 @@ export const createProjectService = async ({ userId, body }) => {
               ? body.description.trim() || null
               : null,
           slug,
-          assignedManagerId: Number(assignedManagerId),
+          assignedManagerId: effectiveAssignedManagerId,
           createdById: userId,
-          githubUsername: effGithubUsername,
-          githubToken: githubConnectionId ? null : effGithubToken || null,
-          githubConnectionId: githubConnectionId || null,
+          githubUsername: bitbucketConnectionId ? null : effGithubUsername || null,
+          githubToken:
+            (bitbucketConnectionId || githubConnectionId) ? null : effGithubToken || null,
+          githubConnectionId: bitbucketConnectionId ? null : githubConnectionId || null,
+          bitbucketUsername: bitbucketConnectionId ? effBitbucketUsername || null : null,
+          bitbucketToken: null,
+          bitbucketConnectionId: bitbucketConnectionId || null,
           jiraBaseUrl: effJiraBase || null,
           jiraProjectKey: jiraKeyTrim,
           jiraUsername: effJiraUser || null,
@@ -910,14 +989,11 @@ export const deleteProjectService = async (projectId, user) => {
 
 export async function listProjectsService(user) {
   const { id: userId, role } = user;
-  if (role !== "admin" && role !== "manager") {
-    throw new ApiError(403, "Forbidden");
-  }
 
   const projects = await prisma.project.findMany({
     where: role === "admin" ? {} : {
       OR: [
-        { assignedManagerId: userId },
+        { createdById: userId },
         { assignedUserEmails: { not: null } },
       ],
     },
@@ -982,7 +1058,7 @@ export async function listProjectsService(user) {
   const userEmail = await resolveUserEmail(user);
   return projects
     .filter((project) => {
-      if (project.assignedManagerId === userId) return true;
+      if (Number(project.createdById) === Number(userId)) return true;
       if (!userEmail) return false;
       const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
       return assignedUsers.has(userEmail);
@@ -1477,6 +1553,9 @@ const PROJECT_UPDATE_KEYS = [
   "githubUsername",
   "githubToken",
   "githubConnectionId",
+  "bitbucketUsername",
+  "bitbucketToken",
+  "bitbucketConnectionId",
   "gitRepoPath",
   "developerRepoUrl",
   "assignedUserEmails",
@@ -1532,7 +1611,7 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
         }
         const normalized = normalizeGitRepoPathValue(raw);
         if (!normalized) {
-          throw new ApiError(400, "gitRepoPath must be a valid GitHub repository path");
+          throw new ApiError(400, "gitRepoPath must be a valid GitHub or Bitbucket repository path");
         }
         data.gitRepoPath = normalized;
         continue;
@@ -1543,7 +1622,7 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
         } else if (typeof raw === "string") {
           const normalized = normalizeGitRepoPathValue(raw);
           if (!normalized) {
-            throw new ApiError(400, "developerRepoUrl must be a valid GitHub repository path");
+            throw new ApiError(400, "developerRepoUrl must be a valid GitHub or Bitbucket repository path");
           }
           data.developerRepoUrl = normalized;
         } else {
@@ -1551,7 +1630,7 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
         }
         continue;
       }
-      if (key === "githubConnectionId" || key === "jiraConnectionId") {
+      if (key === "githubConnectionId" || key === "jiraConnectionId" || key === "bitbucketConnectionId") {
         if (raw === null || raw === "") {
           data[key] = null;
         } else {
@@ -1590,6 +1669,18 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
       );
     }
   }
+  if (data.bitbucketConnectionId !== undefined && data.bitbucketConnectionId != null) {
+    const row = await prisma.userOAuthConnection.findFirst({
+      where: { id: data.bitbucketConnectionId, provider: "bitbucket" },
+    });
+    if (!row) throw new ApiError(400, "Invalid Bitbucket connection");
+    if (row.userId !== existingProject.createdById) {
+      throw new ApiError(
+        400,
+        "Bitbucket connection must belong to the user who created this project.",
+      );
+    }
+  }
   if (data.jiraConnectionId !== undefined && data.jiraConnectionId != null) {
     const row = await prisma.userOAuthConnection.findFirst({
       where: { id: data.jiraConnectionId, provider: "jira_atlassian" },
@@ -1604,6 +1695,13 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
   }
 
   const merged = { ...existingProject, ...data };
+
+  if (merged.githubConnectionId && merged.bitbucketConnectionId) {
+    throw new ApiError(
+      400,
+      "Project cannot use both GitHub and Bitbucket OAuth. Remove one connection.",
+    );
+  }
 
   const hasJiraSetup =
     merged.jiraBaseUrl &&
@@ -1638,9 +1736,28 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
 
   const hasGithubSetup =
     merged.githubConnectionId || (merged.githubUsername && merged.githubToken);
+  const hasBitbucketSetup =
+    merged.bitbucketConnectionId || (merged.bitbucketUsername && merged.bitbucketToken);
+  if (hasGithubSetup && hasBitbucketSetup) {
+    throw new ApiError(
+      400,
+      "Project cannot use both GitHub and Bitbucket credentials. Clear one host.",
+    );
+  }
   if (hasGithubSetup) {
     const g = await resolveGithubCredentialsFromProject(merged);
     await validateGithubConnection(g.githubUsername, g.githubToken);
+  }
+  if (hasBitbucketSetup) {
+    const scm = await resolveScmCredentialsFromProject(merged);
+    if (scm.provider !== "bitbucket") {
+      throw new ApiError(400, "Invalid Bitbucket configuration for this project.");
+    }
+    try {
+      await getDefaultBitbucketWorkspace(scm.token);
+    } catch (e) {
+      throw new ApiError(400, `Bitbucket: ${e.message}`);
+    }
   }
 
   const nextGitRepoPath =
@@ -1648,68 +1765,67 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
   const oldGitRepoPath = normalizeGitRepoPathValue(existingProject.gitRepoPath);
   const nextNormalizedGitRepoPath = normalizeGitRepoPathValue(nextGitRepoPath);
   if (data.gitRepoPath !== undefined && !nextNormalizedGitRepoPath) {
-    throw new ApiError(400, "gitRepoPath must be a valid GitHub repository path");
+    throw new ApiError(400, "gitRepoPath must be a valid GitHub or Bitbucket repository path");
   }
 
   let effectiveGitToken = null;
   if (data.gitRepoPath !== undefined && nextNormalizedGitRepoPath) {
     try {
-      effectiveGitToken = (await resolveGithubCredentialsFromProject(merged)).githubToken;
+      const scm = await resolveScmCredentialsFromProject(merged);
+      effectiveGitToken = scm.token?.trim() || null;
     } catch (e) {
       throw new ApiError(
         400,
-        e?.message || "GitHub credentials are required to validate and migrate repository data",
+        e?.message || "Repository credentials are required to validate gitRepoPath changes",
       );
     }
-    if (!effectiveGitToken?.trim()) {
-      throw new ApiError(400, "GitHub token is required to validate and migrate repository data");
+    if (!effectiveGitToken) {
+      throw new ApiError(400, "A repository token is required to validate gitRepoPath changes");
     }
   }
   if (data.gitRepoPath !== undefined && nextNormalizedGitRepoPath) {
-    const parsedNextRepo = parseGitRepoPath(nextNormalizedGitRepoPath);
-    const metadata = await getRepositoryMetadata(
-      parsedNextRepo.owner,
-      parsedNextRepo.repo,
-      effectiveGitToken,
-    );
-    if (!metadata.ok) {
+    const scm = await resolveScmCredentialsFromProject(merged);
+    const parsedNextRepo = parseScmRepoPath(nextNormalizedGitRepoPath);
+    if (!parsedNextRepo || parsedNextRepo.provider !== scm.provider) {
       throw new ApiError(
         400,
-        `Cannot access destination repository: ${metadata.message || "validation failed"}`,
+        "gitRepoPath must match your connected code host (GitHub vs Bitbucket).",
       );
+    }
+    if (scm.provider === "github") {
+      const metadata = await getRepositoryMetadata(
+        parsedNextRepo.owner,
+        parsedNextRepo.repo,
+        effectiveGitToken,
+      );
+      if (!metadata.ok) {
+        throw new ApiError(
+          400,
+          `Cannot access destination repository: ${metadata.message || "validation failed"}`,
+        );
+      }
+    } else {
+      const metadata = await getBitbucketRepositoryMetadata(
+        parsedNextRepo.owner,
+        parsedNextRepo.repo,
+        effectiveGitToken,
+      );
+      if (!metadata.ok) {
+        throw new ApiError(
+          400,
+          `Cannot access destination repository: ${metadata.message || "validation failed"}`,
+        );
+      }
     }
   }
 
   if (data.developerRepoUrl !== undefined && data.developerRepoUrl !== null) {
-    const parsedDev = parseGitRepoPath(data.developerRepoUrl);
-    if (!parsedDev) {
-      throw new ApiError(400, "developerRepoUrl must be a valid GitHub repository path");
-    }
-    let ghForDev;
-    try {
-      ghForDev = (await resolveGithubCredentialsFromProject(merged)).githubToken;
-    } catch (e) {
-      throw new ApiError(
-        400,
-        e?.message || "GitHub credentials are required to validate developerRepoUrl",
-      );
-    }
-    if (!ghForDev?.trim()) {
-      throw new ApiError(400, "GitHub token is required to validate developerRepoUrl");
-    }
-    const metaDev = await getRepositoryMetadata(
-      parsedDev.owner,
-      parsedDev.repo,
-      ghForDev,
-    );
-    if (!metaDev.ok) {
-      throw new ApiError(
-        400,
-        `Cannot access developer repository: ${metaDev.message || "validation failed"}`,
-      );
+    const devNorm = normalizeGitRepoPathValue(data.developerRepoUrl);
+    if (!devNorm) {
+      throw new ApiError(400, "developerRepoUrl must be a valid GitHub or Bitbucket repository path");
     }
     const mainNorm = normalizeGitRepoPathValue(merged.gitRepoPath);
-    if (mainNorm && data.developerRepoUrl === mainNorm) {
+    if (mainNorm && devNorm === mainNorm) {
       throw new ApiError(
         400,
         "developerRepoUrl must differ from the platform Git repository (gitRepoPath).",
@@ -1723,8 +1839,21 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     nextNormalizedGitRepoPath &&
     oldGitRepoPath !== nextNormalizedGitRepoPath;
 
+  const oldGithubParsed = parseGitRepoPath(oldGitRepoPath);
+  const newGithubParsed = parseGitRepoPath(nextNormalizedGitRepoPath);
+  const migrationSupported =
+    Boolean(oldGithubParsed) &&
+    Boolean(newGithubParsed) &&
+    gitRepoChanged;
+
   let migrationLockHeld = false;
-  if (gitRepoChanged) {
+  if (gitRepoChanged && !migrationSupported) {
+    throw new ApiError(
+      400,
+      "Changing gitRepoPath between hosts or for Bitbucket is not supported yet. Use GitHub→GitHub path changes only, or contact support.",
+    );
+  }
+  if (migrationSupported) {
     const lock = await prisma.project.updateMany({
       where: { id: Number(projectId), isUploading: false },
       data: { isUploading: true },
@@ -1885,221 +2014,221 @@ export const switchProjectVersion = async (
   isPermanent = false
 ) => {
   return withPreviewBuildLock(projectId, async () => {
-  const project = await prisma.project.findUnique({
-    where: { id: Number(projectId) },
-    select: {
-      id: true,
-      name: true,
-      projectPath: true,
-      port: true,
-      gitRepoPath: true,
-      githubToken: true,
-      githubConnectionId: true,
-      createdById: true,
-      githubUsername: true,
-    },
-  });
-  if (!project) {
-    throw new ApiError(404, "Project not found");
-  }
-  if (!project.port) {
-    throw new ApiError(400, "Project has no port; cannot serve preview.");
-  }
-
-  let ghTokenPreview = "";
-  try {
-    ghTokenPreview = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
-  } catch {
-    ghTokenPreview = "";
-  }
-
-  let tag;
-  let versionLabel;
-  const idNum = Number(versionIdOrTag);
-  const byId = Number.isInteger(idNum) && String(idNum) === String(versionIdOrTag);
-  if (byId) {
-    const versionRow = await prisma.projectVersion.findFirst({
-      where: { id: idNum, projectId: Number(projectId) },
-      select: { gitTag: true, zipFilePath: true, version: true },
+    const project = await prisma.project.findUnique({
+      where: { id: Number(projectId) },
+      select: {
+        id: true,
+        name: true,
+        projectPath: true,
+        port: true,
+        gitRepoPath: true,
+        githubToken: true,
+        githubConnectionId: true,
+        createdById: true,
+        githubUsername: true,
+      },
     });
-    if (!versionRow) {
-      throw new ApiError(404, "Version not found");
+    if (!project) {
+      throw new ApiError(404, "Project not found");
     }
-    tag =
-      (versionRow.gitTag && versionRow.gitTag.trim()) ||
-      (versionRow.zipFilePath && versionRow.zipFilePath.trim());
-    if (!tag) {
-      throw new ApiError(400, "Version has no git tag");
+    if (!project.port) {
+      throw new ApiError(400, "Project has no port; cannot serve preview.");
     }
-    versionLabel = versionRow.version;
-  } else {
-    tag = String(versionIdOrTag);
-    const versionRow = await prisma.projectVersion.findFirst({
-      where: { projectId, gitTag: tag },
-      select: { version: true },
-    });
-    versionLabel = versionRow?.version ?? tag;
-  }
 
-  const backendRoot = getBackendRoot();
-  const projectsDir = getProjectsDir();
+    let ghTokenPreview = "";
+    try {
+      ghTokenPreview = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+    } catch {
+      ghTokenPreview = "";
+    }
 
-  const gitDir = path.join(projectsDir, ".git");
-  if (!fs.existsSync(gitDir)) {
-    throw new ApiError(
-      503,
-      "Preview unavailable: git repo not found. Deploy at least one release first."
-    );
-  }
+    let tag;
+    let versionLabel;
+    const idNum = Number(versionIdOrTag);
+    const byId = Number.isInteger(idNum) && String(idNum) === String(versionIdOrTag);
+    if (byId) {
+      const versionRow = await prisma.projectVersion.findFirst({
+        where: { id: idNum, projectId: Number(projectId) },
+        select: { gitTag: true, zipFilePath: true, version: true },
+      });
+      if (!versionRow) {
+        throw new ApiError(404, "Version not found");
+      }
+      tag =
+        (versionRow.gitTag && versionRow.gitTag.trim()) ||
+        (versionRow.zipFilePath && versionRow.zipFilePath.trim());
+      if (!tag) {
+        throw new ApiError(400, "Version has no git tag");
+      }
+      versionLabel = versionRow.version;
+    } else {
+      tag = String(versionIdOrTag);
+      const versionRow = await prisma.projectVersion.findFirst({
+        where: { projectId, gitTag: tag },
+        select: { version: true },
+      });
+      versionLabel = versionRow?.version ?? tag;
+    }
 
-  const previewDir = path.join(backendRoot, "_preview", `project_${projectId}`);
-  const previewRepo = path.join(previewDir, "repo");
-  const previewServe = path.join(previewDir, "serve");
-  const metaPath = path.join(previewDir, PREVIEW_META_FILE);
+    const backendRoot = getBackendRoot();
+    const projectsDir = getProjectsDir();
 
-  // Cache hit: same tag already built under serve/ — skip worktree + npm + build
-  try {
-    if (await fs.pathExists(previewServe)) {
-      const serveEntries = await fs.readdir(previewServe).catch(() => []);
-      if (serveEntries.length > 0 && (await fs.pathExists(metaPath))) {
-        const meta = JSON.parse(await fs.readFile(metaPath, "utf8"));
-        if (meta && meta.tag === tag) {
-          await fs.writeFile(
-            metaPath,
-            JSON.stringify({ createdAt: Date.now(), tag }),
-            "utf8",
-          );
-          const domain = config.getBuildUrlHost();
-          const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
-          return {
-            message: "Preview ready (cached). Same URL; refresh to see it.",
-            version: versionLabel,
-            buildUrl: `${projectUrl}?preview=1`,
-            cached: true,
-          };
+    const gitDir = path.join(projectsDir, ".git");
+    if (!fs.existsSync(gitDir)) {
+      throw new ApiError(
+        503,
+        "Preview unavailable: git repo not found. Deploy at least one release first."
+      );
+    }
+
+    const previewDir = path.join(backendRoot, "_preview", `project_${projectId}`);
+    const previewRepo = path.join(previewDir, "repo");
+    const previewServe = path.join(previewDir, "serve");
+    const metaPath = path.join(previewDir, PREVIEW_META_FILE);
+
+    // Cache hit: same tag already built under serve/ — skip worktree + npm + build
+    try {
+      if (await fs.pathExists(previewServe)) {
+        const serveEntries = await fs.readdir(previewServe).catch(() => []);
+        if (serveEntries.length > 0 && (await fs.pathExists(metaPath))) {
+          const meta = JSON.parse(await fs.readFile(metaPath, "utf8"));
+          if (meta && meta.tag === tag) {
+            await fs.writeFile(
+              metaPath,
+              JSON.stringify({ createdAt: Date.now(), tag }),
+              "utf8",
+            );
+            const domain = config.getBuildUrlHost();
+            const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
+            return {
+              message: "Preview ready (cached). Same URL; refresh to see it.",
+              version: versionLabel,
+              buildUrl: `${projectUrl}?preview=1`,
+              cached: true,
+            };
+          }
         }
       }
-    }
-  } catch (_) { /* cache miss; continue with full build */ }
+    } catch (_) { /* cache miss; continue with full build */ }
 
-  try {
-    await cleanupStalePreviews();
+    try {
+      await cleanupStalePreviews();
 
-    await fs.remove(previewDir).catch(() => { });
-    await fs.ensureDir(previewDir);
+      await fs.remove(previewDir).catch(() => { });
+      await fs.ensureDir(previewDir);
 
-    runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
-    deleteLocalGitTag(gitDir, tag);
-    // Fetch tag: prefer project's repo (e.g. projects/Launchpad → binalc-web/launchpad) when set
-    const fetchFromProjectRepo = () => {
-      if (!project.gitRepoPath?.trim() || !ghTokenPreview?.trim()) return false;
-      const parsed = parseGitRepoPath(project.gitRepoPath.trim());
-      if (!parsed) return false;
-      const { owner, repo } = parsed;
-      const token = ghTokenPreview.trim();
-      const fetchUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
-      const gitArgs = (refspec) => ["--git-dir", gitDir, "fetch", fetchUrl, refspec];
-      try {
-        execFileSync("git", gitArgs(`refs/tags/${tag}:refs/tags/${tag}`), {
-          cwd: backendRoot,
-          encoding: "utf8",
-          timeout: 120000,
-        });
-        return true;
-      } catch {
+      runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
+      deleteLocalGitTag(gitDir, tag);
+      // Fetch tag: prefer project's repo (e.g. projects/Launchpad → binalc-web/launchpad) when set
+      const fetchFromProjectRepo = () => {
+        if (!project.gitRepoPath?.trim() || !ghTokenPreview?.trim()) return false;
+        const parsed = parseGitRepoPath(project.gitRepoPath.trim());
+        if (!parsed) return false;
+        const { owner, repo } = parsed;
+        const token = ghTokenPreview.trim();
+        const fetchUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+        const gitArgs = (refspec) => ["--git-dir", gitDir, "fetch", fetchUrl, refspec];
         try {
-          execFileSync("git", [...gitArgs("tag"), tag], {
+          execFileSync("git", gitArgs(`refs/tags/${tag}:refs/tags/${tag}`), {
             cwd: backendRoot,
             encoding: "utf8",
             timeout: 120000,
           });
           return true;
         } catch {
-          return false;
+          try {
+            execFileSync("git", [...gitArgs("tag"), tag], {
+              cwd: backendRoot,
+              encoding: "utf8",
+              timeout: 120000,
+            });
+            return true;
+          } catch {
+            return false;
+          }
+        }
+      };
+      const fetchedFromProject = fetchFromProjectRepo();
+      if (!fetchedFromProject) {
+        try {
+          runCommand(
+            `git --git-dir="${gitDir}" fetch origin "refs/tags/${tag}:refs/tags/${tag}"`,
+            backendRoot,
+          );
+        } catch {
+          try {
+            runCommand(
+              `git --git-dir="${gitDir}" fetch origin tag "${tag}"`,
+              backendRoot,
+            );
+          } catch (_) {
+            // Tag may already exist locally (e.g. from ZIP upload)
+          }
         }
       }
-    };
-    const fetchedFromProject = fetchFromProjectRepo();
-    if (!fetchedFromProject) {
+      // Ensure tag exists locally so we give a clear error instead of "invalid reference"
       try {
         runCommand(
-          `git --git-dir="${gitDir}" fetch origin "refs/tags/${tag}:refs/tags/${tag}"`,
+          `git --git-dir="${gitDir}" rev-parse --verify "refs/tags/${tag}"`,
           backendRoot,
         );
       } catch {
-        try {
-          runCommand(
-            `git --git-dir="${gitDir}" fetch origin tag "${tag}"`,
-            backendRoot,
-          );
-        } catch (_) {
-          // Tag may already exist locally (e.g. from ZIP upload)
-        }
+        const hint = project.gitRepoPath
+          ? "Ensure the tag exists on the project's GitHub repo and that gitRepoPath + githubToken are set for this project."
+          : "Ensure the tag exists on the remote and that projects/.git remote \"origin\" points to the correct repository, or set the project's gitRepoPath + githubToken.";
+        throw new ApiError(
+          400,
+          `Tag "${tag}" not found. ${hint}`
+        );
       }
-    }
-    // Ensure tag exists locally so we give a clear error instead of "invalid reference"
-    try {
-      runCommand(
-        `git --git-dir="${gitDir}" rev-parse --verify "refs/tags/${tag}"`,
-        backendRoot,
+      runCommand(`git --git-dir="${gitDir}" worktree add "${previewRepo}" "${tag}"`, backendRoot);
+
+      const sourceRoot = findProjectRoot(previewRepo);
+      const buildOutputPath = await runBuildSequence(sourceRoot, {
+        fastInstall: true,
+      });
+      await fs.ensureDir(previewServe);
+      await fs.emptyDir(previewServe);
+      await fs.copy(buildOutputPath, previewServe);
+      // Marker for TTL cleanup (1 hour); kept beside serve/ so it is not served as static
+      await fs.writeFile(
+        path.join(previewDir, PREVIEW_META_FILE),
+        JSON.stringify({ createdAt: Date.now(), tag }),
+        "utf8"
       );
-    } catch {
-      const hint = project.gitRepoPath
-        ? "Ensure the tag exists on the project's GitHub repo and that gitRepoPath + githubToken are set for this project."
-        : "Ensure the tag exists on the remote and that projects/.git remote \"origin\" points to the correct repository, or set the project's gitRepoPath + githubToken.";
+
+      try {
+        runCommand(
+          `git --git-dir="${gitDir}" worktree remove "${previewRepo}" --force`,
+          backendRoot
+        );
+      } catch (e) {
+        await fs.remove(previewRepo).catch(() => { });
+      }
+
+      const domain = config.getBuildUrlHost();
+      const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
+      const previewUrl = `${projectUrl}?preview=1`;
+      return {
+        message: "Temporary preview ready. Same URL; refresh the page to see live (projects/) again.",
+        version: versionLabel,
+        buildUrl: previewUrl,
+      };
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      try {
+        runCommand(
+          `git --git-dir="${gitDir}" worktree remove "${previewRepo}" --force`,
+          backendRoot
+        );
+      } catch (_) { }
+      await fs.remove(previewDir).catch(() => { });
+      console.error("[switchProjectVersion] Preview failed:", err.message);
       throw new ApiError(
-        400,
-        `Tag "${tag}" not found. ${hint}`
+        500,
+        err.message || "Failed to build preview (checkout + build). Live app unchanged."
       );
     }
-    runCommand(`git --git-dir="${gitDir}" worktree add "${previewRepo}" "${tag}"`, backendRoot);
-
-    const sourceRoot = findProjectRoot(previewRepo);
-    const buildOutputPath = await runBuildSequence(sourceRoot, {
-      fastInstall: true,
-    });
-    await fs.ensureDir(previewServe);
-    await fs.emptyDir(previewServe);
-    await fs.copy(buildOutputPath, previewServe);
-    // Marker for TTL cleanup (1 hour); kept beside serve/ so it is not served as static
-    await fs.writeFile(
-      path.join(previewDir, PREVIEW_META_FILE),
-      JSON.stringify({ createdAt: Date.now(), tag }),
-      "utf8"
-    );
-
-    try {
-      runCommand(
-        `git --git-dir="${gitDir}" worktree remove "${previewRepo}" --force`,
-        backendRoot
-      );
-    } catch (e) {
-      await fs.remove(previewRepo).catch(() => { });
-    }
-
-    const domain = config.getBuildUrlHost();
-    const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
-    const previewUrl = `${projectUrl}?preview=1`;
-    return {
-      message: "Temporary preview ready. Same URL; refresh the page to see live (projects/) again.",
-      version: versionLabel,
-      buildUrl: previewUrl,
-    };
-  } catch (err) {
-    if (err instanceof ApiError) throw err;
-    try {
-      runCommand(
-        `git --git-dir="${gitDir}" worktree remove "${previewRepo}" --force`,
-        backendRoot
-      );
-    } catch (_) { }
-    await fs.remove(previewDir).catch(() => { });
-    console.error("[switchProjectVersion] Preview failed:", err.message);
-    throw new ApiError(
-      500,
-      err.message || "Failed to build preview (checkout + build). Live app unchanged."
-    );
-  }
   });
 };
 
@@ -2118,111 +2247,111 @@ export async function buildProjectPreviewFromGitRef({ projectId, gitRef, label =
 
   return withPreviewBuildLock(projectId, async () => {
 
-  const project = await prisma.project.findUnique({
-    where: { id: Number(projectId) },
-    select: {
-      id: true,
-      port: true,
-      gitRepoPath: true,
-      githubToken: true,
-      githubConnectionId: true,
-      createdById: true,
-      githubUsername: true,
-    },
-  });
-  if (!project) throw new ApiError(404, "Project not found");
-  if (!project.port) throw new ApiError(400, "Project has no port; cannot serve preview.");
-  let ghTokRef = "";
-  try {
-    ghTokRef = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
-  } catch {
-    ghTokRef = "";
-  }
-  if (!ghTokRef?.trim() || !project.gitRepoPath?.trim()) {
-    throw new ApiError(400, "Project is missing GitHub credentials for preview.");
-  }
+    const project = await prisma.project.findUnique({
+      where: { id: Number(projectId) },
+      select: {
+        id: true,
+        port: true,
+        gitRepoPath: true,
+        githubToken: true,
+        githubConnectionId: true,
+        createdById: true,
+        githubUsername: true,
+      },
+    });
+    if (!project) throw new ApiError(404, "Project not found");
+    if (!project.port) throw new ApiError(400, "Project has no port; cannot serve preview.");
+    let ghTokRef = "";
+    try {
+      ghTokRef = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+    } catch {
+      ghTokRef = "";
+    }
+    if (!ghTokRef?.trim() || !project.gitRepoPath?.trim()) {
+      throw new ApiError(400, "Project is missing GitHub credentials for preview.");
+    }
 
-  const parsed = parseGitRepoPath(project.gitRepoPath.trim());
-  if (!parsed) throw new ApiError(400, "Invalid gitRepoPath; cannot build preview from ref.");
+    const parsed = parseGitRepoPath(project.gitRepoPath.trim());
+    if (!parsed) throw new ApiError(400, "Invalid gitRepoPath; cannot build preview from ref.");
 
-  const backendRoot = getBackendRoot();
-  const previewDir = path.join(backendRoot, "_preview", `project_${project.id}`);
-  const previewRepo = path.join(previewDir, "repo");
-  const previewServe = path.join(previewDir, "serve");
-  const metaPath = path.join(previewDir, PREVIEW_META_FILE);
-  const metaRef = ref.toLowerCase();
+    const backendRoot = getBackendRoot();
+    const previewDir = path.join(backendRoot, "_preview", `project_${project.id}`);
+    const previewRepo = path.join(previewDir, "repo");
+    const previewServe = path.join(previewDir, "serve");
+    const metaPath = path.join(previewDir, PREVIEW_META_FILE);
+    const metaRef = ref.toLowerCase();
 
-  try {
-    if (await fs.pathExists(previewServe)) {
-      const serveEntries = await fs.readdir(previewServe).catch(() => []);
-      if (serveEntries.length > 0 && (await fs.pathExists(metaPath))) {
-        const meta = JSON.parse(await fs.readFile(metaPath, "utf8"));
-        if (meta && meta.ref === metaRef) {
-          await fs.writeFile(
-            metaPath,
-            JSON.stringify({ createdAt: Date.now(), ref: metaRef }),
-            "utf8",
-          );
-          const domain = config.getBuildUrlHost();
-          const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
-          return {
-            message: "Preview ready (cached).",
-            buildUrl: `${projectUrl}?preview=1`,
-            cached: true,
-            ref,
-            label: label || ref,
-          };
+    try {
+      if (await fs.pathExists(previewServe)) {
+        const serveEntries = await fs.readdir(previewServe).catch(() => []);
+        if (serveEntries.length > 0 && (await fs.pathExists(metaPath))) {
+          const meta = JSON.parse(await fs.readFile(metaPath, "utf8"));
+          if (meta && meta.ref === metaRef) {
+            await fs.writeFile(
+              metaPath,
+              JSON.stringify({ createdAt: Date.now(), ref: metaRef }),
+              "utf8",
+            );
+            const domain = config.getBuildUrlHost();
+            const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
+            return {
+              message: "Preview ready (cached).",
+              buildUrl: `${projectUrl}?preview=1`,
+              cached: true,
+              ref,
+              label: label || ref,
+            };
+          }
         }
       }
+    } catch (_) {
+      // Cache read failures should not block a fresh preview build.
     }
-  } catch (_) {
-    // Cache read failures should not block a fresh preview build.
-  }
 
-  try {
-    await cleanupStalePreviews();
-    await fs.remove(previewDir).catch(() => { });
-    await fs.ensureDir(previewDir);
-
-    const cloneUrl = `https://x-access-token:${ghTokRef.trim()}@github.com/${parsed.owner}/${parsed.repo}.git`;
-    runCommand(`git clone --no-checkout "${cloneUrl}" "${previewRepo}"`, backendRoot);
     try {
-      runCommand(`git -C "${previewRepo}" fetch --depth 1 origin "${ref}"`, backendRoot);
-      runCommand(`git -C "${previewRepo}" checkout --detach FETCH_HEAD`, backendRoot);
-    } catch {
-      runCommand(`git -C "${previewRepo}" checkout --detach "${ref}"`, backendRoot);
+      await cleanupStalePreviews();
+      await fs.remove(previewDir).catch(() => { });
+      await fs.ensureDir(previewDir);
+
+      const cloneUrl = `https://x-access-token:${ghTokRef.trim()}@github.com/${parsed.owner}/${parsed.repo}.git`;
+      runCommand(`git clone --no-checkout "${cloneUrl}" "${previewRepo}"`, backendRoot);
+      try {
+        runCommand(`git -C "${previewRepo}" fetch --depth 1 origin "${ref}"`, backendRoot);
+        runCommand(`git -C "${previewRepo}" checkout --detach FETCH_HEAD`, backendRoot);
+      } catch {
+        runCommand(`git -C "${previewRepo}" checkout --detach "${ref}"`, backendRoot);
+      }
+
+      const sourceRoot = findProjectRoot(previewRepo);
+      const buildOutputPath = await runBuildSequence(sourceRoot, { fastInstall: true });
+      await fs.ensureDir(previewServe);
+      await fs.emptyDir(previewServe);
+      await fs.copy(buildOutputPath, previewServe);
+
+      await fs.writeFile(
+        metaPath,
+        JSON.stringify({ createdAt: Date.now(), ref: metaRef }),
+        "utf8",
+      );
+
+      await fs.remove(previewRepo).catch(() => { });
+      const domain = config.getBuildUrlHost();
+      const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
+      return {
+        message: "Temporary preview ready.",
+        buildUrl: `${projectUrl}?preview=1`,
+        cached: false,
+        ref,
+        label: label || ref,
+      };
+    } catch (err) {
+      await fs.remove(previewDir).catch(() => { });
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(
+        500,
+        err?.message || "Failed to build preview from git ref.",
+      );
     }
-
-    const sourceRoot = findProjectRoot(previewRepo);
-    const buildOutputPath = await runBuildSequence(sourceRoot, { fastInstall: true });
-    await fs.ensureDir(previewServe);
-    await fs.emptyDir(previewServe);
-    await fs.copy(buildOutputPath, previewServe);
-
-    await fs.writeFile(
-      metaPath,
-      JSON.stringify({ createdAt: Date.now(), ref: metaRef }),
-      "utf8",
-    );
-
-    await fs.remove(previewRepo).catch(() => { });
-    const domain = config.getBuildUrlHost();
-    const projectUrl = `${config.getBuildUrlProtocol()}://${domain}:${project.port}`;
-    return {
-      message: "Temporary preview ready.",
-      buildUrl: `${projectUrl}?preview=1`,
-      cached: false,
-      ref,
-      label: label || ref,
-    };
-  } catch (err) {
-    await fs.remove(previewDir).catch(() => { });
-    if (err instanceof ApiError) throw err;
-    throw new ApiError(
-      500,
-      err?.message || "Failed to build preview from git ref.",
-    );
-  }
   });
 }
 

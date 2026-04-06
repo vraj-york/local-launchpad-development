@@ -8,15 +8,20 @@ import {
   signOAuthState,
   verifyOAuthState,
   completeGithubOAuth,
+  completeBitbucketOAuth,
   completeJiraOAuth,
   getIntegrationsStatus,
   deleteGithubConnection,
+  deleteBitbucketConnection,
   deleteJiraConnection,
   assertGithubConnectionRowForListing,
+  assertBitbucketConnectionRowForListing,
   assertJiraConnectionRowForListing,
   ensureFreshGithubConnection,
+  ensureFreshBitbucketConnection,
   ensureFreshJiraConnection,
   listGithubReposPage,
+  listBitbucketReposPage,
   listJiraProjectsForConnection,
 } from "../services/oauthConnection.service.js";
 import { getPublicFrontendBaseUrl } from "../utils/publicFrontendUrl.js";
@@ -154,6 +159,85 @@ router.get("/github/repos", authenticateToken, async (req, res, next) => {
   }
 });
 
+/** GET /api/integrations/bitbucket/start */
+router.get("/bitbucket/start", authenticateToken, (req, res) => {
+  const clientId = process.env.BITBUCKET_OAUTH_CLIENT_ID;
+  const redirectUri = process.env.BITBUCKET_OAUTH_REDIRECT_URI;
+  if (!clientId || !redirectUri) {
+    res.status(503).json({ error: "Bitbucket OAuth is not configured on the server" });
+    return;
+  }
+  const reconnectId = parseReconnectId(req.query);
+  const state = signOAuthState(req.user.id, "bitbucket", reconnectId);
+  const scope = process.env.BITBUCKET_OAUTH_SCOPES || "account repository";
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    state,
+    scope,
+  });
+  const url = `https://bitbucket.org/site/oauth2/authorize?${params.toString()}`;
+  if ((req.get("Accept") || "").includes("application/json")) {
+    res.json({ url });
+    return;
+  }
+  res.redirect(302, url);
+});
+
+router.get("/bitbucket/callback", async (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const err = typeof req.query.error === "string" ? req.query.error : "";
+  if (err) {
+    redirectWithError(res, "bitbucket", err);
+    return;
+  }
+  if (!code || !state) {
+    redirectWithError(res, "bitbucket", "missing_code_or_state");
+    return;
+  }
+  try {
+    const decoded = verifyOAuthState(state);
+    if (decoded.provider !== "bitbucket") {
+      redirectWithError(res, "bitbucket", "invalid_state");
+      return;
+    }
+    await completeBitbucketOAuth(code, state);
+    redirectOk(res, "bitbucket");
+  } catch (e) {
+    redirectWithError(res, "bitbucket", e.message || "oauth_failed");
+  }
+});
+
+router.get("/bitbucket/repos", authenticateToken, async (req, res, next) => {
+  try {
+    const projectIdRaw = req.query.projectId;
+    const projectId =
+      projectIdRaw != null && String(projectIdRaw).trim() !== ""
+        ? Number(projectIdRaw)
+        : null;
+    if (projectId != null && (!Number.isInteger(projectId) || projectId < 1)) {
+      res.status(400).json({ error: "Invalid projectId" });
+      return;
+    }
+    if (projectId != null) {
+      await assertProjectAccess(projectId, req.user);
+    }
+    const row = await assertBitbucketConnectionRowForListing(
+      req.user,
+      req.query.connectionId,
+      projectId,
+    );
+    const fresh = await ensureFreshBitbucketConnection(row);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const result = await listBitbucketReposPage(fresh.accessToken, { page, pagelen: 100 });
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+});
+
 /** GET /api/integrations/jira/start — JSON { url } or 302 */
 router.get("/jira/start", authenticateToken, (req, res) => {
   const clientId = process.env.ATLASSIAN_OAUTH_CLIENT_ID;
@@ -242,6 +326,15 @@ router.get("/jira/projects", authenticateToken, async (req, res, next) => {
 router.delete("/github/:connectionId", authenticateToken, async (req, res, next) => {
   try {
     await deleteGithubConnection(req.user.id, req.params.connectionId);
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.delete("/bitbucket/:connectionId", authenticateToken, async (req, res, next) => {
+  try {
+    await deleteBitbucketConnection(req.user.id, req.params.connectionId);
     res.json({ ok: true });
   } catch (e) {
     next(e);

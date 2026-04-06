@@ -8,7 +8,8 @@
 #
 # Auth / APIs (set in repo root .env — see backend env_file + environment):
 # - Cognito: AWS_COGNITO_USER_POOL_ID, AWS_COGNITO_APP_CLIENT_ID, optional AUTH_ALLOWED_DOMAIN
-# - GitHub/Jira OAuth: GITHUB_OAUTH_*, ATLASSIAN_OAUTH_*, OAUTH_TOKEN_ENCRYPTION_KEY, optional OAUTH_STATE_SECRET
+# - GitHub/Jira/Bitbucket OAuth: GITHUB_OAUTH_*, ATLASSIAN_OAUTH_*, BITBUCKET_OAUTH_*,
+#   OAUTH_TOKEN_ENCRYPTION_KEY, optional OAUTH_STATE_SECRET
 # - Hub: VITE_HUB_API_URL, optional VITE_HUB_OAUTH_REDIRECT_URL, optional VITE_HUB_PROFILE_PIC_API_KEY (frontend build args)
 # - CORS: FRONTEND_URL should match where users open the UI (e.g. http://localhost:3000)
 #
@@ -95,6 +96,11 @@ services:
       ATLASSIAN_OAUTH_CLIENT_SECRET: ${ATLASSIAN_OAUTH_CLIENT_SECRET:-}
       ATLASSIAN_OAUTH_REDIRECT_URI: ${ATLASSIAN_OAUTH_REDIRECT_URI:-}
       ATLASSIAN_OAUTH_SCOPES: ${ATLASSIAN_OAUTH_SCOPES:-}
+      # --- Bitbucket OAuth (same pattern as GitHub/Jira; see .env.example) ---
+      BITBUCKET_OAUTH_CLIENT_ID: ${BITBUCKET_OAUTH_CLIENT_ID:-}
+      BITBUCKET_OAUTH_CLIENT_SECRET: ${BITBUCKET_OAUTH_CLIENT_SECRET:-}
+      BITBUCKET_OAUTH_REDIRECT_URI: ${BITBUCKET_OAUTH_REDIRECT_URI:-}
+      BITBUCKET_OAUTH_SCOPES: ${BITBUCKET_OAUTH_SCOPES:-}
       # --- Optional seed / defaults (backend entrypoint or app) ---
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}

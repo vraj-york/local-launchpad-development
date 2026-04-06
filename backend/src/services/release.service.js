@@ -1,5 +1,5 @@
 import { PrismaClient, ReleaseStatus } from "@prisma/client";
-import { resolveGithubCredentialsFromProject } from "./integrationCredential.service.js";
+import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
 import path from "path";
 import fs from "fs-extra";
 import extract from "extract-zip";
@@ -14,6 +14,11 @@ import {
   assertReleaseNameIsNextIncrement,
 } from "../utils/projectValidation.utils.js";
 import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
+import { parseScmRepoPath } from "../utils/scmPath.js";
+import {
+  getBitbucketRepositoryMetadata,
+  createBitbucketRepository,
+} from "./bitbucket.service.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import { promisify } from "util";
 import os from "os";
@@ -36,12 +41,12 @@ async function resolveUserEmail(user) {
 async function assertProjectReadPermission(projectId, user) {
   const project = await prisma.project.findUnique({
     where: { id: Number(projectId) },
-    select: { id: true, assignedManagerId: true, assignedUserEmails: true },
+    select: { id: true, createdById: true, assignedUserEmails: true },
   });
   if (!project) throw new ApiError(404, "Project not found");
   const { id: userId, role } = user || {};
   if (role === "admin") return project;
-  if (role === "manager" && project.assignedManagerId === userId) return project;
+  if (Number(project.createdById) === Number(userId)) return project;
   const email = await resolveUserEmail(user);
   const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
   if (email && assignedUsers.has(email)) return project;
@@ -854,16 +859,6 @@ export const lockReleaseService = async (releaseId, locked, user) => {
     throw new ApiError(404, "Project not found");
   }
 
-  if (
-    String(projectFull.developerRepoUrl || "").trim() &&
-    !process.env.CURSOR_API_KEY?.trim()
-  ) {
-    throw new ApiError(
-      503,
-      "CURSOR_API_KEY is required to lock a release when developerRepoUrl is set on the project.",
-    );
-  }
-
   const { syncDeveloperRepoSubmoduleForReleaseLock } = await import(
     "./developerRepoSubmodule.service.js"
   );
@@ -872,17 +867,6 @@ export const lockReleaseService = async (releaseId, locked, user) => {
     project: projectFull,
     releaseName: releaseRow?.name,
   });
-
-  if (String(projectFull.developerRepoUrl || "").trim()) {
-    const { startPostLockDeveloperRepoCursorAgent } = await import(
-      "./cursor.service.js"
-    );
-    await startPostLockDeveloperRepoCursorAgent({
-      projectId: release.projectId,
-      releaseId,
-      attemptedById: userId,
-    });
-  }
 
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.release.update({
@@ -1588,11 +1572,11 @@ export const uploadReleaseVersionService = async (
 
     const tag = `proj-${project.id}-rel-${releaseId}-${version}`;
 
-    const githubCreds = await resolveGithubCredentialsFromProject(project);
+    const scm = await resolveScmCredentialsFromProject(project);
     const validatedProjectName = projectRepoSlugFromDisplayName(project.name);
-    const parsedProjectRepo = parseGitRepoPath(project.gitRepoPath || "");
-    const remoteOwner = parsedProjectRepo?.owner || githubCreds.githubUsername;
-    const remoteRepo = parsedProjectRepo?.repo || validatedProjectName;
+    const parsedScm = parseScmRepoPath(project.gitRepoPath || "");
+    const remoteOwner = parsedScm?.owner || scm.username;
+    const remoteRepo = parsedScm?.repo || validatedProjectName;
 
     const gitWorkingDir = sourceRoot;
     const permanentGitDir = path.join(projectFolder, ".git");
@@ -1603,37 +1587,51 @@ export const uploadReleaseVersionService = async (
       fs.moveSync(permanentGitDir, localGitDir, { overwrite: true });
     }
 
-    const remoteUrl = `https://x-access-token:${githubCreds.githubToken}@github.com/${remoteOwner}/${remoteRepo}.git`;
+    const remoteUrl =
+      scm.provider === "github"
+        ? `https://x-access-token:${scm.token}@github.com/${remoteOwner}/${remoteRepo}.git`
+        : `https://x-token-auth:${scm.token}@bitbucket.org/${remoteOwner}/${remoteRepo}.git`;
     /* Initialize repo if first time */
     if (!fs.existsSync(localGitDir)) {
       runCommand("git init", gitWorkingDir);
       runCommand("git branch -m main", gitWorkingDir);
-      const gitUserName = githubCreds.githubUsername?.trim() || "Zip Worker";
-      const gitUserEmail = githubCreds.githubUsername?.trim()
-        ? `${githubCreds.githubUsername.trim()}@github-zip.com`
+      const gitUserName = scm.username?.trim() || "Zip Worker";
+      const gitUserEmail = scm.username?.trim()
+        ? `${scm.username.trim()}@${scm.provider === "bitbucket" ? "bitbucket" : "github"}-zip.local`
         : "worker@zip.com";
       runCommand(`git config user.name "${gitUserName}"`, gitWorkingDir);
       runCommand(`git config user.email "${gitUserEmail}"`, gitWorkingDir);
 
-      const repoMeta = await getRepositoryMetadata(
-        remoteOwner,
-        remoteRepo,
-        githubCreds.githubToken,
-      );
+      const repoMeta =
+        scm.provider === "github"
+          ? await getRepositoryMetadata(remoteOwner, remoteRepo, scm.token)
+          : await getBitbucketRepositoryMetadata(remoteOwner, remoteRepo, scm.token);
       const repoExists = repoMeta.ok;
       if (!repoExists) {
-        // We can only auto-create under the authenticated user's account.
-        if (remoteOwner !== githubCreds.githubUsername) {
-          throw new ApiError(
-            `Destination repository ${remoteOwner}/${remoteRepo} does not exist or is not accessible.`,
-          );
+        if (scm.provider === "github") {
+          if (remoteOwner !== scm.username) {
+            throw new ApiError(
+              `Destination repository ${remoteOwner}/${remoteRepo} does not exist or is not accessible.`,
+            );
+          }
+          await createGithubRepo(remoteRepo, {
+            githubUsername: scm.username,
+            githubToken: scm.token,
+          });
+        } else {
+          try {
+            await createBitbucketRepository(remoteOwner, remoteRepo, scm.token);
+          } catch (e) {
+            throw new ApiError(
+              502,
+              `Bitbucket repo setup failed: ${e.message || "unknown error"}`,
+            );
+          }
         }
-        await createGithubRepo(remoteRepo, githubCreds);
       }
 
       runCommand(`git remote add origin ${remoteUrl}`, gitWorkingDir);
     } else {
-      /* Ensure remote URL uses this project's GitHub credentials for push */
       runCommand(`git remote set-url origin ${remoteUrl}`, gitWorkingDir);
     }
 
@@ -1821,16 +1819,6 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
     throw new ApiError(404, "Project not found");
   }
 
-  if (
-    String(projectFull.developerRepoUrl || "").trim() &&
-    !process.env.CURSOR_API_KEY?.trim()
-  ) {
-    throw new ApiError(
-      503,
-      "CURSOR_API_KEY is required to lock a release when developerRepoUrl is set on the project.",
-    );
-  }
-
   const { syncDeveloperRepoSubmoduleForReleaseLock } = await import(
     "./developerRepoSubmodule.service.js"
   );
@@ -1839,17 +1827,6 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
     project: projectFull,
     releaseName: release.name,
   });
-
-  if (String(projectFull.developerRepoUrl || "").trim()) {
-    const { startPostLockDeveloperRepoCursorAgent } = await import(
-      "./cursor.service.js"
-    );
-    await startPostLockDeveloperRepoCursorAgent({
-      projectId: release.project.id,
-      releaseId,
-      attemptedById: projectFull.createdById,
-    });
-  }
 
   const updatedRelease = await prisma.$transaction(async (tx) => {
     const row = await tx.release.update({

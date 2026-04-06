@@ -138,6 +138,11 @@ export const createProjectValidation = [
         .isInt()
         .withMessage("githubConnectionId must be an integer"),
 
+    body("bitbucketConnectionId")
+        .optional({ nullable: true })
+        .isInt()
+        .withMessage("bitbucketConnectionId must be an integer"),
+
     body("jiraConnectionId")
         .optional({ nullable: true })
         .isInt()
@@ -146,14 +151,14 @@ export const createProjectValidation = [
     body("gitRepoPath")
         .optional({ checkFalsy: true })
         .trim()
-        .matches(/^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
-        .withMessage("gitRepoPath must be a valid GitHub repository path"),
+        .matches(/^(https?:\/\/)?(github\.com|bitbucket\.org)\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
+        .withMessage("gitRepoPath must be a valid GitHub or Bitbucket repository path"),
 
     body("developerRepoUrl")
         .optional({ checkFalsy: true })
         .trim()
-        .matches(/^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
-        .withMessage("developerRepoUrl must be a valid GitHub repository path"),
+        .matches(/^(https?:\/\/)?(github\.com|bitbucket\.org)\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
+        .withMessage("developerRepoUrl must be a valid GitHub or Bitbucket repository path"),
 
     optionalEmailList("assignedUserEmails"),
     optionalEmailList("stakeholderEmails"),
@@ -164,14 +169,26 @@ export const createProjectValidation = [
             b.githubConnectionId != null &&
             String(b.githubConnectionId).trim() !== "" &&
             !Number.isNaN(Number(b.githubConnectionId));
+        const bbOAuth =
+            b.bitbucketConnectionId != null &&
+            String(b.bitbucketConnectionId).trim() !== "" &&
+            !Number.isNaN(Number(b.bitbucketConnectionId));
         const ghLegacy =
             typeof b.githubUsername === "string" &&
             b.githubUsername.trim() &&
             typeof b.githubToken === "string" &&
             b.githubToken.trim();
-        if (!ghOAuth && !ghLegacy) {
+        const bbLegacy =
+            typeof b.bitbucketUsername === "string" &&
+            b.bitbucketUsername.trim() &&
+            typeof b.bitbucketToken === "string" &&
+            b.bitbucketToken.trim();
+        if (ghOAuth && bbOAuth) {
+            throw new Error("Provide either githubConnectionId or bitbucketConnectionId, not both");
+        }
+        if (!ghOAuth && !ghLegacy && !bbOAuth && !bbLegacy) {
             throw new Error(
-                "Connect GitHub (OAuth) or provide githubConnectionId, or githubUsername with githubToken",
+                "Connect GitHub or Bitbucket (OAuth), or provide legacy username/token for one host",
             );
         }
         const jiOAuth =
@@ -244,11 +261,26 @@ export const updateProjectValidation = [
         .isLength({ min: 1, max: 2048 })
         .withMessage("GitHub token must be 1–2048 characters"),
 
+    body("githubConnectionId")
+        .optional({ nullable: true })
+        .isInt()
+        .withMessage("githubConnectionId must be an integer"),
+
+    body("jiraConnectionId")
+        .optional({ nullable: true })
+        .isInt()
+        .withMessage("jiraConnectionId must be an integer"),
+
+    body("bitbucketConnectionId")
+        .optional({ nullable: true })
+        .isInt()
+        .withMessage("bitbucketConnectionId must be an integer"),
+
     body("gitRepoPath")
         .optional()
         .trim()
-        .matches(/^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
-        .withMessage("gitRepoPath must be a valid GitHub repository path"),
+        .matches(/^(https?:\/\/)?(github\.com|bitbucket\.org)\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
+        .withMessage("gitRepoPath must be a valid GitHub or Bitbucket repository path"),
 
     body("developerRepoUrl")
         .optional({ nullable: true })
@@ -256,9 +288,11 @@ export const updateProjectValidation = [
             if (value === undefined) return true;
             if (value === null || value === "") return true;
             const s = String(value).trim();
-            return /^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i.test(s);
+            return /^(https?:\/\/)?(github\.com|bitbucket\.org)\/[^/\s]+\/[^/\s]+(?:\.git)?$/i.test(
+                s,
+            );
         })
-        .withMessage("developerRepoUrl must be a valid GitHub repository path"),
+        .withMessage("developerRepoUrl must be a valid GitHub or Bitbucket repository path"),
 
     body("slug")
         .optional({ nullable: true })

@@ -76,8 +76,10 @@ function buildUpdatePayload({
   useOAuthGithub,
   useOAuthJira,
   selectedGithubConnectionId,
+  selectedBitbucketConnectionId,
   selectedJiraConnectionId,
   creatorIntegrations,
+  sharedOAuthScmHost,
 }) {
   const payload = {};
 
@@ -146,7 +148,27 @@ function buildUpdatePayload({
     payload.stakeholderEmails = normEmailListField(stakeholderEmails);
   }
 
-  if (
+  if (sharedOAuthScmHost === "github") {
+    if (project?.bitbucketConnectionId != null) {
+      payload.bitbucketConnectionId = null;
+    }
+    if (
+      selectedGithubConnectionId &&
+      String(selectedGithubConnectionId) !== String(project?.githubConnectionId ?? "")
+    ) {
+      payload.githubConnectionId = Number(selectedGithubConnectionId);
+    }
+  } else if (sharedOAuthScmHost === "bitbucket") {
+    if (project?.githubConnectionId != null) {
+      payload.githubConnectionId = null;
+    }
+    if (
+      selectedBitbucketConnectionId &&
+      String(selectedBitbucketConnectionId) !== String(project?.bitbucketConnectionId ?? "")
+    ) {
+      payload.bitbucketConnectionId = Number(selectedBitbucketConnectionId);
+    }
+  } else if (
     useOAuthGithub &&
     selectedGithubConnectionId &&
     String(selectedGithubConnectionId) !== String(project?.githubConnectionId ?? "")
@@ -172,6 +194,7 @@ function buildUpdatePayload({
 const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const { user } = useAuth();
   const useOAuthGithub = Boolean(project?.githubConnectionId);
+  const useOAuthBitbucket = Boolean(project?.bitbucketConnectionId);
   const useOAuthJira = Boolean(project?.jiraConnectionId);
   const creatorId = project?.createdBy?.id ?? project?.createdById;
   const canReconnectOAuth =
@@ -182,7 +205,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
     user?.role === "admin" ||
     (creatorId != null && user != null && Number(user.id) === Number(creatorId));
   const useSharedOAuthCard =
-    canEditOAuthLinks && useOAuthGithub && useOAuthJira;
+    canEditOAuthLinks && (useOAuthGithub || useOAuthBitbucket) && useOAuthJira;
   const gitJiraRef = useRef(null);
 
   const [projectDescription, setProjectDescription] = useState("");
@@ -459,9 +482,15 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
       const resolvedGhConn = useSharedOAuthCard
         ? gitJiraRef.current?.getSelectedGithubConnectionId?.() ?? ""
         : selectedGithubConnectionId;
+      const resolvedBbConn = useSharedOAuthCard
+        ? gitJiraRef.current?.getSelectedBitbucketConnectionId?.() ?? ""
+        : "";
       const resolvedJiConn = useSharedOAuthCard
         ? gitJiraRef.current?.getSelectedJiraConnectionId?.() ?? ""
         : selectedJiraConnectionId;
+      const sharedScmHost = useSharedOAuthCard
+        ? gitJiraRef.current?.getScmHost?.() ?? "github"
+        : null;
 
       const payload = buildUpdatePayload({
         description: projectDescription,
@@ -479,8 +508,10 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         useOAuthGithub,
         useOAuthJira,
         selectedGithubConnectionId: resolvedGhConn,
+        selectedBitbucketConnectionId: resolvedBbConn,
         selectedJiraConnectionId: resolvedJiConn,
         creatorIntegrations,
+        sharedOAuthScmHost: sharedScmHost,
       });
 
       if (Object.keys(payload).length === 0) {
@@ -654,7 +685,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   </p>
                   {!canEditOAuthLinks && (
                     <p className="text-xs">
-                      Only the project creator or an admin can change OAuth links; managers can still
+                      Only the project creator or an admin can change OAuth links. Others can still
                       edit the repository path if the new repo is accessible with the creator&apos;s
                       GitHub account.
                     </p>

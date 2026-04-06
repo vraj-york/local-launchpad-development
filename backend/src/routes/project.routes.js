@@ -8,7 +8,6 @@ import { execSync } from "child_process";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
 import { getProjectLiveAbsolutePath } from "../utils/instanceRoot.js";
-import allowRoles from "../middleware/role.middleware.js";
 import { projectController } from "../controllers/project.controller.js";
 import { createProjectValidation, updateProjectValidation } from "../validators/project.validator.js";
 import { validate } from "../validators/validate.middleware.js";
@@ -394,7 +393,6 @@ router.get(
 router.post(
   "/",
   authenticateToken,
-  allowRoles("admin", "manager"),
   createProjectValidation,
   validate,
   projectController.create
@@ -655,7 +653,7 @@ router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) =>
     const assignedUsers = parseStoredEmailListToSet(project.assignedUserEmails);
     const hasAccess =
       role === "admin" ||
-      (role === "manager" && project.assignedManagerId === userId) ||
+      Number(project.createdById) === Number(userId) ||
       (userEmail && assignedUsers.has(userEmail));
     if (!hasAccess) return res.status(403).json({ error: "Forbidden" });
 

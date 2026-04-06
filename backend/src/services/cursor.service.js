@@ -4,14 +4,18 @@ import fs from "fs-extra";
 import { execFileSync } from "child_process";
 import { PrismaClient } from "@prisma/client";
 import {
-  parseGitRepoPath,
   ensureBranchFrom,
-  getBranchSha,
   updateRef,
   createTagIdempotent,
   createBranch,
-  getRepositoryMetadata,
 } from "./github.service.js";
+import { parseScmRepoPath } from "../utils/scmPath.js";
+import { scmGetBranchSha, scmGetRepositoryMetadata } from "./scmFacade.service.js";
+import {
+  createBitbucketBranchAt,
+  createBitbucketTagIdempotent,
+  setBitbucketBranchTip,
+} from "./bitbucket.service.js";
 import config from "../config/index.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import {
@@ -21,8 +25,8 @@ import {
   findProjectRoot,
 } from "./release.service.js";
 import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
-import { resolveGithubCredentialsFromProject } from "./integrationCredential.service.js";
 import ApiError from "../utils/apiError.js";
+import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
 
 const CURSOR_BASE_URL = "https://api.cursor.com";
 const prisma = new PrismaClient();
@@ -183,18 +187,43 @@ export function isCursorAgentSuccessTerminal(status) {
 }
 
 /**
- * Resolve https://github.com/owner/repo for Cursor agents. Uses gitRepoPath when parseable;
- * otherwise same owner/repo as manual ZIP upload (githubUsername or GITHUB_USERNAME + slug from name).
- * When fallback is used, gitRepoPathToPersist is github.com/owner/repo so merge/deploy can use parseGitRepoPath.
- * @param {{ gitRepoPath?: string|null, githubUsername?: string|null, name?: string|null }} project
+ * Resolve https URL for Cursor agents (GitHub or Bitbucket). Uses gitRepoPath when parseable;
+ * otherwise derives owner/repo from bitbucketUsername or githubUsername / GITHUB_USERNAME + slug from name.
+ * When fallback is used, gitRepoPathToPersist is set so merge/deploy can parse the host.
+ * @param {{
+ *   gitRepoPath?: string|null,
+ *   githubUsername?: string|null,
+ *   bitbucketUsername?: string|null,
+ *   name?: string|null,
+ * }} project
  * @returns {{ repositoryUrl: string|null, gitRepoPathToPersist: string|null }}
  */
 export function resolveCursorRepositoryUrl(project) {
-  const parsed = parseGitRepoPath(project.gitRepoPath || "");
+  const parsed = parseScmRepoPath(project.gitRepoPath || "");
   if (parsed) {
+    if (parsed.provider === "bitbucket") {
+      return {
+        repositoryUrl: `https://bitbucket.org/${parsed.owner}/${parsed.repo}`,
+        gitRepoPathToPersist: null,
+      };
+    }
     return {
       repositoryUrl: `https://github.com/${parsed.owner}/${parsed.repo}`,
       gitRepoPathToPersist: null,
+    };
+  }
+  const bbUser = project.bitbucketUsername?.trim();
+  if (bbUser) {
+    let slug;
+    try {
+      slug = projectRepoSlugFromDisplayName(project.name || "");
+    } catch {
+      return { repositoryUrl: null, gitRepoPathToPersist: null };
+    }
+    const pathCanonical = `bitbucket.org/${bbUser}/${slug}`;
+    return {
+      repositoryUrl: `https://bitbucket.org/${bbUser}/${slug}`,
+      gitRepoPathToPersist: pathCanonical,
     };
   }
   const username = project.githubUsername?.trim() || ENV_GITHUB_USERNAME?.trim();
@@ -258,6 +287,9 @@ export async function createAgentForProjectRelease({
       githubUsername: true,
       githubToken: true,
       githubConnectionId: true,
+      bitbucketUsername: true,
+      bitbucketToken: true,
+      bitbucketConnectionId: true,
       createdById: true,
     },
   });
@@ -266,17 +298,18 @@ export async function createAgentForProjectRelease({
     err.code = "PROJECT_NOT_FOUND";
     throw err;
   }
-  let ghAccessToken = "";
+  let scmAccess = null;
   try {
-    ghAccessToken = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+    scmAccess = await resolveScmCredentialsFromProject(project);
   } catch {
-    ghAccessToken = "";
+    scmAccess = null;
   }
+  const ghAccessToken = scmAccess?.token?.trim() || "";
   if (!ghAccessToken) {
     const err = new Error(
-      "GitHub is not configured for this project; connect GitHub (OAuth) or set githubToken (and repo) before using Cursor.",
+      "Repository host is not configured for this project; connect GitHub or Bitbucket (OAuth) or set legacy tokens before using Cursor.",
     );
-    err.code = "GITHUB_NOT_CONFIGURED";
+    err.code = "SCM_NOT_CONFIGURED";
     throw err;
   }
 
@@ -288,7 +321,7 @@ export async function createAgentForProjectRelease({
     const resolved = resolveCursorRepositoryUrl(project);
     if (!resolved.repositoryUrl) {
       const err = new Error(
-        "Could not resolve GitHub repository for this project. Set gitRepoPath or project GitHub username.",
+        "Could not resolve repository for this project. Set gitRepoPath or project GitHub/Bitbucket username.",
       );
       err.code = "REPO_UNRESOLVED";
       throw err;
@@ -309,24 +342,34 @@ export async function createAgentForProjectRelease({
     typeof finalSource.repository === "string" &&
     typeof finalSource.prUrl !== "string"
   ) {
-    const parsedRepo = parseGitRepoPath(finalSource.repository);
+    const parsedRepo = parseScmRepoPath(finalSource.repository);
     if (!parsedRepo) {
       const err = new Error(
-        "Invalid source.repository; expected a github.com owner/repo URL.",
+        "Invalid source.repository; expected a github.com or bitbucket.org owner/repo URL.",
       );
       err.code = "REPO_UNRESOLVED";
       throw err;
     }
-    const meta = await getRepositoryMetadata(
+    if (scmAccess && scmAccess.provider !== parsedRepo.provider) {
+      const err = new Error(
+        `source.repository is ${parsedRepo.provider} but project credentials are for ${scmAccess.provider}.`,
+      );
+      err.code = "REPO_UNRESOLVED";
+      throw err;
+    }
+    const meta = await scmGetRepositoryMetadata(
+      parsedRepo.provider,
       parsedRepo.owner,
       parsedRepo.repo,
       ghAccessToken,
     );
     if (!meta.ok) {
+      const host = parsedRepo.provider === "bitbucket" ? "Bitbucket" : "GitHub";
+      const status = meta.status != null ? String(meta.status) : "";
       const hint =
         meta.status === 404
-          ? `Repository ${parsedRepo.owner}/${parsedRepo.repo} was not found, or the token cannot see it. Check gitRepoPath / GitHub username match the repo you push to.`
-          : `GitHub returned ${meta.status} for ${parsedRepo.owner}/${parsedRepo.repo}: ${meta.message}. Ensure githubToken has repo scope. Private repos must also be connected to Cursor (GitHub integration) so Cursor Cloud can clone them.`;
+          ? `Repository ${parsedRepo.owner}/${parsedRepo.repo} was not found, or the token cannot see it. Check gitRepoPath / username match the repo you push to.`
+          : `${host}${status ? ` (${status})` : ""}: ${meta.message || "metadata request failed"}. Ensure the token has repository scope. Private repos must be reachable by Cursor Cloud.`;
       const err = new Error(hint);
       err.code = "REPO_INACCESSIBLE";
       throw err;
@@ -339,7 +382,7 @@ export async function createAgentForProjectRelease({
     // after prior merges (otherwise env e.g. main overrides and agents miss merged work).
     const envRef =
       typeof CURSOR_AGENT_SOURCE_REF_ENV === "string" &&
-      CURSOR_AGENT_SOURCE_REF_ENV.trim()
+        CURSOR_AGENT_SOURCE_REF_ENV.trim()
         ? CURSOR_AGENT_SOURCE_REF_ENV.trim()
         : null;
     const refBranch = clientRef || envRef || meta.defaultBranch;
@@ -353,10 +396,10 @@ export async function createAgentForProjectRelease({
     omitTargetFromBody
       ? null
       : target !== undefined &&
-          target !== null &&
-          typeof target === "object" &&
-          !Array.isArray(target) &&
-          Object.keys(target).length > 0
+        target !== null &&
+        typeof target === "object" &&
+        !Array.isArray(target) &&
+        Object.keys(target).length > 0
         ? target
         : { autoBranch: true };
 
@@ -417,96 +460,6 @@ export async function createAgentForProjectRelease({
   return { ok: true, status, data };
 }
 
-const DEFAULT_DEVELOPER_LOCK_CURSOR_PROMPT = `You are working in the developer integration repository, which includes the Launchpad platform UI as a git submodule at launchpad-frontend/.
-
-Use launchpad-frontend/ as the reference for Launchpad patterns and behavior. Compare launchpad-frontend/ with Frontend/ in this repository (for example using git diff or an equivalent approach) and apply the necessary changes under the Frontend/ folder so it aligns with or correctly reflects patterns from the submodule.
-
-Create a file named backend.md at the repository root that documents how to implement or connect a backend that supports this Frontend: APIs, data contracts, auth or session notes if relevant, deployment considerations, and concrete integration steps.`;
-
-/**
- * After release lock + submodule sync: start a Cursor agent on the developer repo (main) with a
- * fixed integration prompt. Skips if developerRepoUrl is unset. Requires CURSOR_API_KEY.
- *
- * @param {{ projectId: number, releaseId: number, attemptedById: number }} params
- * @returns {Promise<{ skipped: true, reason: string } | { skipped: false, agentId: string, status: number }>}
- */
-export async function startPostLockDeveloperRepoCursorAgent({
-  projectId,
-  releaseId,
-  attemptedById,
-}) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { developerRepoUrl: true },
-  });
-  const devUrl = project?.developerRepoUrl != null ? String(project.developerRepoUrl).trim() : "";
-  if (!devUrl) {
-    return { skipped: true, reason: "no_developer_repo" };
-  }
-  if (!process.env.CURSOR_API_KEY?.trim()) {
-    throw new ApiError(
-      503,
-      "CURSOR_API_KEY is not configured; it is required to start the post-lock Cursor agent when developerRepoUrl is set.",
-    );
-  }
-
-  const parsed = parseGitRepoPath(devUrl);
-  if (!parsed) {
-    throw new ApiError(400, "Invalid developerRepoUrl; expected a GitHub owner/repo path.");
-  }
-  const repositoryUrl = `https://github.com/${parsed.owner}/${parsed.repo}`;
-
-  const envPrompt = process.env.DEVELOPER_LOCK_CURSOR_PROMPT_TEMPLATE?.trim();
-  const promptText = envPrompt && envPrompt.length > 0 ? envPrompt : DEFAULT_DEVELOPER_LOCK_CURSOR_PROMPT;
-  const prompt = { text: promptText };
-
-  let result;
-  try {
-    result = await createAgentForProjectRelease({
-      projectId,
-      releaseId,
-      attemptedById,
-      prompt,
-      source: { repository: repositoryUrl, ref: "main" },
-      skipLaunchpadAutomation: true,
-    });
-  } catch (e) {
-    const code = e?.code;
-    if (code === "PROJECT_NOT_FOUND") {
-      throw new ApiError(404, e.message);
-    }
-    if (
-      code === "GITHUB_NOT_CONFIGURED" ||
-      code === "REPO_UNRESOLVED" ||
-      code === "REPO_INACCESSIBLE"
-    ) {
-      throw new ApiError(400, e.message);
-    }
-    if (e instanceof ApiError) throw e;
-    throw new ApiError(502, e?.message || "Cursor agent creation failed");
-  }
-
-  if (!result.ok) {
-    const body = result.data;
-    const msg =
-      typeof body?.error === "string"
-        ? body.error
-        : typeof body?.message === "string"
-          ? body.message
-          : JSON.stringify(body ?? {});
-    throw new ApiError(
-      result.status >= 400 && result.status < 600 ? result.status : 502,
-      (msg || "Cursor API rejected agent creation").slice(0, 800),
-    );
-  }
-
-  return {
-    skipped: false,
-    agentId: result.data.id,
-    status: result.status,
-  };
-}
-
 /**
  * Force `launchpad` to headSha, tag, build, deploy; update FigmaConversion.
  * @param {object} conversion — row with id, projectId, releaseId, attemptedById
@@ -526,26 +479,35 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
       projectPath: true,
       port: true,
       githubConnectionId: true,
+      bitbucketConnectionId: true,
+      bitbucketToken: true,
+      bitbucketUsername: true,
       createdById: true,
       githubUsername: true,
     },
   });
-  let token = "";
+  let scm;
   try {
-    token = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+    scm = await resolveScmCredentialsFromProject(project);
   } catch {
-    token = "";
+    scm = null;
   }
-  if (!token?.trim() || !project?.gitRepoPath?.trim()) {
-    throw new Error("Project has no GitHub token or Git repo path configured");
+  const token = scm?.token?.trim() || "";
+  if (!token || !project?.gitRepoPath?.trim()) {
+    throw new Error("Project has no repository token or gitRepoPath configured");
   }
 
-  const parsed = parseGitRepoPath(project.gitRepoPath);
+  const parsed = parseScmRepoPath(project.gitRepoPath);
   if (!parsed) throw new Error("Invalid Git repo path format");
-  const { owner, repo } = parsed;
+  if (scm.provider !== parsed.provider) {
+    throw new Error(
+      `gitRepoPath is ${parsed.provider} but project credentials are for ${scm.provider}`,
+    );
+  }
+  const { owner, repo, provider } = parsed;
 
   if (!skipShaDedupe) {
-    const lpNow = await getBranchSha(owner, repo, "launchpad", token);
+    const lpNow = await scmGetBranchSha(provider, owner, repo, "launchpad", token);
     if (
       lpNow?.sha &&
       lpNow.sha.toLowerCase() === headSha.toLowerCase()
@@ -562,29 +524,55 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
     projectId: conversion.projectId,
     releaseId: conversion.releaseId,
     shaPrefix: headSha.slice(0, 7),
+    provider,
   });
 
   const baseBranch = "launchpad";
-  const ensureResult = await ensureBranchFrom(owner, repo, baseBranch, "main", token);
-  if (!ensureResult.ok) {
-    throw new Error(ensureResult.error || "Could not ensure launchpad branch");
-  }
-
-  let updateResult = await updateRef(owner, repo, "heads/launchpad", headSha, true, token);
-  if (!updateResult.ok && updateResult.status === 404) {
-    const createResult = await createBranch(owner, repo, baseBranch, headSha, token);
-    if (!createResult.ok) {
-      throw new Error(createResult.message || "Could not create launchpad branch at SHA");
+  if (provider === "github") {
+    const ensureResult = await ensureBranchFrom(owner, repo, baseBranch, "main", token);
+    if (!ensureResult.ok) {
+      throw new Error(ensureResult.error || "Could not ensure launchpad branch");
     }
-  } else if (!updateResult.ok) {
-    throw new Error(updateResult.message || "Failed to force-update launchpad branch");
+
+    let updateResult = await updateRef(owner, repo, "heads/launchpad", headSha, true, token);
+    if (!updateResult.ok && updateResult.status === 404) {
+      const createResult = await createBranch(owner, repo, baseBranch, headSha, token);
+      if (!createResult.ok) {
+        throw new Error(createResult.message || "Could not create launchpad branch at SHA");
+      }
+    } else if (!updateResult.ok) {
+      throw new Error(updateResult.message || "Failed to force-update launchpad branch");
+    }
+  } else {
+    const meta = await scmGetRepositoryMetadata(provider, owner, repo, token);
+    const defaultBranch = meta.ok ? meta.defaultBranch || "main" : "main";
+    const mainTip = await scmGetBranchSha(provider, owner, repo, defaultBranch, token);
+    if (!mainTip?.sha) {
+      throw new Error(
+        `Default branch "${defaultBranch}" not found; cannot ensure "${baseBranch}" on Bitbucket.`,
+      );
+    }
+    const launchpadTip = await scmGetBranchSha(provider, owner, repo, baseBranch, token);
+    if (!launchpadTip?.sha) {
+      const created = await createBitbucketBranchAt(owner, repo, baseBranch, mainTip.sha, token);
+      if (!created.ok) {
+        throw new Error(created.message || "Could not create launchpad branch on Bitbucket");
+      }
+    }
+    const moved = await setBitbucketBranchTip(owner, repo, baseBranch, headSha, token);
+    if (!moved.ok) {
+      throw new Error(moved.message || "Failed to move launchpad branch on Bitbucket");
+    }
   }
 
   const releaseId = conversion.releaseId;
   const versionNumber = await autoGenerateVersion(releaseId);
   const tagName = `rel-${releaseId}-${versionNumber}`;
 
-  const tagResult = await createTagIdempotent(owner, repo, tagName, headSha, token);
+  const tagResult =
+    provider === "github"
+      ? await createTagIdempotent(owner, repo, tagName, headSha, token)
+      : await createBitbucketTagIdempotent(owner, repo, tagName, headSha, token);
   if (!tagResult.ok) {
     throw new Error(tagResult.message || "Failed to create tag");
   }
@@ -604,7 +592,10 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
 
   let newVersion;
   let deployedToPort = false;
-  const githubTagUrl = `https://github.com/${owner}/${repo}/releases/tag/${tagName}`;
+  const scmTagUrl =
+    provider === "github"
+      ? `https://github.com/${owner}/${repo}/releases/tag/${tagName}`
+      : `https://bitbucket.org/${owner}/${repo}/commits/tag/${encodeURIComponent(tagName)}`;
 
   const persistFallbackVersion = async (buildUrl) => {
     if (existingVersion) {
@@ -644,7 +635,10 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
     const liveSiteUrl = `${config.getBuildUrlProtocol()}://${config.getBuildUrlHost()}:${project.port}`;
 
     await fs.ensureDir(tempRoot);
-    const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+    const cloneUrl =
+      provider === "github"
+        ? `https://x-access-token:${token}@github.com/${owner}/${repo}.git`
+        : `https://x-token-auth:${token}@bitbucket.org/${owner}/${repo}.git`;
     let deployAttemptFailed = false;
     try {
       try {
@@ -712,13 +706,13 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
         );
       }
     } finally {
-      await fs.remove(tempRoot).catch(() => {});
+      await fs.remove(tempRoot).catch(() => { });
     }
     if (deployAttemptFailed) {
       newVersion = await persistFallbackVersion(liveSiteUrl);
     }
   } else {
-    newVersion = await persistFallbackVersion(githubTagUrl);
+    newVersion = await persistFallbackVersion(scmTagUrl);
   }
 
   await prisma.figmaConversion.update({
@@ -773,30 +767,39 @@ export async function performMergeToLaunchpad(agentId, agentData, options = {}) 
       githubToken: true,
       gitRepoPath: true,
       githubConnectionId: true,
+      bitbucketConnectionId: true,
+      bitbucketToken: true,
+      bitbucketUsername: true,
       createdById: true,
       githubUsername: true,
     },
   });
-  let token = "";
+  let scm;
   try {
-    token = (await resolveGithubCredentialsFromProject(project)).githubToken?.trim() || "";
+    scm = await resolveScmCredentialsFromProject(project);
   } catch {
-    token = "";
+    scm = null;
   }
-  if (!token?.trim() || !project?.gitRepoPath?.trim()) {
-    throw new Error("Project has no GitHub token or Git repo path configured");
+  const token = scm?.token?.trim() || "";
+  if (!token || !project?.gitRepoPath?.trim()) {
+    throw new Error("Project has no repository token or Git repo path configured");
   }
 
-  const parsed = parseGitRepoPath(project.gitRepoPath);
+  const parsed = parseScmRepoPath(project.gitRepoPath);
   if (!parsed) throw new Error("Invalid Git repo path format");
-  const { owner, repo } = parsed;
+  if (scm.provider !== parsed.provider) {
+    throw new Error(
+      `gitRepoPath is ${parsed.provider} but project credentials are for ${scm.provider}`,
+    );
+  }
+  const { owner, repo, provider } = parsed;
 
   const headBranch = agentData.target?.branchName;
   if (!headBranch || typeof headBranch !== "string") {
     throw new Error("Agent has no target branch name");
   }
 
-  const headShaResult = await getBranchSha(owner, repo, headBranch, token);
+  const headShaResult = await scmGetBranchSha(provider, owner, repo, headBranch, token);
   if (!headShaResult) {
     throw new Error("Could not get agent branch SHA; branch may not exist");
   }

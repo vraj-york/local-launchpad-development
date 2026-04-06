@@ -8,8 +8,10 @@ import React, {
 } from "react";
 import { Link } from "react-router-dom";
 import {
+  fetchBitbucketReposPage,
   fetchGithubReposPage,
   fetchJiraProjectsForConnection,
+  getBitbucketOAuthAuthorizeUrl,
   getGithubOAuthAuthorizeUrl,
   getJiraOAuthAuthorizeUrl,
 } from "@/api";
@@ -31,8 +33,12 @@ const GH_REPO_PATH_RE =
   /^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i;
 
 /**
- * Shared GitHub + Jira OAuth UI for create project and edit project (creator/admin).
- * @typedef {{ github?: { connections?: Array<{id:number, login?:string|null}> }, jira?: { connections?: Array<{id:number, baseUrl?:string|null}> } }} IntegrationsPayload
+ * Shared GitHub or Bitbucket + Jira OAuth UI for create project and edit project (creator/admin).
+ * @typedef {{
+ *   github?: { connections?: Array<{id:number, login?:string|null}> },
+ *   bitbucket?: { connections?: Array<{id:number, login?:string|null}> },
+ *   jira?: { connections?: Array<{id:number, baseUrl?:string|null}> },
+ * }} IntegrationsPayload
  */
 const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
   {
@@ -48,7 +54,9 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
 ) {
   const isEdit = variant === "edit";
 
+  const [scmHost, setScmHost] = useState("github");
   const [selectedGithubConnectionId, setSelectedGithubConnectionId] = useState("");
+  const [selectedBitbucketConnectionId, setSelectedBitbucketConnectionId] = useState("");
   const [selectedJiraConnectionId, setSelectedJiraConnectionId] = useState("");
   const [repoMode, setRepoMode] = useState(isEdit ? "keep" : "auto");
   const [pickedRepoPath, setPickedRepoPath] = useState("");
@@ -56,6 +64,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
   const [jiraProjectKey, setJiraProjectKey] = useState("");
   const [oauthBusy, setOauthBusy] = useState(null);
   const [githubRepos, setGithubRepos] = useState([]);
+  const [bitbucketRepos, setBitbucketRepos] = useState([]);
   const [reposLoading, setReposLoading] = useState(false);
   const [reposPage, setReposPage] = useState(1);
   const [reposHasMore, setReposHasMore] = useState(false);
@@ -67,15 +76,18 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
   const [jiraBaseUrlResolved, setJiraBaseUrlResolved] = useState("");
 
   const githubConnections = integrationsPayload?.github?.connections ?? [];
+  const bitbucketConnections = integrationsPayload?.bitbucket?.connections ?? [];
   const jiraConnections = integrationsPayload?.jira?.connections ?? [];
 
-  const filteredGithubRepos = useMemo(() => {
+  const activeRepos = scmHost === "github" ? githubRepos : bitbucketRepos;
+
+  const filteredRepos = useMemo(() => {
     const q = repoSearch.trim().toLowerCase();
-    if (!q) return githubRepos;
-    return githubRepos.filter((r) =>
+    if (!q) return activeRepos;
+    return activeRepos.filter((r) =>
       String(r.fullName || "").toLowerCase().includes(q),
     );
-  }, [githubRepos, repoSearch]);
+  }, [activeRepos, repoSearch]);
 
   const gitRepoPath =
     repoMode === "manual"
@@ -87,9 +99,16 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
   useEffect(() => {
     if (syncKey === "__closed__" || !syncKey) return;
     if (isEdit && editProject) {
+      const useBb = editProject.bitbucketConnectionId != null;
+      setScmHost(useBb ? "bitbucket" : "github");
       setSelectedGithubConnectionId(
         editProject.githubConnectionId != null
           ? String(editProject.githubConnectionId)
+          : "",
+      );
+      setSelectedBitbucketConnectionId(
+        editProject.bitbucketConnectionId != null
+          ? String(editProject.bitbucketConnectionId)
           : "",
       );
       setSelectedJiraConnectionId(
@@ -103,6 +122,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       setDeveloperRepoUrlInput(String(editProject.developerRepoUrl ?? ""));
       setDevRepoPickNonce(0);
       setGithubRepos([]);
+      setBitbucketRepos([]);
       setReposHasMore(false);
       setReposPage(1);
       setJiraProjects([]);
@@ -110,6 +130,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       return;
     }
     if (!isEdit) {
+      setScmHost("github");
       setRepoMode("auto");
       setPickedRepoPath("");
       setGitRepoPathManual("");
@@ -121,8 +142,16 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
   }, [syncKey, isEdit, editProject]);
 
   useEffect(() => {
+    if (isEdit || !integrationsPayload) return;
+    const gh = integrationsPayload.github?.connections ?? [];
+    const bb = integrationsPayload.bitbucket?.connections ?? [];
+    if (!gh.length && bb.length) setScmHost("bitbucket");
+  }, [integrationsPayload, isEdit]);
+
+  useEffect(() => {
     if (!integrationsPayload) return;
     const gh = integrationsPayload.github?.connections ?? [];
+    const bb = integrationsPayload.bitbucket?.connections ?? [];
     const ji = integrationsPayload.jira?.connections ?? [];
     setSelectedGithubConnectionId((prev) => {
       if (isEdit && editProject?.githubConnectionId != null) {
@@ -131,6 +160,14 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       }
       if (prev && gh.some((c) => String(c.id) === prev)) return prev;
       return gh[0] ? String(gh[0].id) : "";
+    });
+    setSelectedBitbucketConnectionId((prev) => {
+      if (isEdit && editProject?.bitbucketConnectionId != null) {
+        const want = String(editProject.bitbucketConnectionId);
+        if (bb.some((c) => String(c.id) === want)) return want;
+      }
+      if (prev && bb.some((c) => String(c.id) === prev)) return prev;
+      return bb[0] ? String(bb[0].id) : "";
     });
     setSelectedJiraConnectionId((prev) => {
       if (isEdit && editProject?.jiraConnectionId != null) {
@@ -149,8 +186,11 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
   }, [isEdit, projectId]);
 
   useEffect(() => {
-    if (!selectedGithubConnectionId) {
+    const connId =
+      scmHost === "github" ? selectedGithubConnectionId : selectedBitbucketConnectionId;
+    if (!connId) {
       setGithubRepos([]);
+      setBitbucketRepos([]);
       setReposHasMore(false);
       setReposPage(1);
       return;
@@ -159,23 +199,33 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     (async () => {
       setReposLoading(true);
       setGithubRepos([]);
+      setBitbucketRepos([]);
       setReposPage(1);
       try {
-        const data = await fetchGithubReposPage(selectedGithubConnectionId, {
+        const fetchPage =
+          scmHost === "github" ? fetchGithubReposPage : fetchBitbucketReposPage;
+        const data = await fetchPage(connId, {
           page: 1,
           ...repoListOpts,
         });
         if (!cancelled) {
-          setGithubRepos(data.repos || []);
+          const rows = data.repos || [];
+          if (scmHost === "github") setGithubRepos(rows);
+          else setBitbucketRepos(rows);
           setReposHasMore(Boolean(data.hasMore));
           setReposPage(1);
         }
       } catch (e) {
         const msg =
-          e?.response?.data?.error || e?.message || "Could not load GitHub repositories";
+          e?.response?.data?.error ||
+          e?.message ||
+          (scmHost === "github"
+            ? "Could not load GitHub repositories"
+            : "Could not load Bitbucket repositories");
         if (!cancelled) {
           toast.error(msg);
           setGithubRepos([]);
+          setBitbucketRepos([]);
           setReposHasMore(false);
         }
       } finally {
@@ -185,7 +235,12 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     return () => {
       cancelled = true;
     };
-  }, [selectedGithubConnectionId, repoListOpts]);
+  }, [
+    scmHost,
+    selectedGithubConnectionId,
+    selectedBitbucketConnectionId,
+    repoListOpts,
+  ]);
 
   useEffect(() => {
     if (!selectedJiraConnectionId) {
@@ -219,16 +274,25 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     };
   }, [selectedJiraConnectionId, repoListOpts]);
 
-  const loadMoreGithubRepos = useCallback(async () => {
-    if (!selectedGithubConnectionId || !reposHasMore || reposLoading) return;
+  const loadMoreRepos = useCallback(async () => {
+    const connId =
+      scmHost === "github" ? selectedGithubConnectionId : selectedBitbucketConnectionId;
+    if (!connId || !reposHasMore || reposLoading) return;
     setReposLoading(true);
     const nextPage = reposPage + 1;
     try {
-      const data = await fetchGithubReposPage(selectedGithubConnectionId, {
+      const fetchPage =
+        scmHost === "github" ? fetchGithubReposPage : fetchBitbucketReposPage;
+      const data = await fetchPage(connId, {
         page: nextPage,
         ...repoListOpts,
       });
-      setGithubRepos((prev) => [...prev, ...(data.repos || [])]);
+      const batch = data.repos || [];
+      if (scmHost === "github") {
+        setGithubRepos((prev) => [...prev, ...batch]);
+      } else {
+        setBitbucketRepos((prev) => [...prev, ...batch]);
+      }
       setReposHasMore(Boolean(data.hasMore));
       setReposPage(nextPage);
     } catch (e) {
@@ -239,7 +303,9 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       setReposLoading(false);
     }
   }, [
+    scmHost,
     selectedGithubConnectionId,
+    selectedBitbucketConnectionId,
     reposHasMore,
     reposLoading,
     reposPage,
@@ -250,18 +316,29 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     (integrationsLoadingFlag) => {
       const errors = {};
       const ghConns = integrationsPayload?.github?.connections ?? [];
+      const bbConns = integrationsPayload?.bitbucket?.connections ?? [];
       const jiConns = integrationsPayload?.jira?.connections ?? [];
       if (integrationsLoadingFlag) {
         errors.integrations = "Checking integrations…";
-      } else if (ghConns.length === 0) {
+      } else if (scmHost === "github") {
+        if (ghConns.length === 0) {
+          errors.integrations =
+            "Add at least one GitHub account (Integrations) or switch code host to Bitbucket";
+        } else if (!selectedGithubConnectionId) {
+          errors.integrations = "Select a GitHub account for this project";
+        }
+      } else if (bbConns.length === 0) {
         errors.integrations =
-          "Add at least one GitHub account (Integrations) before continuing";
-      } else if (!selectedGithubConnectionId) {
-        errors.integrations = "Select a GitHub account for this project";
-      } else if (jiConns.length === 0) {
-        errors.integrations = "Add at least one Jira site (Integrations) before continuing";
-      } else if (!selectedJiraConnectionId) {
-        errors.integrations = "Select a Jira site for this project";
+          "Add at least one Bitbucket account (Integrations) or switch code host to GitHub";
+      } else if (!selectedBitbucketConnectionId) {
+        errors.integrations = "Select a Bitbucket account for this project";
+      }
+      if (!errors.integrations) {
+        if (jiConns.length === 0) {
+          errors.integrations = "Add at least one Jira site (Integrations) before continuing";
+        } else if (!selectedJiraConnectionId) {
+          errors.integrations = "Select a Jira site for this project";
+        }
       }
       if (!jiraProjectKey.trim()) {
         errors.jiraProjectKey =
@@ -269,7 +346,10 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       }
       if (repoMode === "manual") {
         if (!gitRepoPathManual.trim()) {
-          errors.gitRepoPath = "Enter a repository path (e.g. github.com/org/repo)";
+          errors.gitRepoPath =
+            scmHost === "github"
+              ? "Enter a repository path (e.g. github.com/org/repo)"
+              : "Enter a repository path (e.g. bitbucket.org/workspace/repo-slug)";
         }
       } else if (repoMode === "pick") {
         if (!pickedRepoPath.trim()) {
@@ -285,7 +365,9 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     },
     [
       integrationsPayload,
+      scmHost,
       selectedGithubConnectionId,
+      selectedBitbucketConnectionId,
       selectedJiraConnectionId,
       jiraProjectKey,
       repoMode,
@@ -299,17 +381,27 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     (project, integrationsLoadingFlag) => {
       const errors = {};
       const ghConns = integrationsPayload?.github?.connections ?? [];
+      const bbConns = integrationsPayload?.bitbucket?.connections ?? [];
       const jiConns = integrationsPayload?.jira?.connections ?? [];
       if (integrationsLoadingFlag) {
         errors.integrations = "Loading integration connections…";
-      } else if (ghConns.length === 0) {
-        errors.integrations = "No GitHub OAuth connections for the project owner";
-      } else if (!selectedGithubConnectionId) {
-        errors.integrations = "Select a GitHub account";
-      } else if (jiConns.length === 0) {
-        errors.integrations = "No Jira OAuth connections for the project owner";
-      } else if (!selectedJiraConnectionId) {
-        errors.integrations = "Select a Jira site";
+      } else if (scmHost === "github") {
+        if (ghConns.length === 0) {
+          errors.integrations = "No GitHub OAuth connections for the project owner";
+        } else if (!selectedGithubConnectionId) {
+          errors.integrations = "Select a GitHub account";
+        }
+      } else if (bbConns.length === 0) {
+        errors.integrations = "No Bitbucket OAuth connections for the project owner";
+      } else if (!selectedBitbucketConnectionId) {
+        errors.integrations = "Select a Bitbucket account";
+      }
+      if (!errors.integrations) {
+        if (jiConns.length === 0) {
+          errors.integrations = "No Jira OAuth connections for the project owner";
+        } else if (!selectedJiraConnectionId) {
+          errors.integrations = "Select a Jira site";
+        }
       }
       if (!jiraProjectKey.trim()) {
         errors.jiraProjectKey = "Jira project key is required";
@@ -335,7 +427,9 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     },
     [
       integrationsPayload,
+      scmHost,
       selectedGithubConnectionId,
+      selectedBitbucketConnectionId,
       selectedJiraConnectionId,
       jiraProjectKey,
       repoMode,
@@ -356,17 +450,30 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     } else {
       gitRepoPathOut = undefined;
     }
-    return {
-      githubConnectionId: Number(selectedGithubConnectionId),
+    const base = {
       jiraConnectionId: Number(selectedJiraConnectionId),
       gitRepoPath: gitRepoPathOut,
       developerRepoUrl: developerRepoUrlInput.trim() || undefined,
       jiraProjectKey: jiraProjectKey.trim(),
       jiraBaseUrl: jiraBaseUrlResolved || jiConn?.baseUrl || undefined,
     };
+    if (scmHost === "github") {
+      return {
+        ...base,
+        githubConnectionId: Number(selectedGithubConnectionId),
+        bitbucketConnectionId: null,
+      };
+    }
+    return {
+      ...base,
+      bitbucketConnectionId: Number(selectedBitbucketConnectionId),
+      githubConnectionId: null,
+    };
   }, [
     integrationsPayload,
+    scmHost,
     selectedGithubConnectionId,
+    selectedBitbucketConnectionId,
     selectedJiraConnectionId,
     repoMode,
     gitRepoPathManual,
@@ -406,7 +513,9 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       validateEdit,
       getCreatePayload,
       getEditResolvedGitRepoPath,
+      getScmHost: () => scmHost,
       getSelectedGithubConnectionId: () => selectedGithubConnectionId,
+      getSelectedBitbucketConnectionId: () => selectedBitbucketConnectionId,
       getSelectedJiraConnectionId: () => selectedJiraConnectionId,
       getJiraProjectKey: () => jiraProjectKey.trim(),
       getJiraBaseUrl: () => {
@@ -421,7 +530,9 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       validateEdit,
       getCreatePayload,
       getEditResolvedGitRepoPath,
+      scmHost,
       selectedGithubConnectionId,
+      selectedBitbucketConnectionId,
       selectedJiraConnectionId,
       jiraProjectKey,
       jiraBaseUrlResolved,
@@ -434,7 +545,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     <Card className="border-slate-200 overflow-hidden">
       <CardHeader className="pb-2">
         <CardTitle className="text-lg font-semibold text-slate-800">
-          GitHub &amp; Jira for this project
+          Code host &amp; Jira for this project
         </CardTitle>
         <p className="text-sm text-muted-foreground font-normal pt-1">
           {isEdit ? (
@@ -466,12 +577,45 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
         {validationErrors.integrations && (
           <p className="text-sm text-destructive">{validationErrors.integrations}</p>
         )}
+        <div className="space-y-2">
+          <Label>Code host</Label>
+          <Select
+            value={scmHost}
+            onValueChange={(v) => {
+              setScmHost(v);
+              setPickedRepoPath("");
+              setGitRepoPathManual("");
+              setRepoSearch("");
+            }}
+            disabled={integrationsLoading}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="github">GitHub</SelectItem>
+              <SelectItem value="bitbucket">Bitbucket</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Each project uses one host for its repository (not both). Connect accounts under{" "}
+            <Link
+              to="/settings/integrations"
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              Integrations
+            </Link>
+            .
+          </p>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-3 rounded-lg border border-slate-200 p-4">
-            <div className="font-medium text-slate-800">GitHub account</div>
+            <div className="font-medium text-slate-800">
+              {scmHost === "github" ? "GitHub account" : "Bitbucket account"}
+            </div>
             {integrationsLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : (
+            ) : scmHost === "github" ? (
               <>
                 <Select
                   value={selectedGithubConnectionId || undefined}
@@ -511,6 +655,48 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : null}
                   {isEdit ? "Reconnect selected account" : "Add GitHub account"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Select
+                  value={selectedBitbucketConnectionId || undefined}
+                  onValueChange={setSelectedBitbucketConnectionId}
+                  disabled={bitbucketConnections.length === 0}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Bitbucket account" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {bitbucketConnections.map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        {c.login ? c.login : `Account #${c.id}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={integrationsLoading || oauthBusy}
+                  onClick={async () => {
+                    setOauthBusy("bb");
+                    try {
+                      const url = isEdit
+                        ? await getBitbucketOAuthAuthorizeUrl(selectedBitbucketConnectionId)
+                        : await getBitbucketOAuthAuthorizeUrl();
+                      window.location.href = url;
+                    } catch (e) {
+                      toast.error(e.message || "Could not start Bitbucket OAuth");
+                      setOauthBusy(null);
+                    }
+                  }}
+                >
+                  {oauthBusy === "bb" ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  {isEdit ? "Reconnect selected account" : "Add Bitbucket account"}
                 </Button>
               </>
             )}
@@ -594,12 +780,20 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                 placeholder="Filter repositories…"
                 value={repoSearch}
                 onChange={(e) => setRepoSearch(e.target.value)}
-                disabled={!selectedGithubConnectionId || reposLoading}
+                disabled={
+                  !(scmHost === "github"
+                    ? selectedGithubConnectionId
+                    : selectedBitbucketConnectionId) || reposLoading
+                }
               />
               <Select
                 value={pickedRepoPath || undefined}
                 onValueChange={setPickedRepoPath}
-                disabled={!selectedGithubConnectionId || reposLoading}
+                disabled={
+                  !(scmHost === "github"
+                    ? selectedGithubConnectionId
+                    : selectedBitbucketConnectionId) || reposLoading
+                }
               >
                 <SelectTrigger>
                   <SelectValue
@@ -607,7 +801,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                   />
                 </SelectTrigger>
                 <SelectContent className="max-h-60">
-                  {filteredGithubRepos.map((r) => (
+                  {filteredRepos.map((r) => (
                     <SelectItem key={r.gitRepoPath} value={r.gitRepoPath}>
                       {r.fullName}
                       {r.private ? " (private)" : ""}
@@ -621,7 +815,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                   variant="ghost"
                   size="sm"
                   disabled={reposLoading}
-                  onClick={loadMoreGithubRepos}
+                  onClick={loadMoreRepos}
                 >
                   {reposLoading ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -635,7 +829,11 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
             <div className="space-y-1 pt-1">
               <Input
                 id="gitRepoPathManual-shared"
-                placeholder="github.com/org/repository"
+                placeholder={
+                  scmHost === "github"
+                    ? "github.com/org/repository"
+                    : "bitbucket.org/workspace/repository"
+                }
                 value={gitRepoPath}
                 onChange={(e) => setGitRepoPathManual(e.target.value)}
                 className={
@@ -643,13 +841,15 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                 }
               />
               <p className="text-xs text-muted-foreground">
-                Must be a repo the selected GitHub account can access.
+                Must be a repo the selected {scmHost === "github" ? "GitHub" : "Bitbucket"}{" "}
+                account can access.
               </p>
             </div>
           )}
           {repoMode === "auto" && (
             <p className="text-xs text-muted-foreground">
-              A new repository will be created under the selected GitHub account when you submit.
+              A new repository will be created under your selected{" "}
+              {scmHost === "github" ? "GitHub" : "Bitbucket"} account when you submit.
             </p>
           )}
           {repoMode === "keep" && isEdit && editProject?.gitRepoPath && (
@@ -679,12 +879,19 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
           </p>
           <Input
             id="developerRepoUrl-shared"
-            placeholder="github.com/org/customer-repo"
+            placeholder={
+              scmHost === "github"
+                ? "github.com/org/customer-repo"
+                : "bitbucket.org/workspace/customer-repo"
+            }
             value={developerRepoUrlInput}
             onChange={(e) => setDeveloperRepoUrlInput(e.target.value)}
             className={validationErrors.developerRepoUrl ? "border-destructive" : ""}
           />
-          {selectedGithubConnectionId && filteredGithubRepos.length > 0 && (
+          {(scmHost === "github"
+            ? selectedGithubConnectionId
+            : selectedBitbucketConnectionId) &&
+            filteredRepos.length > 0 && (
             <Select
               key={devRepoPickNonce}
               onValueChange={(v) => {
@@ -696,7 +903,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                 <SelectValue placeholder="Or choose from your repositories…" />
               </SelectTrigger>
               <SelectContent className="max-h-60">
-                {filteredGithubRepos.map((r) => (
+                {filteredRepos.map((r) => (
                   <SelectItem key={`devrepo-${r.gitRepoPath}`} value={r.gitRepoPath}>
                     {r.fullName}
                     {r.private ? " (private)" : ""}

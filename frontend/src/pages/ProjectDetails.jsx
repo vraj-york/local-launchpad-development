@@ -278,7 +278,11 @@ const ProjectDetails = () => {
         </div>
       </Tabs> */}
 
-      <ReleaseManagement projectId={projectId} projectName={projectName} />
+      <ReleaseManagement
+        projectId={projectId}
+        projectName={projectName}
+        project={project}
+      />
     </div>
   );
 };
