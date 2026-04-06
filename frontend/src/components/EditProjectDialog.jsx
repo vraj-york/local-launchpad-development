@@ -69,7 +69,7 @@ function buildUpdatePayload({
   jiraProjectKey,
   jiraApiToken,
   gitRepoPath,
-  developerRepoUrl,
+  developmentRepoUrl,
   assignedUserEmails,
   stakeholderEmails,
   project,
@@ -129,10 +129,10 @@ function buildUpdatePayload({
     payload.gitRepoPath = repoPath;
   }
 
-  const prevDev = String(project?.developerRepoUrl ?? "").trim();
-  const devTrim = developerRepoUrl.trim();
+  const prevDev = String(project?.developmentRepoUrl ?? "").trim();
+  const devTrim = developmentRepoUrl.trim();
   if (devTrim !== prevDev) {
-    payload.developerRepoUrl = devTrim === "" ? null : devTrim;
+    payload.developmentRepoUrl = devTrim === "" ? null : devTrim;
   }
 
   if (
@@ -216,7 +216,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const [jiraApiToken, setJiraApiToken] = useState("");
   const [jiraProjectKey, setJiraProjectKey] = useState("");
   const [gitRepoPath, setGitRepoPath] = useState("");
-  const [developerRepoUrl, setDeveloperRepoUrl] = useState("");
+  const [developmentRepoUrl, setDevelopmentRepoUrl] = useState("");
 
   const [assignedUserEmailTags, setAssignedUserEmailTags] = useState([]);
   const [stakeholderEmailTags, setStakeholderEmailTags] = useState([]);
@@ -238,7 +238,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const [jiraProjectsEdit, setJiraProjectsEdit] = useState([]);
   const [jiraProjectsLoadingEdit, setJiraProjectsLoadingEdit] = useState(false);
   const [githubRepoPickSeq, setGithubRepoPickSeq] = useState(0);
-  const [developerRepoPickSeq, setDeveloperRepoPickSeq] = useState(0);
+  const [developmentRepoPickSeq, setDevelopmentRepoPickSeq] = useState(0);
 
   useEffect(() => {
     if (!open || !project) return;
@@ -250,7 +250,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
     setJiraProjectKey(project.jiraProjectKey ?? "");
     setJiraApiToken(project.jiraApiToken ?? "");
     setGitRepoPath(project.gitRepoPath ?? "");
-    setDeveloperRepoUrl(String(project.developerRepoUrl ?? ""));
+    setDevelopmentRepoUrl(String(project.developmentRepoUrl ?? ""));
     setAssignedUserEmailTags(
       storageStringToEmailsArray(project.assignedUserEmails),
     );
@@ -397,9 +397,9 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         errors.gitRepoPath = "Git repository path is required";
       }
 
-      const devLegacy = developerRepoUrl.trim();
+      const devLegacy = developmentRepoUrl.trim();
       if (devLegacy && !GH_REPO_PATH_RE.test(devLegacy)) {
-        errors.developerRepoUrl =
+        errors.developmentRepoUrl =
           "Enter a valid GitHub path (e.g. github.com/org/other-repo)";
       }
 
@@ -470,9 +470,9 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
       const resolvedGitPath = useSharedOAuthCard
         ? gitJiraRef.current?.getEditResolvedGitRepoPath?.(project) ?? ""
         : gitRepoPath;
-      const resolvedDeveloperRepo = useSharedOAuthCard
-        ? gitJiraRef.current?.getDeveloperRepoUrl?.() ?? ""
-        : developerRepoUrl;
+      const resolvedDevelopmentRepo = useSharedOAuthCard
+        ? gitJiraRef.current?.getDevelopmentRepoUrl?.() ?? ""
+        : developmentRepoUrl;
       const resolvedJiraKey = useSharedOAuthCard
         ? gitJiraRef.current?.getJiraProjectKey?.() ?? ""
         : jiraProjectKey;
@@ -501,7 +501,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         jiraProjectKey: resolvedJiraKey,
         jiraApiToken,
         gitRepoPath: resolvedGitPath,
-        developerRepoUrl: resolvedDeveloperRepo,
+        developmentRepoUrl: resolvedDevelopmentRepo,
         assignedUserEmails: emailsArrayToStorageString(assignedUserEmailTags),
         stakeholderEmails: emailsArrayToStorageString(stakeholderEmailTags),
         project,
@@ -828,7 +828,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                     )}
                 </div>
                 <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="edit-developerRepoUrl">Developer repository (optional)</Label>
+                  <Label htmlFor="edit-developmentRepoUrl">Developer repository (optional)</Label>
                   <p className="text-xs text-muted-foreground">
                     On lock, the server clones the developer repo, pins the platform repo as a
                     submodule at <code className="text-xs">launchpad-frontend/</code>, runs{" "}
@@ -840,18 +840,18 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                     &quot;Update the Launchpad branch&quot;.
                   </p>
                   <Input
-                    id="edit-developerRepoUrl"
+                    id="edit-developmentRepoUrl"
                     placeholder="github.com/org/customer-repo"
-                    value={developerRepoUrl}
-                    onChange={(e) => setDeveloperRepoUrl(e.target.value)}
-                    className={validationErrors.developerRepoUrl ? "border-destructive" : ""}
+                    value={developmentRepoUrl}
+                    onChange={(e) => setDevelopmentRepoUrl(e.target.value)}
+                    className={validationErrors.developmentRepoUrl ? "border-destructive" : ""}
                   />
                   {githubReposEdit.length > 0 && useOAuthGithub && canEditOAuthLinks && (
                     <Select
-                      key={developerRepoPickSeq}
+                      key={developmentRepoPickSeq}
                       onValueChange={(v) => {
-                        setDeveloperRepoUrl(v);
-                        setDeveloperRepoPickSeq((s) => s + 1);
+                        setDevelopmentRepoUrl(v);
+                        setDevelopmentRepoPickSeq((s) => s + 1);
                       }}
                     >
                       <SelectTrigger className="h-9" disabled={reposLoadingEdit}>
@@ -866,8 +866,8 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                       </SelectContent>
                     </Select>
                   )}
-                  {validationErrors.developerRepoUrl && (
-                    <p className="text-sm text-destructive">{validationErrors.developerRepoUrl}</p>
+                  {validationErrors.developmentRepoUrl && (
+                    <p className="text-sm text-destructive">{validationErrors.developmentRepoUrl}</p>
                   )}
                 </div>
                 {!useOAuthGithub && (

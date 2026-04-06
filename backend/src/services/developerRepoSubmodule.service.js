@@ -156,7 +156,7 @@ async function getSubmoduleNameForPath(workDir, relPath) {
 }
 
 /**
- * When developerRepoUrl is set, clone that repo, ensure the platform gitRepoPath is a submodule
+ * When developmentRepoUrl is set, clone that repo, ensure the platform gitRepoPath is a submodule
  * at launchpad-frontend/, then follow the usual submodule pin flow:
  *   cd launchpad-frontend && git fetch origin && git checkout &lt;commit-sha&gt;
  *   cd .. && git commit -m "…" && git push
@@ -172,10 +172,10 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
       ? params.releaseName.trim()
       : `release-${releaseId}`;
 
-  const devNorm = normalizeGithubRepoPath(project.developerRepoUrl || "");
+  const devNorm = normalizeGithubRepoPath(project.developmentRepoUrl || "");
   const srcNorm = normalizeGithubRepoPath(project.gitRepoPath || "");
   if (!devNorm) {
-    return { skipped: true, reason: "developerRepoUrl not set" };
+    return { skipped: true, reason: "developmentRepoUrl not set" };
   }
   if (!srcNorm) {
     throw new ApiError(
@@ -186,7 +186,7 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
   if (devNorm === srcNorm) {
     throw new ApiError(
       400,
-      "developerRepoUrl must differ from the platform gitRepoPath (source repository).",
+      "developmentRepoUrl must differ from the platform gitRepoPath (source repository).",
     );
   }
 
@@ -199,7 +199,7 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
   if (!tag) {
     throw new ApiError(
       400,
-      "This release has no active version with a git tag. Set the version you want to lock as active for this release before locking, or clear developerRepoUrl.",
+      "This release has no active version with a git tag. Set the version you want to lock as active for this release before locking, or clear developmentRepoUrl.",
     );
   }
 

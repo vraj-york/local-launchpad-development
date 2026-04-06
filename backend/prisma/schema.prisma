@@ -86,8 +86,8 @@ model Project {
   port              Int?     @unique
   projectPath       String?
   gitRepoPath       String?
-  /// Optional customer/developer repo (GitHub). On release lock, platform source is synced as a submodule at this tag.
-  developerRepoUrl  String?
+  /// Optional customer/development repo (GitHub/Bitbucket). On release lock, platform source is synced as a submodule at this tag.
+  developmentRepoUrl  String?
   nginxConfigPath   String?
   projectId String?  
   /// Optional comma-separated list of assignee emails (external / hub); validated as emails.

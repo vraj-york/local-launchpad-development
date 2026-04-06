@@ -546,7 +546,7 @@ export const createProjectService = async ({ userId, body }) => {
     githubUsername,
     githubToken,
     gitRepoPath,
-    developerRepoUrl,
+    developmentRepoUrl,
   } = body;
 
   const jiraKeyTrim = (jiraProjectKey && String(jiraProjectKey).trim()) || "";
@@ -815,16 +815,16 @@ export const createProjectService = async ({ userId, body }) => {
     }
 
     let persistedDeveloperRepoUrl = null;
-    const requestedDeveloperRepo = normalizeGitRepoPathValue(developerRepoUrl);
+    const requestedDeveloperRepo = normalizeGitRepoPathValue(developmentRepoUrl);
     if (requestedDeveloperRepo) {
       if (!parseScmRepoPath(requestedDeveloperRepo)) {
-        throw new ApiError(400, "developerRepoUrl must be a valid GitHub or Bitbucket repository path");
+        throw new ApiError(400, "developmentRepoUrl must be a valid GitHub or Bitbucket repository path");
       }
       const mainNorm = normalizeGitRepoPathValue(persistedGitRepoPath);
       if (mainNorm && requestedDeveloperRepo === mainNorm) {
         throw new ApiError(
           400,
-          "developerRepoUrl must differ from the platform Git repository (gitRepoPath).",
+          "developmentRepoUrl must differ from the platform Git repository (gitRepoPath).",
         );
       }
       persistedDeveloperRepoUrl = requestedDeveloperRepo;
@@ -894,7 +894,7 @@ export const createProjectService = async ({ userId, body }) => {
           stakeholderEmails: stakeholderEmailsDb,
           gitRepoPath:
             persistedGitRepoPath || path.join(relativeProjectPath, ".git"),
-          developerRepoUrl: persistedDeveloperRepoUrl,
+          developmentRepoUrl: persistedDeveloperRepoUrl,
           nginxConfigPath: path.join('nginx-configs', configFileName),
         },
       });
@@ -1557,7 +1557,7 @@ const PROJECT_UPDATE_KEYS = [
   "bitbucketToken",
   "bitbucketConnectionId",
   "gitRepoPath",
-  "developerRepoUrl",
+  "developmentRepoUrl",
   "assignedUserEmails",
   "stakeholderEmails",
 ];
@@ -1616,17 +1616,17 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
         data.gitRepoPath = normalized;
         continue;
       }
-      if (key === "developerRepoUrl") {
+      if (key === "developmentRepoUrl") {
         if (raw === null || raw === "") {
-          data.developerRepoUrl = null;
+          data.developmentRepoUrl = null;
         } else if (typeof raw === "string") {
           const normalized = normalizeGitRepoPathValue(raw);
           if (!normalized) {
-            throw new ApiError(400, "developerRepoUrl must be a valid GitHub or Bitbucket repository path");
+            throw new ApiError(400, "developmentRepoUrl must be a valid GitHub or Bitbucket repository path");
           }
-          data.developerRepoUrl = normalized;
+          data.developmentRepoUrl = normalized;
         } else {
-          throw new ApiError(400, "developerRepoUrl must be a string or null");
+          throw new ApiError(400, "developmentRepoUrl must be a string or null");
         }
         continue;
       }
@@ -1819,16 +1819,16 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     }
   }
 
-  if (data.developerRepoUrl !== undefined && data.developerRepoUrl !== null) {
-    const devNorm = normalizeGitRepoPathValue(data.developerRepoUrl);
+  if (data.developmentRepoUrl !== undefined && data.developmentRepoUrl !== null) {
+    const devNorm = normalizeGitRepoPathValue(data.developmentRepoUrl);
     if (!devNorm) {
-      throw new ApiError(400, "developerRepoUrl must be a valid GitHub or Bitbucket repository path");
+      throw new ApiError(400, "developmentRepoUrl must be a valid GitHub or Bitbucket repository path");
     }
     const mainNorm = normalizeGitRepoPathValue(merged.gitRepoPath);
     if (mainNorm && devNorm === mainNorm) {
       throw new ApiError(
         400,
-        "developerRepoUrl must differ from the platform Git repository (gitRepoPath).",
+        "developmentRepoUrl must differ from the platform Git repository (gitRepoPath).",
       );
     }
   }

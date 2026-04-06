@@ -69,7 +69,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
   const [reposPage, setReposPage] = useState(1);
   const [reposHasMore, setReposHasMore] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
-  const [developerRepoUrlInput, setDeveloperRepoUrlInput] = useState("");
+  const [developmentRepoUrlInput, setDevelopmentRepoUrlInput] = useState("");
   const [devRepoPickNonce, setDevRepoPickNonce] = useState(0);
   const [jiraProjects, setJiraProjects] = useState([]);
   const [jiraProjectsLoading, setJiraProjectsLoading] = useState(false);
@@ -119,7 +119,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       setGitRepoPathManual("");
       setRepoSearch("");
       setJiraProjectKey(editProject.jiraProjectKey ?? "");
-      setDeveloperRepoUrlInput(String(editProject.developerRepoUrl ?? ""));
+      setDevelopmentRepoUrlInput(String(editProject.developmentRepoUrl ?? ""));
       setDevRepoPickNonce(0);
       setGithubRepos([]);
       setBitbucketRepos([]);
@@ -135,7 +135,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       setPickedRepoPath("");
       setGitRepoPathManual("");
       setRepoSearch("");
-      setDeveloperRepoUrlInput("");
+      setDevelopmentRepoUrlInput("");
       setDevRepoPickNonce(0);
       setJiraProjectKey("");
     }
@@ -356,9 +356,9 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
           errors.gitRepoPath = "Choose a repository from the list";
         }
       }
-      const dev = developerRepoUrlInput.trim();
+      const dev = developmentRepoUrlInput.trim();
       if (dev && !GH_REPO_PATH_RE.test(dev)) {
-        errors.developerRepoUrl =
+        errors.developmentRepoUrl =
           "Enter a valid GitHub path (e.g. github.com/org/other-repo)";
       }
       return errors;
@@ -373,7 +373,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       repoMode,
       gitRepoPathManual,
       pickedRepoPath,
-      developerRepoUrlInput,
+      developmentRepoUrlInput,
     ],
   );
 
@@ -418,9 +418,9 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
           errors.gitRepoPath = "Choose a repository from the list";
         }
       }
-      const dev = developerRepoUrlInput.trim();
+      const dev = developmentRepoUrlInput.trim();
       if (dev && !GH_REPO_PATH_RE.test(dev)) {
-        errors.developerRepoUrl =
+        errors.developmentRepoUrl =
           "Enter a valid GitHub path (e.g. github.com/org/other-repo)";
       }
       return errors;
@@ -435,7 +435,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       repoMode,
       gitRepoPathManual,
       pickedRepoPath,
-      developerRepoUrlInput,
+      developmentRepoUrlInput,
     ],
   );
 
@@ -453,7 +453,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     const base = {
       jiraConnectionId: Number(selectedJiraConnectionId),
       gitRepoPath: gitRepoPathOut,
-      developerRepoUrl: developerRepoUrlInput.trim() || undefined,
+      developmentRepoUrl: developmentRepoUrlInput.trim() || undefined,
       jiraProjectKey: jiraProjectKey.trim(),
       jiraBaseUrl: jiraBaseUrlResolved || jiConn?.baseUrl || undefined,
     };
@@ -478,7 +478,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     repoMode,
     gitRepoPathManual,
     pickedRepoPath,
-    developerRepoUrlInput,
+    developmentRepoUrlInput,
     jiraProjectKey,
     jiraBaseUrlResolved,
   ]);
@@ -523,7 +523,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
         const jiConn = jiConns.find((c) => String(c.id) === selectedJiraConnectionId);
         return jiraBaseUrlResolved || jiConn?.baseUrl || "";
       },
-      getDeveloperRepoUrl: () => developerRepoUrlInput.trim(),
+      getDevelopmentRepoUrl: () => developmentRepoUrlInput.trim(),
     }),
     [
       validateCreate,
@@ -537,7 +537,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       jiraProjectKey,
       jiraBaseUrlResolved,
       integrationsPayload,
-      developerRepoUrlInput,
+      developmentRepoUrlInput,
     ],
   );
 
@@ -869,7 +869,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="developerRepoUrl-shared">Developer repository (optional)</Label>
+          <Label htmlFor="developmentRepoUrl-shared">Developer repository (optional)</Label>
           <p className="text-xs text-muted-foreground">
             Customer repo that receives the platform repo as a git submodule at{" "}
             <code className="text-xs">launchpad-frontend/</code>. On lock:{" "}
@@ -878,15 +878,15 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
             (default message: &quot;Update the Launchpad branch&quot;).
           </p>
           <Input
-            id="developerRepoUrl-shared"
+            id="developmentRepoUrl-shared"
             placeholder={
               scmHost === "github"
                 ? "github.com/org/customer-repo"
                 : "bitbucket.org/workspace/customer-repo"
             }
-            value={developerRepoUrlInput}
-            onChange={(e) => setDeveloperRepoUrlInput(e.target.value)}
-            className={validationErrors.developerRepoUrl ? "border-destructive" : ""}
+            value={developmentRepoUrlInput}
+            onChange={(e) => setDevelopmentRepoUrlInput(e.target.value)}
+            className={validationErrors.developmentRepoUrl ? "border-destructive" : ""}
           />
           {(scmHost === "github"
             ? selectedGithubConnectionId
@@ -895,7 +895,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
             <Select
               key={devRepoPickNonce}
               onValueChange={(v) => {
-                setDeveloperRepoUrlInput(v);
+                setDevelopmentRepoUrlInput(v);
                 setDevRepoPickNonce((n) => n + 1);
               }}
             >
@@ -912,8 +912,8 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
               </SelectContent>
             </Select>
           )}
-          {validationErrors.developerRepoUrl && (
-            <p className="text-sm text-destructive">{validationErrors.developerRepoUrl}</p>
+          {validationErrors.developmentRepoUrl && (
+            <p className="text-sm text-destructive">{validationErrors.developmentRepoUrl}</p>
           )}
         </div>
 

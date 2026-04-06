@@ -154,11 +154,11 @@ export const createProjectValidation = [
         .matches(/^(https?:\/\/)?(github\.com|bitbucket\.org)\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
         .withMessage("gitRepoPath must be a valid GitHub or Bitbucket repository path"),
 
-    body("developerRepoUrl")
+    body("developmentRepoUrl")
         .optional({ checkFalsy: true })
         .trim()
         .matches(/^(https?:\/\/)?(github\.com|bitbucket\.org)\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
-        .withMessage("developerRepoUrl must be a valid GitHub or Bitbucket repository path"),
+        .withMessage("developmentRepoUrl must be a valid GitHub or Bitbucket repository path"),
 
     optionalEmailList("assignedUserEmails"),
     optionalEmailList("stakeholderEmails"),
@@ -282,7 +282,7 @@ export const updateProjectValidation = [
         .matches(/^(https?:\/\/)?(github\.com|bitbucket\.org)\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
         .withMessage("gitRepoPath must be a valid GitHub or Bitbucket repository path"),
 
-    body("developerRepoUrl")
+    body("developmentRepoUrl")
         .optional({ nullable: true })
         .custom((value) => {
             if (value === undefined) return true;
@@ -292,7 +292,7 @@ export const updateProjectValidation = [
                 s,
             );
         })
-        .withMessage("developerRepoUrl must be a valid GitHub or Bitbucket repository path"),
+        .withMessage("developmentRepoUrl must be a valid GitHub or Bitbucket repository path"),
 
     body("slug")
         .optional({ nullable: true })
