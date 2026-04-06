@@ -80,16 +80,11 @@ window.markerConfig = {
           }
           
           await fs.writeFile(rootHtmlPath, htmlContent, 'utf-8');
-          console.log('✅ Marker.io script injected into:', rootHtmlPath);
-        } else {
-          console.log('ℹ️  Marker.io script already present in:', rootHtmlPath);
         }
       } catch (error) {
         console.error('❌ Error injecting Marker.io script:', error.message);
         // Continue with build process even if script injection fails
       }
-    } else {
-      console.log('⚠️  No root HTML file found to inject Marker.io script');
     }
 
     // Run install & build inside the right folder
@@ -98,7 +93,6 @@ exec(`cd ${actualProjectPath} && npm install && npm run build`, async (err, stdo
     console.error(stderr);
     return res.status(500).json({ error: "Build failed", details: stderr });
   }
-  console.log(stdout);
 
   // Detect build output dir relative to actualProjectPath
   let outputDir = null;
@@ -145,5 +139,5 @@ exec(`cd ${actualProjectPath} && npm install && npm run build`, async (err, stdo
 app.use("/apps", express.static(projectsDir));
 
 app.listen(PORT, () => {
-  console.log(`🚀 Backend running on http://localhost:${PORT}`);
+  console.log(`Legacy upload server http://localhost:${PORT}`);
 });

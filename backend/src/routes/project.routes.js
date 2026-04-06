@@ -180,8 +180,6 @@ async function callWebhookWithChunk(chunk, chunkIndex, totalChunks, maxRetries =
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`Attempting webhook call for chunk ${chunkIndex + 1} (attempt ${attempt}/${maxRetries})`);
-
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
@@ -213,9 +211,7 @@ async function callWebhookWithChunk(chunk, chunkIndex, totalChunks, maxRetries =
       console.error(`Webhook attempt ${attempt} failed for chunk ${chunkIndex + 1}:`, error.message);
 
       if (attempt < maxRetries) {
-        // Exponential backoff: wait 2^attempt seconds
         const delay = Math.pow(2, attempt) * 1000;
-        console.log(`Retrying in ${delay}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -234,11 +230,8 @@ async function processChunksInParallel(chunks, maxConcurrent = 5) {
     const chunkStartTime = Date.now();
 
     try {
-      console.log(`🚀 Starting chunk ${index + 1}/${chunks.length} (${chunk.length} bytes)`);
       const response = await callWebhookWithChunk(chunk, index, chunks.length);
-      const chunkTime = (Date.now() - chunkStartTime) / 1000;
       results[index] = { success: true, data: response };
-      console.log(`✅ Chunk ${index + 1} completed in ${chunkTime.toFixed(2)}s`);
     } catch (error) {
       const chunkTime = (Date.now() - chunkStartTime) / 1000;
       console.error(`❌ Chunk ${index + 1} failed after ${chunkTime.toFixed(2)}s:`, error.message);
@@ -632,10 +625,7 @@ router.post('/:projectId/switch', projectController.switchVersion);
 // API endpoint to generate Jira tickets from git diff summary
 router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
-  console.log('Project ID:', projectId);
   const { id: userId, role } = req.user;
-  console.log('User ID:', userId);
-  console.log('Role:', role);
 
   try {
     // Check access
@@ -695,26 +685,12 @@ router.post("/:id/generate-jira-tickets", authenticateToken, async (req, res) =>
 
     // Split diff into chunks if it's too large for the summary webhook
     const diffChunks = splitDiffIntoChunks(gitDiff);
-    console.log(`Jira: Diff split into ${diffChunks.length} chunks (total size: ${gitDiff.length} bytes)`);
 
-    // Process chunks in parallel (up to 5 concurrent requests)
     const maxConcurrent = 5;
-    console.log(`Jira: Starting parallel processing of ${diffChunks.length} chunks with max ${maxConcurrent} concurrent requests...`);
-    const startTime = Date.now();
 
     const parallelResults = await processChunksInParallel(diffChunks, maxConcurrent);
 
-    const endTime = Date.now();
-    const processingTime = (endTime - startTime) / 1000;
-
-    const successfulChunks = parallelResults.filter(r => r.success).length;
-    const failedChunks = parallelResults.filter(r => !r.success).length;
-
-    console.log(`Jira: 🚀 Parallel processing complete in ${processingTime.toFixed(2)}s: ${successfulChunks} successful, ${failedChunks} failed`);
-
-    // Aggregate all responses into a single summary
     const summary = aggregateWebhookResponses(parallelResults);
-    console.log('Jira: 📊 Final summary structure:', JSON.stringify(summary, null, 2));
 
     // Create Jira tickets from summary
     const projectInfo = {

@@ -164,7 +164,6 @@ export function startProjectServer(port, projectPathOrDir, projectId = null) {
   const server = createStaticServer(absoluteDir, projectId);
   server.listen(port, HOST, () => {
     activeServers.set(port, server);
-    console.log(`[project-server] http://${HOST}:${port} -> ${absoluteDir}`);
   });
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
@@ -187,10 +186,8 @@ export async function startAllProjectServers() {
     });
     const backendRoot = getBackendRoot();
     if (projects.length === 0) {
-      console.log("[project-server] No projects with ports in DB, skipping");
       return;
     }
-    console.log(`[project-server] Starting ${projects.length} project server(s)...`);
     for (const p of projects) {
       if (p.port && p.projectPath) {
         const absoluteDir = path.join(backendRoot, p.projectPath);

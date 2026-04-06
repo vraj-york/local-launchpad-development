@@ -7,7 +7,13 @@ import { Button } from "../components/ui/button";
 //   TabsTrigger,
 //   TabsContent,
 // } from "../components/ui/tabs";
-import { ArrowLeft, ExternalLink, PencilLine } from "lucide-react";
+import {
+  ArrowLeft,
+  ExternalLink,
+  Maximize2,
+  PencilLine,
+  Route,
+} from "lucide-react";
 import EditProjectDialog from "@/components/EditProjectDialog";
 import {
   fetchProjectById,
@@ -98,6 +104,10 @@ const ProjectDetails = () => {
     project?.slug != null && String(project.slug).trim() !== ""
       ? `${origin}/projects/${encodeURIComponent(project.slug.trim())}`
       : null;
+  const clientEmbedUrl =
+    clientUrl != null
+      ? `${clientUrl}${clientUrl.includes("?") ? "&" : "?"}c=false`
+      : null;
 
   if (loading) {
     return (
@@ -177,6 +187,40 @@ const ProjectDetails = () => {
             >
               <ExternalLink className="w-3.5 h-3.5" />
               Client Link
+            </Button>
+            <Button
+              variant="outline"
+              className="border-slate-200 bg-white/80 hover:bg-slate-50"
+              disabled={!clientEmbedUrl}
+              title={
+                clientEmbedUrl
+                  ? "Open the client build in a fullscreen iframe (no header, chat, or device frame)."
+                  : "Set a project slug (Edit project) to enable the embed link."
+              }
+              onClick={() =>
+                clientEmbedUrl &&
+                window.open(clientEmbedUrl, "_blank", "noopener,noreferrer")
+              }
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              Link without Controls
+            </Button>
+            <Button
+              variant="outline"
+              className="border-slate-200 bg-white/80 hover:bg-slate-50"
+              onClick={() => {
+                const origin =
+                  typeof window !== "undefined" ? window.location.origin : "";
+                const path = `/projects/roadmap/${encodeURIComponent(projectId)}`;
+                window.open(
+                  origin ? `${origin}${path}` : path,
+                  "_blank",
+                  "noopener,noreferrer",
+                );
+              }}
+            >
+              <Route className="w-3.5 h-3.5" />
+              Release roadmap
             </Button>
             <Button
               variant="outline"

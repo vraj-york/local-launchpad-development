@@ -418,11 +418,10 @@ const validateJiraConnection = async (
       Accept: "application/json",
     }
     : {
-      Authorization: `Basic ${Buffer.from(`${email}:${apiToken}`).toString("base64")}`,
-      Accept: "application/json",
-      "X-Atlassian-Token": "no-check",
-    };
-  console.log("oauthAccessToken", oauthAccessToken);
+        Authorization: `Basic ${Buffer.from(`${email}:${apiToken}`).toString("base64")}`,
+        Accept: "application/json",
+        "X-Atlassian-Token": "no-check",
+      };
   if (oauthAccessToken) {
     const cloud = atlassianCloudId && String(atlassianCloudId).trim();
     if (!cloud) {
@@ -439,7 +438,6 @@ const validateJiraConnection = async (
   try {
     await axios.get(url, { headers });
   } catch (error) {
-    console.log("error", error);
     const msg =
       error.response?.data?.errorMessages?.[0] ||
       error.response?.data?.message ||
