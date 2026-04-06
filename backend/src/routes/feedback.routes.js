@@ -26,10 +26,6 @@ const upload = multer({
     if (allowed.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      console.warn(
-        "[feedback] Upload rejected: invalid file type",
-        file.mimetype,
-      );
       cb(new Error("Invalid file type. Only PNG, JPEG, WebP allowed."));
     }
   },
@@ -46,13 +42,6 @@ const upload = multer({
  */
 router.post(
   "/",
-  (req, res, next) => {
-    console.log(
-      "[feedback] POST /api/feedback received | projectId:",
-      req.body?.projectId ?? "(none)",
-    );
-    next();
-  },
   upload.single("screenshot"),
   (err, req, res, next) => {
     if (err) {
@@ -67,9 +56,6 @@ router.post(
     let tempFilePath = null;
     try {
       if (!req.file) {
-        console.warn(
-          "[feedback] POST /api/feedback rejected: no screenshot file",
-        );
         return res.status(400).json({
           success: false,
           message: "No screenshot file uploaded.",
@@ -82,14 +68,6 @@ router.post(
       const rawIssueType = (req.body.issueType || "Bug").trim();
       const jiraIssueType =
         rawIssueType === "Improvements" ? "Story" : rawIssueType;
-      console.log(
-        "[feedback] Processing feedback | projectId:",
-        projectId,
-        "| issueType:",
-        rawIssueType,
-        "-> Jira:",
-        jiraIssueType,
-      );
       let metadata = null;
       if (req.body.metadata) {
         try {
@@ -104,9 +82,7 @@ router.post(
       let jiraError = null;
 
       if (!projectId) {
-        console.log(
-          "[feedback] No projectId provided — skipping Jira ticket creation",
-        );
+        /* no Jira without project */
       } else {
         try {
           const project = await prisma.project.findUnique({
@@ -121,11 +97,7 @@ router.post(
             },
           });
           if (!project) {
-            console.warn(
-              "[feedback] Project not found for id:",
-              projectId,
-              "— skipping Jira",
-            );
+            /* skip Jira */
           } else {
             const hasJiraConfig =
               project?.jiraBaseUrl &&
@@ -133,11 +105,7 @@ router.post(
               (project.jiraConnectionId ||
                 (project.jiraApiToken && project.jiraUsername));
             if (!hasJiraConfig) {
-              console.log(
-                "[feedback] Project",
-                projectId,
-                "has no Jira config — skipping Jira ticket",
-              );
+              /* skip Jira */
             } else {
               let jiraCfg;
               try {
@@ -147,7 +115,6 @@ router.post(
                   jiraIssueType: jiraIssueType,
                 });
               } catch (resolveErr) {
-                console.warn("[feedback] Jira credentials resolve failed:", resolveErr.message);
                 jiraError = resolveErr.message || "Jira credentials unavailable";
               }
               if (!jiraCfg) {
@@ -173,7 +140,6 @@ router.post(
               if (ticketResult.success && ticketResult.ticketKey) {
                 jiraTicket = ticketResult.ticketKey;
                 jiraUrl = ticketResult.ticketUrl;
-                console.log("[feedback] Jira ticket created:", jiraTicket);
                 // Write buffer to temp file only for Jira attachment, then remove
                 const ext = path.extname(req.file.originalname) || ".png";
                 tempFilePath = path.join(
@@ -186,22 +152,10 @@ router.post(
                   tempFilePath,
                   jiraCfg,
                 );
-                if (attachResult.success) {
-                  console.log(
-                    "[feedback] Screenshot attached to Jira issue",
-                    jiraTicket,
-                  );
-                } else {
-                  console.warn(
-                    "[feedback] Jira attachment failed:",
-                    attachResult.error,
-                  );
+                if (!attachResult.success) {
+                  jiraError = attachResult.error || jiraError;
                 }
               } else {
-                console.warn(
-                  "[feedback] Jira ticket creation failed:",
-                  ticketResult.error,
-                );
                 jiraError =
                   ticketResult.error || "Jira ticket creation failed.";
               }
@@ -235,12 +189,8 @@ router.post(
       if (tempFilePath && fs.existsSync(tempFilePath)) {
         try {
           fs.unlinkSync(tempFilePath);
-        } catch (e) {
-          console.warn(
-            "[feedback] Could not remove temp file:",
-            tempFilePath,
-            e.message,
-          );
+        } catch {
+          /* ignore */
         }
       }
     }

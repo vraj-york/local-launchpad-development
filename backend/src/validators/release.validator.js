@@ -35,6 +35,19 @@ export const createReleaseValidation = [
       return !Number.isNaN(t);
     })
     .withMessage("releaseDate must be a valid date"),
+  body("actualReleaseDate")
+    .optional({ nullable: true })
+    .custom((value) => {
+      if (value === undefined || value === null || value === "") return true;
+      const t = Date.parse(value);
+      return !Number.isNaN(t);
+    })
+    .withMessage("actualReleaseDate must be a valid date"),
+  body("actualReleaseNotes")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 20000 })
+    .withMessage("actualReleaseNotes must be a string at most 20000 characters"),
   body("startDate")
     .optional({ nullable: true })
     .custom((value) => {
@@ -77,6 +90,19 @@ export const updateReleaseValidation = [
       return !Number.isNaN(t);
     })
     .withMessage("releaseDate must be a valid date"),
+  body("actualReleaseDate")
+    .optional({ nullable: true })
+    .custom((value) => {
+      if (value === undefined || value === null || value === "") return true;
+      const t = Date.parse(value);
+      return !Number.isNaN(t);
+    })
+    .withMessage("actualReleaseDate must be a valid date"),
+  body("actualReleaseNotes")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 20000 })
+    .withMessage("actualReleaseNotes must be a string at most 20000 characters"),
   body("startDate")
     .optional({ nullable: true })
     .custom((value) => {

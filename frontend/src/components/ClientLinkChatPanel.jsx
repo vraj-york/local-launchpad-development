@@ -545,9 +545,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       rows.map((row) => ({
         id: row.id,
         role: row.role,
-        tone: row.tone || undefined,
         text: row.text,
-        key: row.msgKey || `db:${row.id}`,
+        key: `db:${row.id}`,
         appliedCommitSha: row.appliedCommitSha || null,
         isMerged: Boolean(row.isMerged),
         mergedAt: row.mergedAt || null,

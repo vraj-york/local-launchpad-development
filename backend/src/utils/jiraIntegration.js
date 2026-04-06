@@ -199,7 +199,6 @@ async function createJiraTicket(ticketData, projectInfo = {}) {
             ]
         }
     };
-    console.log('Creating Jira ticket with payload:', JSON.stringify(payload, null, 2));
 
     // Add project information if available
     if (projectInfo.name) {
@@ -281,8 +280,6 @@ export async function createJiraTicketsFromSummary(summary, projectInfo = {}) {
 
         const tickets = parseSummaryForTickets(summary);
         const results = [];
-
-        console.log(`Creating ${tickets.length} Jira tickets...`);
 
         // Create tickets sequentially to avoid rate limiting
         for (const ticket of tickets) {
@@ -507,16 +504,10 @@ function jiraRestApiRoot(config) {
 export async function createJiraTicketWithConfig(ticketData, config) {
     const { baseUrl, projectKey, issueType = 'Task' } = config;
     const useBearer = config.auth === 'bearer' && config.accessToken;
-    console.log('[jira] createJiraTicketWithConfig called | baseUrl:', baseUrl, '| projectKey:', projectKey, '| issueType:', issueType);
     if (!baseUrl || !projectKey) {
-        const missing = [];
-        if (!baseUrl) missing.push('baseUrl');
-        if (!projectKey) missing.push('projectKey');
-        console.warn('[jira] createJiraTicketWithConfig validation failed — missing:', missing.join(', '));
         return { success: false, error: 'Missing Jira configuration (baseUrl, projectKey)' };
     }
     if (!useBearer && (!config.apiToken || !config.email)) {
-        console.warn('[jira] createJiraTicketWithConfig validation failed — missing apiToken/email for basic auth');
         return { success: false, error: 'Missing Jira configuration (baseUrl, projectKey, apiToken, email)' };
     }
     if (useBearer && !config.accessToken) {
@@ -545,7 +536,6 @@ export async function createJiraTicketWithConfig(ticketData, config) {
         }
     };
     try {
-        console.log('[jira] POST', url, '| summary:', (ticketData.title || '').slice(0, 60) + (ticketData.title?.length > 60 ? '...' : ''));
         const response = await fetch(url, {
             method: 'POST',
             headers: {
@@ -562,7 +552,6 @@ export async function createJiraTicketWithConfig(ticketData, config) {
         const result = await response.json();
         const ticketKey = result.key;
         const ticketUrl = `${(config.baseUrl || '').replace(/\/$/, '')}/browse/${ticketKey}`;
-        console.log('[jira] Ticket created successfully:', ticketKey, '| url:', ticketUrl);
         return { success: true, ticketKey, ticketUrl };
     } catch (err) {
         console.error('[jira] createJiraTicketWithConfig exception:', err.message, err.stack);
@@ -580,13 +569,10 @@ export async function createJiraTicketWithConfig(ticketData, config) {
 export async function addAttachmentToJiraIssue(issueKey, filePath, config) {
     const { baseUrl } = config;
     const useBearer = config.auth === 'bearer' && config.accessToken;
-    console.log('[jira] addAttachmentToJiraIssue called | issueKey:', issueKey, '| filePath:', filePath, '| baseUrl:', baseUrl);
     if (!baseUrl) {
-        console.warn('[jira] addAttachmentToJiraIssue — missing baseUrl');
         return { success: false, error: 'Missing Jira config for attachment' };
     }
     if (!useBearer && (!config.apiToken || !config.email)) {
-        console.warn('[jira] addAttachmentToJiraIssue — missing apiToken/email for basic auth');
         return { success: false, error: 'Missing Jira config for attachment' };
     }
     if (useBearer && !config.accessToken) {
@@ -609,7 +595,6 @@ export async function addAttachmentToJiraIssue(issueKey, filePath, config) {
     const form = new FormData();
     form.append('file', fs.createReadStream(filePath), { filename, contentType: mimeType });
     try {
-        console.log('[jira] POST attachment to', url, '| filename:', filename, '| mimeType:', mimeType);
         const response = await fetch(url, {
             method: 'POST',
             headers: {
@@ -624,7 +609,6 @@ export async function addAttachmentToJiraIssue(issueKey, filePath, config) {
             console.error('[jira] addAttachmentToJiraIssue API error:', response.status, text.slice(0, 200));
             return { success: false, error: `Jira attachment API ${response.status}: ${text}` };
         }
-        console.log('[jira] Attachment added successfully to', issueKey);
         return { success: true };
     } catch (err) {
         console.error('[jira] addAttachmentToJiraIssue exception:', err.message, err.stack);

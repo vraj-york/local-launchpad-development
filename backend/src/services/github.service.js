@@ -123,7 +123,7 @@ export async function getBranchSha(owner, repo, branch, token) {
 /**
  * Get commit SHA + parent SHAs for a ref or SHA.
  * GET /repos/:owner/:repo/commits/:ref
- * @returns {Promise<{ ok: true, sha: string, parents: string[] } | { ok: false, status: number, message: string }>}
+ * @returns {Promise<{ ok: true, sha: string, parents: string[], message?: string | null } | { ok: false, status: number, message: string }>}
  */
 export async function getCommitInfo(owner, repo, ref, token) {
   const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(ref)}`;
@@ -151,7 +151,48 @@ export async function getCommitInfo(owner, repo, ref, token) {
   if (!sha) {
     return { ok: false, status: 502, message: "GitHub commit response missing SHA." };
   }
-  return { ok: true, sha, parents };
+  const commitMessage =
+    typeof data?.commit?.message === "string" ? data.commit.message.trim() : null;
+  return { ok: true, sha, parents, message: commitMessage };
+}
+
+/**
+ * List recent commits on a ref (branch name or SHA). Newest first.
+ * GET /repos/:owner/:repo/commits?sha=&per_page=
+ */
+export async function listCommitsOnRef(owner, repo, ref, token, perPage = 5) {
+  const refEnc = typeof ref === "string" ? ref.trim() : "";
+  if (!refEnc) return { ok: false, message: "ref required" };
+  const n = Math.min(Math.max(Number(perPage) || 5, 1), 30);
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(refEnc)}&per_page=${n}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+    },
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg =
+      data && typeof data.message === "string" ? data.message : res.statusText;
+    return { ok: false, message: msg };
+  }
+  if (!Array.isArray(data)) {
+    return { ok: false, message: "unexpected commits response" };
+  }
+  const commits = data.map((row) => {
+    const shaFull = typeof row?.sha === "string" ? row.sha : "";
+    const rawMsg =
+      typeof row?.commit?.message === "string" ? row.commit.message.trim() : "";
+    const messageFirstLine = rawMsg ? rawMsg.split("\n")[0].trim() || null : null;
+    return {
+      sha: shaFull,
+      shaShort: shaFull ? shaFull.slice(0, 7) : "",
+      messageFirstLine,
+    };
+  });
+  return { ok: true, commits };
 }
 
 /**

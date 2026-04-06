@@ -3,7 +3,7 @@ import {
   fetchPublicProjectBySlug,
   publicLockRelease,
 } from "@/api";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Spinner } from "@/components/ui/spinner";
@@ -76,6 +76,8 @@ export const ClientLink = () => {
   const [previewIframeAccessible, setPreviewIframeAccessible] = useState(null);
   /** Version selected for iframe preview (may differ from live active). */
   const [previewMeta, setPreviewMeta] = useState(null);
+  /** Bumped after chat merge/revert + project reload so iframe URL changes when build URL is unchanged (cache bust). */
+  const [previewRefreshNonce, setPreviewRefreshNonce] = useState(0);
   const [releaseNoteOpen, setReleaseNoteOpen] = useState(false);
   const [previewStageWidth, setPreviewStageWidth] = useState(0);
   const [responsivePreset, setResponsivePreset] = useState(
@@ -84,6 +86,8 @@ export const ClientLink = () => {
   const [responsiveCustomWidth, setResponsiveCustomWidth] =
     useState(PREVIEW_TABLET_W);
   const { projectSlug } = useParams();
+  const [searchParams] = useSearchParams();
+  const showControls = searchParams.get("c") !== "false";
 
   /**
    * Public API returns root `versions` as the active build(s) but often omits `isActive`
@@ -275,10 +279,20 @@ export const ClientLink = () => {
     [rawBuildUrl, toProxyUrl],
   );
 
-  const iframeSrc = React.useMemo(
-    () => toProxyUrl(previewBuildUrl ?? rawBuildUrl) ?? activeBuildUrl,
-    [previewBuildUrl, rawBuildUrl, activeBuildUrl, toProxyUrl],
-  );
+  const iframeSrc = React.useMemo(() => {
+    const base =
+      toProxyUrl(previewBuildUrl ?? rawBuildUrl) ?? activeBuildUrl;
+    if (!base) return base;
+    if (previewRefreshNonce === 0) return base;
+    const sep = base.includes("?") ? "&" : "?";
+    return `${base}${sep}_pv=${previewRefreshNonce}`;
+  }, [
+    previewBuildUrl,
+    rawBuildUrl,
+    activeBuildUrl,
+    toProxyUrl,
+    previewRefreshNonce,
+  ]);
 
   const effectivePreviewWidth = React.useMemo(() => {
     const stage =
@@ -385,6 +399,7 @@ export const ClientLink = () => {
   const handleChatResetPreview = useCallback(() => {
     setPreviewBuildUrl(null);
     setPreviewMeta(null);
+    setPreviewRefreshNonce((n) => n + 1);
   }, []);
 
   const activeVersion =
@@ -398,6 +413,10 @@ export const ClientLink = () => {
       setChatOpen(false);
     }
   }, [showLockAndFeedback, chatOpen]);
+
+  useEffect(() => {
+    if (!showControls) setChatOpen(false);
+  }, [showControls]);
 
   if (loading) {
     return (
@@ -456,7 +475,8 @@ export const ClientLink = () => {
 
   const clientLinkPreviewBody = (
     <>
-      <header className="shrink-0 flex items-center gap-3 border-b border-slate-200/60 bg-accent px-4 py-2 shadow-sm">
+      {showControls ? (
+        <header className="shrink-0 flex items-center gap-3 border-b border-slate-200/60 bg-accent px-4 py-2 shadow-sm">
         <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
           {publicProject?.name && (
             <h1 className="text-md max-w-[200px] shrink-0 truncate font-semibold text-slate-800 sm:max-w-[280px]">
@@ -668,6 +688,7 @@ export const ClientLink = () => {
           </div>
         </div>
       </header>
+      ) : null}
       <div
         id="feedback-capture-area"
         className="relative mt-0 flex min-h-0 flex-1 flex-col"
@@ -680,15 +701,26 @@ export const ClientLink = () => {
               </h2>
               <p className="text-sm leading-relaxed text-slate-600">
                 {hasAnyVersions ? (
-                  <>
-                    All latest releases are currently locked, so there is no
-                    active version. If you would like to view a locked release,
-                    please select it from{" "}
-                    <span className="font-bold text-slate-800">
-                      Choose version
-                    </span>{" "}
-                    dropdown above.
-                  </>
+                  showControls ? (
+                    <>
+                      All latest releases are currently locked, so there is no
+                      active version. If you would like to view a locked release,
+                      please select it from{" "}
+                      <span className="font-bold text-slate-800">
+                        Choose version
+                      </span>{" "}
+                      dropdown above.
+                    </>
+                  ) : (
+                    <>
+                      All latest releases are currently locked, so there is no
+                      active build to show. Remove{" "}
+                      <span className="font-mono text-slate-800">c=false</span>{" "}
+                      from the URL (or use{" "}
+                      <span className="font-mono text-slate-800">c=true</span>)
+                      to open the full client view and pick a version.
+                    </>
+                  )
                 ) : (
                   <>
                     This project has no versions yet. Add a version from the
@@ -700,55 +732,80 @@ export const ClientLink = () => {
           </div>
         )}
         {iframeSrc ? (
-          <ClientLinkResponsivePreviewShell
-            widthPx={effectivePreviewWidth}
-            resizeHandleEnabled={previewResizeHandleEnabled}
-            onStageWidthChange={setPreviewStageWidth}
-            onWidthChangeFromDrag={handleResponsiveDragWidth}
-          >
-            <iframe
-              key={iframeSrc}
-              ref={previewIframeRef}
-              id="previewFrame"
-              src={iframeSrc}
-              title="Build Preview"
-              className="absolute inset-0 h-full w-full border-0"
-              allow="display-capture"
-              onLoad={handlePreviewIframeLoad}
-            />
-            {chatOpen && showLockAndFeedback ? (
-              <ClientLinkPreviewPicker
-                iframeRef={previewIframeRef}
-                active={
-                  visualPickMode && previewIframeAccessible === true
-                }
-                pinned={pickedElementContext}
-                onPinnedChange={handlePreviewPinnedChange}
-                onReplaceImageResult={handlePreviewReplaceImageResult}
-                onReplacementStagedForRepo={handleReplacementStagedForRepo}
+          showControls ? (
+            <ClientLinkResponsivePreviewShell
+              widthPx={effectivePreviewWidth}
+              resizeHandleEnabled={previewResizeHandleEnabled}
+              onStageWidthChange={setPreviewStageWidth}
+              onWidthChangeFromDrag={handleResponsiveDragWidth}
+            >
+              <iframe
+                key={iframeSrc}
+                ref={previewIframeRef}
+                id="previewFrame"
+                src={iframeSrc}
+                title="Build Preview"
+                className="absolute inset-0 h-full w-full border-0"
+                allow="display-capture"
+                onLoad={handlePreviewIframeLoad}
               />
-            ) : null}
-          </ClientLinkResponsivePreviewShell>
+              {chatOpen && showLockAndFeedback ? (
+                <ClientLinkPreviewPicker
+                  iframeRef={previewIframeRef}
+                  active={
+                    visualPickMode && previewIframeAccessible === true
+                  }
+                  pinned={pickedElementContext}
+                  onPinnedChange={handlePreviewPinnedChange}
+                  onReplaceImageResult={handlePreviewReplaceImageResult}
+                  onReplacementStagedForRepo={handleReplacementStagedForRepo}
+                />
+              ) : null}
+            </ClientLinkResponsivePreviewShell>
+          ) : (
+            <div className="relative min-h-0 flex-1">
+              <iframe
+                key={iframeSrc}
+                ref={previewIframeRef}
+                id="previewFrame"
+                src={iframeSrc}
+                title="Build Preview"
+                className="absolute inset-0 h-full w-full border-0"
+                allow="display-capture"
+                onLoad={handlePreviewIframeLoad}
+              />
+            </div>
+          )
         ) : null}
-        <EmbeddedFeedbackWidget
-          ref={feedbackWidgetRef}
-          projectId={String(publicProject.id)}
-          captureTarget="#feedback-capture-wrapper"
-          anchorToPreview
-          hideDefaultTrigger
-          onCapturingChange={setFeedbackCapturing}
-          onSuccess={() => toast.success("Feedback submitted successfully")}
-          onError={(err) =>
-            toast.error(err?.message ?? "Failed to submit feedback")
-          }
-        />
+        {showControls ? (
+          <EmbeddedFeedbackWidget
+            ref={feedbackWidgetRef}
+            projectId={String(publicProject.id)}
+            captureTarget="#feedback-capture-wrapper"
+            anchorToPreview
+            hideDefaultTrigger
+            onCapturingChange={setFeedbackCapturing}
+            onSuccess={() => toast.success("Feedback submitted successfully")}
+            onError={(err) =>
+              toast.error(err?.message ?? "Failed to submit feedback")
+            }
+          />
+        ) : null}
       </div>
     </>
   );
 
+  const chatSplitLayout =
+    showControls && chatOpen && chatShellEnabled;
+
   return (
-    <div className="flex h-dvh max-h-dvh min-h-0 w-full flex-col overflow-hidden bg-slate-50">
-      {chatOpen && chatShellEnabled ? (
+    <div
+      className={cn(
+        "flex h-dvh max-h-dvh min-h-0 w-full flex-col overflow-hidden",
+        showControls ? "bg-slate-50" : "bg-black",
+      )}
+    >
+      {chatSplitLayout ? (
         <ResizablePanelGroup
           orientation="horizontal"
           className="flex min-h-0 flex-1 w-full"

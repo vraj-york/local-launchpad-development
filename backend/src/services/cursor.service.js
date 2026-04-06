@@ -53,10 +53,10 @@ function gitExec(argv, cwd) {
 
 /**
  * Call Cursor Cloud Agents API with Basic auth (API key as username, empty password).
- * @param {{ method: string, path: string, body?: object, silent?: boolean }} options
+ * @param {{ method: string, path: string, body?: object }} options
  * @returns {{ status: number, data: object }} Parsed JSON and status; throws if API key missing or request fails
  */
-export async function cursorRequest({ method, path, body, silent = false }) {
+export async function cursorRequest({ method, path, body }) {
   const apiKey = process.env.CURSOR_API_KEY?.trim();
   if (!apiKey) {
     const err = new Error("Cursor API key not configured");
@@ -73,22 +73,8 @@ export async function cursorRequest({ method, path, body, silent = false }) {
     headers["Content-Type"] = "application/json";
   }
 
-  const httpMethod = (method || "GET").toUpperCase();
-  if (!silent && httpMethod !== "GET") {
-    console.log("[cursor] API request", { method: httpMethod, path });
-  }
-
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const postWireBody =
     body !== undefined && body !== null ? JSON.stringify(body) : undefined;
-  if (
-    !silent &&
-    httpMethod === "POST" &&
-    normalizedPath === "/v0/agents" &&
-    postWireBody !== undefined
-  ) {
-    console.log("[cursor] POST /v0/agents exact request body (wire):", postWireBody);
-  }
 
   const res = await fetch(url, {
     method: method || "GET",
@@ -107,14 +93,6 @@ export async function cursorRequest({ method, path, body, silent = false }) {
   } else {
     const text = await res.text();
     data = text ? { error: text } : {};
-  }
-
-  if (!res.ok) {
-    console.warn("[cursor] API non-OK response", {
-      path,
-      status: res.status,
-      body: typeof data === "object" ? JSON.stringify(data).slice(0, 500) : data,
-    });
   }
 
   return { status: res.status, data };
@@ -143,11 +121,9 @@ export async function getCursorAgentById(agentId) {
  * POST /v0/agents/:id/followup — same behavior as POST /api/cursor/agents/:id/followup.
  * @param {string} agentId
  * @param {object} prompt — { text, images? } per Cursor API
- * @param {{ silent?: boolean }} [options] — silent:true skips [cursor] API request log (e.g. client-link logs its own body)
  * @returns {Promise<{ status: number, data: object }>}
  */
-export async function postCursorAgentFollowup(agentId, prompt, options = {}) {
-  const { silent = false } = options;
+export async function postCursorAgentFollowup(agentId, prompt) {
   const id =
     typeof agentId === "string"
       ? agentId.trim()
@@ -161,7 +137,6 @@ export async function postCursorAgentFollowup(agentId, prompt, options = {}) {
     method: "POST",
     path: `/v0/agents/${encodeURIComponent(id)}/followup`,
     body: { prompt },
-    silent,
   });
   if (status >= 200 && status < 300) {
     startAgentPolling(id);
@@ -259,7 +234,6 @@ export function resolveCursorRepositoryUrl(project) {
  *   deferLaunchpadMerge?: boolean,
  *   skipLaunchpadAutomation?: boolean — if true, poller does not run launchpad merge (developer-repo lock agent)
  *   omitTargetFromBody?: boolean — if true, do not send `target` in POST /v0/agents (client-link chat)
- *   silentCursorApiLog?: boolean — if true, skip [cursor] API request line for POST /v0/agents (client-link logs its own input)
  * }} params
  * @returns {Promise<{ ok: true, status: number, data: object } | { ok: false, status: number, data: object }>}
  */
@@ -276,7 +250,6 @@ export async function createAgentForProjectRelease({
   deferLaunchpadMerge = false,
   skipLaunchpadAutomation = false,
   omitTargetFromBody = false,
-  silentCursorApiLog = false,
 }) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -412,22 +385,10 @@ export async function createAgentForProjectRelease({
   if (!omitTargetFromBody && effectiveTarget != null) {
     agentCreateBody.target = effectiveTarget;
   }
-  if (!silentCursorApiLog) {
-    console.log(
-      "[cursor] POST /v0/agents exact body (object; undefined shows in console)",
-      agentCreateBody,
-    );
-    console.log(
-      "[cursor] POST /v0/agents exact body (wire JSON.stringify, same as request)",
-      JSON.stringify(agentCreateBody),
-    );
-  }
-
   const { status, data } = await cursorRequest({
     method: "POST",
     path: "/v0/agents",
     body: agentCreateBody,
-    silent: silentCursorApiLog,
   });
 
   if (!data || !data.id) {
@@ -461,14 +422,33 @@ export async function createAgentForProjectRelease({
 }
 
 /**
+ * Client-link merge: pick the ProjectVersion row to reuse (same git tag, no new revision).
+ * Prefers active version on this release, else newest id.
+ */
+async function findReleaseAnchorVersionForClientLinkMerge(projectId, releaseId) {
+  const rid = Number(releaseId);
+  const pid = Number(projectId);
+  if (!Number.isInteger(rid) || rid < 1 || !Number.isInteger(pid) || pid < 1) {
+    return null;
+  }
+  return prisma.projectVersion.findFirst({
+    where: { projectId: pid, releaseId: rid },
+    orderBy: [{ isActive: "desc" }, { id: "desc" }],
+    select: { id: true, gitTag: true, zipFilePath: true, version: true, isActive: true },
+  });
+}
+
+/**
  * Force `launchpad` to headSha, tag, build, deploy; update FigmaConversion.
  * @param {object} conversion — row with id, projectId, releaseId, attemptedById
  * @param {string} headSha
  * @param {string} headBranchName — agent branch name (for DB)
- * @param {{ skipShaDedupe?: boolean, prUrl?: string|null }} options
+ * @param {{ skipShaDedupe?: boolean, prUrl?: string|null, reuseExistingReleaseTag?: boolean }} options
+ * @param {boolean} [options.reuseExistingReleaseTag] — client-link only: move this release’s existing
+ *   version tag to headSha and update that ProjectVersion row (no new tag / no new revision row).
  */
 export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranchName, options = {}) {
-  const { skipShaDedupe = false, prUrl = null } = options;
+  const { skipShaDedupe = false, prUrl = null, reuseExistingReleaseTag = false } = options;
 
   const project = await prisma.project.findUnique({
     where: { id: conversion.projectId },
@@ -512,20 +492,37 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
       lpNow?.sha &&
       lpNow.sha.toLowerCase() === headSha.toLowerCase()
     ) {
-      console.log("[cursor] executeLaunchpadHeadDeploy: skip (launchpad already at SHA)", {
-        conversionId: conversion.id,
-        shaPrefix: headSha.slice(0, 7),
-      });
-      return { merged: true, skipped: true, sha: headSha };
+      let anchorSkip = null;
+      let tagSkip = "";
+      if (reuseExistingReleaseTag) {
+        anchorSkip = await findReleaseAnchorVersionForClientLinkMerge(
+          conversion.projectId,
+          conversion.releaseId,
+        );
+        tagSkip =
+          anchorSkip?.gitTag?.trim() || anchorSkip?.zipFilePath?.trim() || "";
+        if (anchorSkip && tagSkip) {
+          const tr = await createTagIdempotent(owner, repo, tagSkip, headSha, token);
+          if (!tr.ok) {
+            console.warn(
+              "[cursor] executeLaunchpadHeadDeploy: launchpad already at SHA but tag move failed",
+              tr.message,
+            );
+          }
+        }
+      }
+      return {
+        merged: true,
+        skipped: true,
+        sha: headSha,
+        prUrl,
+        deployed: false,
+        ...(anchorSkip && tagSkip
+          ? { version: anchorSkip.version, tag: tagSkip }
+          : {}),
+      };
     }
   }
-
-  console.log("[cursor] executeLaunchpadHeadDeploy: updating launchpad", {
-    projectId: conversion.projectId,
-    releaseId: conversion.releaseId,
-    shaPrefix: headSha.slice(0, 7),
-    provider,
-  });
 
   const baseBranch = "launchpad";
   if (provider === "github") {
@@ -566,24 +563,46 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
   }
 
   const releaseId = conversion.releaseId;
-  const versionNumber = await autoGenerateVersion(releaseId);
-  const tagName = `rel-${releaseId}-${versionNumber}`;
+
+  let tagName;
+  let versionNumber;
+  let anchorVersion = null;
+  let existingVersion = null;
+
+  if (reuseExistingReleaseTag) {
+    anchorVersion = await findReleaseAnchorVersionForClientLinkMerge(
+      conversion.projectId,
+      releaseId,
+    );
+    const gt =
+      anchorVersion?.gitTag?.trim() || anchorVersion?.zipFilePath?.trim() || "";
+    if (!anchorVersion || !gt) {
+      throw new Error(
+        "No published version with a git tag exists for this release. Add or activate a version for this release before merging chat changes.",
+      );
+    }
+    tagName = gt;
+    versionNumber = anchorVersion.version;
+    existingVersion = { id: anchorVersion.id };
+  } else {
+    versionNumber = await autoGenerateVersion(releaseId);
+    tagName = `rel-${releaseId}-${versionNumber}`;
+    existingVersion = await prisma.projectVersion.findFirst({
+      where: {
+        projectId: conversion.projectId,
+        gitTag: tagName,
+      },
+      select: { id: true },
+    });
+  }
 
   const tagResult =
     provider === "github"
       ? await createTagIdempotent(owner, repo, tagName, headSha, token)
       : await createBitbucketTagIdempotent(owner, repo, tagName, headSha, token);
   if (!tagResult.ok) {
-    throw new Error(tagResult.message || "Failed to create tag");
+    throw new Error(tagResult.message || "Failed to create or move tag");
   }
-
-  const existingVersion = await prisma.projectVersion.findFirst({
-    where: {
-      projectId: conversion.projectId,
-      gitTag: tagName,
-    },
-    select: { id: true },
-  });
 
   const canDeploy =
     project.projectPath?.trim() &&
@@ -598,6 +617,16 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
       : `https://bitbucket.org/${owner}/${repo}/commits/tag/${encodeURIComponent(tagName)}`;
 
   const persistFallbackVersion = async (buildUrl) => {
+    if (reuseExistingReleaseTag && anchorVersion) {
+      return prisma.projectVersion.update({
+        where: { id: anchorVersion.id },
+        data: {
+          buildUrl,
+          releaseId: conversion.releaseId,
+          uploadedBy: conversion.attemptedById,
+        },
+      });
+    }
     if (existingVersion) {
       return prisma.projectVersion.update({
         where: { id: existingVersion.id },
@@ -644,15 +673,31 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
       try {
         gitExec(["clone", cloneUrl, "."], tempRoot);
 
+        // Merge already advanced refs/heads/launchpad to headSha. Build from that branch so the
+        // install/build always matches the merged tip (moved tags can lag or resolve stale in fetch).
+        let builtFromLaunchpad = false;
         try {
           gitExec(
-            ["fetch", "origin", `refs/tags/${tagName}:refs/tags/${tagName}`],
+            [
+              "fetch",
+              "origin",
+              `refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`,
+            ],
             tempRoot,
           );
+          gitExec(["checkout", "-f", `origin/${baseBranch}`], tempRoot);
+          builtFromLaunchpad = true;
         } catch {
-          gitExec(["fetch", "origin", "tag", tagName], tempRoot);
+          try {
+            gitExec(
+              ["fetch", "origin", `refs/tags/${tagName}:refs/tags/${tagName}`],
+              tempRoot,
+            );
+          } catch {
+            gitExec(["fetch", "origin", "tag", tagName], tempRoot);
+          }
+          gitExec(["checkout", "-f", tagName], tempRoot);
         }
-        gitExec(["checkout", tagName], tempRoot);
 
         const sourceRoot = findProjectRoot(tempRoot);
         const buildOutputPath = await runBuildSequence(sourceRoot);
@@ -667,6 +712,16 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
         const buildUrl = liveSiteUrl;
 
         newVersion = await prisma.$transaction(async (tx) => {
+          if (reuseExistingReleaseTag && anchorVersion) {
+            return tx.projectVersion.update({
+              where: { id: anchorVersion.id },
+              data: {
+                buildUrl,
+                releaseId: conversion.releaseId,
+                uploadedBy: conversion.attemptedById,
+              },
+            });
+          }
           await tx.projectVersion.updateMany({
             where: { projectId: conversion.projectId },
             data: { isActive: false },
@@ -723,12 +778,6 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
       status: "FINISHED",
       awaitingLaunchpadConfirmation: false,
     },
-  });
-
-  console.log("[cursor] executeLaunchpadHeadDeploy: done", {
-    conversionId: conversion.id,
-    tag: tagName,
-    deployedToPort,
   });
 
   return {
@@ -819,7 +868,7 @@ export async function performMergeToLaunchpad(agentId, agentData, options = {}) 
  * @param {string} agentId
  * @param {string} headSha
  * @param {string} headBranchName
- * @param {{ skipShaDedupe?: boolean, prUrl?: string|null }} options
+ * @param {{ skipShaDedupe?: boolean, prUrl?: string|null, reuseExistingReleaseTag?: boolean }} options
  */
 export async function performMergeToLaunchpadAtCommit(
   agentId,
@@ -853,6 +902,7 @@ export async function performMergeToLaunchpadAtCommit(
   return executeLaunchpadHeadDeploy(conversion, sha, branch, {
     skipShaDedupe: options.skipShaDedupe ?? false,
     prUrl: options.prUrl ?? null,
+    reuseExistingReleaseTag: Boolean(options.reuseExistingReleaseTag),
   });
 }
 
@@ -935,10 +985,6 @@ export function startAgentPolling(agentId) {
                   },
                 }),
               ]);
-              console.warn("[cursor] poll: client-link auto-merge deferred to manual confirm", {
-                agentId: id,
-                reason: mergeRes?.reason,
-              });
             } else {
               await prisma.figmaConversion.updateMany({
                 where: {
@@ -947,9 +993,6 @@ export function startAgentPolling(agentId) {
                   id: { not: convRow.id },
                 },
                 data: { awaitingLaunchpadConfirmation: false },
-              });
-              console.log("[cursor] poll: agent complete — merged to launchpad (client-link)", {
-                agentId: id,
               });
             }
           } catch (autoErr) {
@@ -988,14 +1031,7 @@ export function startAgentPolling(agentId) {
         }
 
         try {
-          const result = await performMergeToLaunchpad(id, agentData);
-          if (result?.skipped) {
-            console.log("[cursor] poll: agent complete but merge skipped (duplicate SHA)", {
-              agentId: id,
-            });
-          } else {
-            console.log("[cursor] poll: merged after agent completed", { agentId: id });
-          }
+          await performMergeToLaunchpad(id, agentData);
         } catch (mergeErr) {
           console.error("[cursor] poll: merge after agent completed failed", {
             agentId: id,

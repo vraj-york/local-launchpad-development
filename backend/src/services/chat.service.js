@@ -39,6 +39,41 @@ import { resolveScmCredentialsFromProject } from "./integrationCredential.servic
 const prisma = new PrismaClient();
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Cursor reports FINISHED before GitHub's refs/heads often show the new push. Wait, then poll until
+ * the branch tip SHA changes from the first read or we exhaust attempts; confirm with one more read.
+ */
+const CLIENT_CHAT_BRANCH_TIP_INITIAL_DELAY_MS = 5500;
+const CLIENT_CHAT_BRANCH_TIP_POLL_MS = 2500;
+const CLIENT_CHAT_BRANCH_TIP_MAX_POLLS = 22;
+
+/** TEMP: GitHub /commits often lags refs/heads; wait before listing so [0] matches tip. */
+async function waitForClientChatBranchTipSha(repoCtx, branchName) {
+  const { owner, repo, token } = repoCtx;
+  const b = String(branchName || "").trim();
+  if (!b) return null;
+
+  await delay(CLIENT_CHAT_BRANCH_TIP_INITIAL_DELAY_MS);
+  let baseline = (await getBranchSha(owner, repo, b, token))?.sha ?? null;
+  let latest = baseline;
+
+  for (let i = 0; i < CLIENT_CHAT_BRANCH_TIP_MAX_POLLS; i++) {
+    await delay(CLIENT_CHAT_BRANCH_TIP_POLL_MS);
+    const next = (await getBranchSha(owner, repo, b, token))?.sha ?? null;
+    if (next) latest = next;
+    if (baseline != null && latest != null && latest !== baseline) {
+      await delay(CLIENT_CHAT_BRANCH_TIP_POLL_MS);
+      const confirmed = (await getBranchSha(owner, repo, b, token))?.sha ?? latest;
+      return confirmed;
+    }
+  }
+  return latest;
+}
+
 /** Appended to Cursor prompt only (not stored in ChatHistory). Max 5MB base64 payload. */
 const CLIENT_REPO_IMAGE_INSTRUCTION = `
 
@@ -174,21 +209,23 @@ async function resolveClientChatGitSource(project, forceLaunchpadBase = false) {
 }
 
 async function resolveAgentTargetBranchForFollowup(conv) {
+  const agentId = conv?.agentId;
+  if (agentId) {
+    try {
+      const { status, data } = await getCursorAgentById(String(agentId));
+      if (status === 200 && data && typeof data?.target?.branchName === "string") {
+        const b = data.target.branchName.trim();
+        if (b) return b;
+      }
+    } catch {
+      /* fall back to DB */
+    }
+  }
   const fromDb =
     typeof conv?.targetBranchName === "string"
       ? conv.targetBranchName.trim()
       : "";
-  if (fromDb) return fromDb;
-  const agentId = conv?.agentId;
-  if (!agentId) return null;
-  try {
-    const { status, data } = await getCursorAgentById(String(agentId));
-    if (status !== 200 || !data) return null;
-    const b = data?.target?.branchName;
-    return typeof b === "string" && b.trim() ? b.trim() : null;
-  } catch {
-    return null;
-  }
+  return fromDb || null;
 }
 
 /**
@@ -440,8 +477,9 @@ async function resolveClientChatRepository(project) {
 }
 
 /**
- * Set ChatHistory.appliedCommitSha from GitHub HEAD of the agent branch.
- * Resolves FigmaConversion by ChatHistory id === pendingClientChatMessageId (no cursor/client-chat fallback).
+ * Set ChatHistory.appliedCommitSha from GitHub HEAD of the branch where Cursor actually commits.
+ * Branch name is taken from Cursor GET agent `target.branchName` first, then DB `targetBranchName`.
+ * Resolves FigmaConversion by ChatHistory id === pendingClientChatMessageId.
  */
 async function syncPendingMessageCommitSha(project, conv) {
   const chatHistoryId = Number(conv?.pendingClientChatMessageId);
@@ -466,29 +504,34 @@ async function syncPendingMessageCommitSha(project, conv) {
     return null;
   }
 
-  let branch =
-    typeof figmaRow.targetBranchName === "string"
-      ? figmaRow.targetBranchName.trim()
-      : "";
-  if (!branch && figmaRow.agentId) {
+  // Cursor's target.branchName is authoritative (where commits land). DB may still say
+  // "launchpad" from create payload while the agent actually works on a Cursor-managed branch;
+  // using the wrong ref would store launchpad's tip (e.g. last merge), not this turn's work.
+  let branch = "";
+  if (figmaRow.agentId) {
     try {
       const { status, data } = await getCursorAgentById(figmaRow.agentId);
-      const fromApi =
-        status === 200 && typeof data?.target?.branchName === "string"
-          ? data.target.branchName.trim()
-          : "";
-      if (fromApi) {
-        branch = fromApi;
-        await prisma.figmaConversion
-          .update({
-            where: { id: figmaRow.id },
-            data: { targetBranchName: branch },
-          })
-          .catch(() => {});
+      if (status === 200 && typeof data?.target?.branchName === "string") {
+        const fromApi = data.target.branchName.trim();
+        if (fromApi) {
+          branch = fromApi;
+          await prisma.figmaConversion
+            .update({
+              where: { id: figmaRow.id },
+              data: { targetBranchName: branch },
+            })
+            .catch(() => {});
+        }
       }
     } catch {
       // ignore
     }
+  }
+  if (!branch) {
+    branch =
+      typeof figmaRow.targetBranchName === "string"
+        ? figmaRow.targetBranchName.trim()
+        : "";
   }
   if (!branch) {
     return null;
@@ -506,6 +549,10 @@ async function syncPendingMessageCommitSha(project, conv) {
     if (!head?.sha) {
       return null;
     }
+    const tipSha = await waitForClientChatBranchTipSha(repo, branch);
+    if (!tipSha) {
+      return null;
+    }
     await prisma.$transaction([
       prisma.chatHistory.updateMany({
         where: {
@@ -515,23 +562,14 @@ async function syncPendingMessageCommitSha(project, conv) {
           role: "user",
           isActiveChat: true,
         },
-        data: { appliedCommitSha: head.sha },
+        data: { appliedCommitSha: tipSha },
       }),
       prisma.figmaConversion.update({
         where: { id: figmaRow.id },
         data: { pendingClientChatMessageId: null },
       }),
     ]);
-    console.log("[client-chat] syncPendingMessageCommitSha: stored appliedCommitSha", {
-      projectId: project.id,
-      releaseId,
-      chatHistoryId,
-      conversionId: figmaRow.id,
-      agentIdPrefix: String(figmaRow.agentId || "").slice(0, 8),
-      branch,
-      commitShaPrefix: String(head.sha).slice(0, 7),
-    });
-    return head.sha;
+    return tipSha;
   } catch {
     return null;
   }
@@ -659,15 +697,6 @@ async function createClientChatAgent({
     throw err;
   }
 
-  console.log("[client-chat] createAgent: resolved git source for POST /v0/agents", {
-    projectId: project.id,
-    releaseId: Number(releaseId),
-    sourceRef,
-    forceLaunchpadBase,
-    targetBranchName: "launchpad",
-    hasImages: Array.isArray(promptImages) && promptImages.length > 0,
-  });
-
   const prompt =
     Array.isArray(promptImages) && promptImages.length > 0
       ? { text, images: promptImages }
@@ -692,7 +721,6 @@ async function createClientChatAgent({
   };
   return createAgentForProjectRelease({
     ...cursorAgentCreateInput,
-    silentCursorApiLog: true,
   });
 }
 
@@ -767,23 +795,6 @@ export async function clientLinkFollowup({
   const { needFreshAgent, reason: agentReuseReason } =
     getClientChatAgentReuseDecision(conv);
 
-  console.log("[client-chat] followup: start", {
-    projectId: project.id,
-    releaseId: Number(releaseId),
-    userMessageId: userMessage.id,
-    hasReplacementImage: Boolean(sanitizedReplacement),
-    conversionId: conv?.id ?? null,
-    agentIdPrefix: conv?.agentId ? String(conv.agentId).slice(0, 8) : null,
-    needFreshAgent,
-    agentReuseReason,
-    deferLaunchpadMerge: Boolean(conv?.deferLaunchpadMerge),
-    hasProjectVersion: conv?.projectVersionId != null,
-    targetBranchName:
-      typeof conv?.targetBranchName === "string" && conv.targetBranchName.trim()
-        ? conv.targetBranchName.trim()
-        : null,
-  });
-
   if (sanitizedReplacement) {
     try {
       const repoCtx = await resolveClientChatRepository(project);
@@ -834,13 +845,6 @@ export async function clientLinkFollowup({
   }
 
   if (needFreshAgent) {
-    console.log("[client-chat] followup: creating new Cursor agent (POST /v0/agents)", {
-      projectId: project.id,
-      releaseId: Number(releaseId),
-      userMessageId: userMessage.id,
-      forceLaunchpadBase,
-      agentReuseReason,
-    });
     try {
       const result = await createClientChatAgent({
         project,
@@ -872,13 +876,6 @@ export async function clientLinkFollowup({
           data: { pendingClientChatMessageId: userMessage.id },
         });
       }
-      console.log("[client-chat] followup: new agent created", {
-        projectId: project.id,
-        releaseId: Number(releaseId),
-        userMessageId: userMessage.id,
-        agentIdPrefix: result.data?.id ? String(result.data.id).slice(0, 8) : null,
-        agentStatus: result.data?.status ?? null,
-      });
       return {
         ok: true,
         agentId: result.data?.id ?? null,
@@ -907,15 +904,6 @@ export async function clientLinkFollowup({
   let status;
   let data;
   try {
-    console.log("[client-chat] followup: reusing agent (POST /v0/agents/:id/followup)", {
-      projectId: project.id,
-      releaseId: Number(releaseId),
-      userMessageId: userMessage.id,
-      conversionId: conv.id,
-      agentIdPrefix: String(conv.agentId).slice(0, 8),
-      agentReuseReason,
-      hasImages: cursorImages.length > 0,
-    });
     await prisma.figmaConversion.update({
       where: { id: conv.id },
       data: {
@@ -928,7 +916,6 @@ export async function clientLinkFollowup({
       cursorImages.length > 0
         ? { text: textForCursor, images: cursorImages }
         : { text: textForCursor },
-      { silent: true },
     ));
   } catch (err) {
     await prisma.figmaConversion.update({
@@ -950,15 +937,6 @@ export async function clientLinkFollowup({
       message,
     );
   }
-
-  console.log("[client-chat] followup: followup accepted", {
-    projectId: project.id,
-    releaseId: Number(releaseId),
-    userMessageId: userMessage.id,
-    agentIdPrefix: String(conv.agentId).slice(0, 8),
-    httpStatus: status,
-    agentStatus: data?.status ?? null,
-  });
 
   return {
     ok: true,
@@ -1253,9 +1231,7 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
     select: {
       id: true,
       role: true,
-      tone: true,
       text: true,
-      msgKey: true,
       appliedCommitSha: true,
       mergedAt: true,
       revertedAt: true,
@@ -1268,9 +1244,7 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
     messages: rows.map((r) => ({
       id: r.id,
       role: r.role,
-      tone: r.tone,
       text: r.text,
-      msgKey: r.msgKey,
       appliedCommitSha: r.appliedCommitSha || null,
       isMerged: r.role === "user" && Boolean(r.mergedAt),
       mergedAt: r.mergedAt,
@@ -1398,6 +1372,7 @@ async function executeClientLinkLaunchpadMerge(
       match.row.agentId,
       requestedSha,
       match.branch,
+      { reuseExistingReleaseTag: true },
     );
   } catch (err) {
     throw new ApiError(502, err?.message || "Merge to launchpad failed.");
@@ -1441,11 +1416,8 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
   if (!aid) return { ok: false, reason: "no_agent" };
 
   if (!process.env.CURSOR_API_KEY?.trim()) {
-    console.warn("[chat] clientLinkAutoMergeFromAgentPoll: CURSOR_API_KEY missing");
     return { ok: false, reason: "no_cursor_key" };
   }
-
-  console.log("[client-chat] autoMergePoll: entered", { agentIdPrefix: aid.slice(0, 8) });
 
   const conv = await prisma.figmaConversion.findFirst({
     where: { agentId: aid },
@@ -1469,7 +1441,6 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
   });
   if (!release) return { ok: false, reason: "no_release" };
   if (release.status === ReleaseStatus.locked) {
-    console.warn("[chat] clientLinkAutoMergeFromAgentPoll: release locked", { agentId: aid });
     return { ok: false, reason: "locked" };
   }
 
@@ -1521,37 +1492,54 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
     });
     requestedSha = ch?.appliedCommitSha?.trim() || null;
   }
-  if (!requestedSha && conv.targetBranchName?.trim()) {
-    try {
-      const repo = await resolveClientChatRepository(project);
-      const head = await scmGetBranchSha(
-        repo.provider,
-        repo.owner,
-        repo.repo,
-        conv.targetBranchName.trim(),
-        repo.token,
-      );
-      requestedSha = head?.sha || null;
-      if (requestedSha && pendingOk) {
-        await prisma.chatHistory.updateMany({
-          where: {
-            id: pendingMid,
-            projectId: project.id,
-            releaseId: conv.releaseId,
-            role: "user",
-            isActiveChat: true,
-          },
-          data: { appliedCommitSha: requestedSha },
-        });
+  if (!requestedSha) {
+    let branchForHead = "";
+    if (conv.agentId) {
+      try {
+        const { status, data } = await getCursorAgentById(conv.agentId);
+        if (status === 200 && typeof data?.target?.branchName === "string") {
+          const b = data.target.branchName.trim();
+          if (b) {
+            branchForHead = b;
+            await prisma.figmaConversion
+              .updateMany({
+                where: { id: conv.id },
+                data: { targetBranchName: b },
+              })
+              .catch(() => {});
+          }
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
+    }
+    if (!branchForHead && conv.targetBranchName?.trim()) {
+      branchForHead = conv.targetBranchName.trim();
+    }
+    if (branchForHead) {
+      try {
+        const repo = await resolveClientChatRepository(project);
+        requestedSha = await waitForClientChatBranchTipSha(repo, branchForHead);
+        if (requestedSha && pendingOk) {
+          await prisma.chatHistory.updateMany({
+            where: {
+              id: pendingMid,
+              projectId: project.id,
+              releaseId: conv.releaseId,
+              role: "user",
+              isActiveChat: true,
+            },
+            data: { appliedCommitSha: requestedSha },
+          });
+        }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
   const msgIdForMerge = pendingOk ? pendingMid : null;
   if (!requestedSha || !GIT_SHA_RE.test(requestedSha)) {
-    console.warn("[chat] clientLinkAutoMergeFromAgentPoll: no valid SHA yet", { agentId: aid });
     return { ok: false, reason: "no_sha" };
   }
 
@@ -1564,14 +1552,6 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
     });
     return { ok: false, reason: "merge_failed", error: err?.message };
   }
-
-  console.log("[client-chat] autoMergePoll: merge finished", {
-    agentIdPrefix: aid.slice(0, 8),
-    projectId: project.id,
-    releaseId: conv.releaseId,
-    messageId: msgIdForMerge,
-    commitShaPrefix: requestedSha.slice(0, 7),
-  });
 
   return { ok: true };
 }
@@ -1601,7 +1581,8 @@ export async function clientLinkConfirmLaunchpadMerge({
 
 /**
  * Public: `git revert` the chat’s merged commit on the agent `targetBranchName`, then merge that
- * branch tip to `launchpad` (tag + deploy like confirm-merge). Sets `isActiveChat` false for all
+ * branch tip to `launchpad` and move the release’s existing version tag to the new tip (same as
+ * confirm-merge). Sets `isActiveChat` false for all
  * rows after this message (same ordering as the thread) so they stay in the DB but are hidden in
  * the panel. Clears pending conversion pointers for those message ids.
  */
@@ -1715,15 +1696,6 @@ export async function clientLinkRevertMergedMessage({
     );
   }
 
-  console.log("[client-chat] revert: git revert on agent branch", {
-    projectId: project.id,
-    releaseId: Number(releaseId),
-    messageId: mid,
-    branch,
-    revertCommitPrefix: targetSha.slice(0, 7),
-    agentIdPrefix: String(conversion.agentId).slice(0, 8),
-  });
-
   const revertResult = await revertCommitOnRemoteBranch(
     owner,
     repo,
@@ -1745,19 +1717,11 @@ export async function clientLinkRevertMergedMessage({
       String(conversion.agentId),
       newHeadSha,
       branch,
-      { skipShaDedupe: true },
+      { skipShaDedupe: true, reuseExistingReleaseTag: true },
     );
   } catch (mergeErr) {
     throw new ApiError(502, mergeErr?.message || "Merge revert result to launchpad failed.");
   }
-
-  console.log("[client-chat] revert: launchpad updated after revert", {
-    projectId: project.id,
-    releaseId: Number(releaseId),
-    branch,
-    newHeadPrefix: newHeadSha.slice(0, 7),
-    revertedCommitPrefix: targetSha.slice(0, 7),
-  });
 
   const afterRevertWhere = {
     projectId: project.id,

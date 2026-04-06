@@ -152,6 +152,10 @@ model Release {
   description String?
   /// Planned ship / target date (timeline).
   releaseDate DateTime?
+  /// When the release actually shipped (vs planned releaseDate).
+  actualReleaseDate DateTime?
+  /// Optional notes when recording actual ship (internal / roadmap).
+  actualReleaseNotes String? @db.Text
   /// Planned start date (timeline).
   startDate   DateTime?
   status      ReleaseStatus @default(draft)
@@ -224,9 +228,7 @@ model ChatHistory {
   projectId Int
   releaseId Int
   role      String
-  tone      String?
   text      String   @db.Text
-  msgKey    String?
   appliedCommitSha String?
   mergedAt  DateTime?
   revertedAt       DateTime?
