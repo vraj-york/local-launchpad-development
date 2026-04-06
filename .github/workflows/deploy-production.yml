@@ -41,9 +41,9 @@ jobs:
             git pull origin main
             docker compose pull
             docker compose up -d --build
-            docker compose exec -T backend npx prisma migrate deploy
 
             echo "=== Post-deploy status ==="
+            echo "(Migrations run automatically in the backend container entrypoint before Node starts.)"
             docker compose ps
 
             echo "=== API health (localhost:5000) ==="

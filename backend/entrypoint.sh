@@ -121,10 +121,17 @@ if [ -n "$DATABASE_URL" ]; then
   esac
 fi
 
-# Run migrations and seed when DATABASE_URL is set
+# Migrations: run before Node starts so every `docker compose up` / deploy applies pending SQL.
+# Fails fast on error (no db push fallback — that hid failures and could drift schema).
+# Emergency only: set SKIP_PRISMA_MIGRATE=1 in Compose env to skip (not for production).
 if [ -n "$DATABASE_URL" ]; then
-  echo "Running database migrations..."
-  npx prisma migrate deploy 2>/dev/null || npx prisma db push --accept-data-loss 2>/dev/null || true
+  if [ "${SKIP_PRISMA_MIGRATE:-}" = "1" ] || [ "${SKIP_PRISMA_MIGRATE:-}" = "true" ]; then
+    echo "[WARN] SKIP_PRISMA_MIGRATE is set — skipping prisma migrate deploy."
+  else
+    echo "Running database migrations (prisma migrate deploy)..."
+    npx prisma migrate deploy
+    echo "Database migrations completed."
+  fi
   echo "Seeding default admin user (if none exists)..."
   npx prisma db seed 2>/dev/null || true
 fi
