@@ -508,6 +508,7 @@ export const uploadToRelease = async (releaseId, file, roadmapItemIds) => {
         headers: {
           "Content-Type": "multipart/form-data",
         },
+        timeout: 2 * 60 * 60 * 1000, // align with nginx proxy_read_timeout for /api (2h)
       },
     );
     return response.data;

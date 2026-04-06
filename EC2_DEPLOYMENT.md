@@ -156,6 +156,8 @@ If you have a domain (e.g. `launchpad.yorkdevs.link`) and Let's Encrypt certs on
 
 Nginx in the backend will serve `https://<SSL_DOMAIN>/` (frontend) and `https://<SSL_DOMAIN>/api/` (API) using the certs from `/etc/letsencrypt`.
 
+**Release upload / 504:** Generated HTTPS nginx uses **7200s** `proxy_read_timeout` / `proxy_send_timeout` for `/api`. An extra reverse proxy in front must allow long reads too.
+
 ### HTTPS: backend vs frontend startup (UAT vs production)
 
 Docker Compose starts **backend before frontend** (`frontend` has `depends_on: backend`). The generated HTTPS config proxies `/` to the hostname **`frontend`** inside the Compose network. Nginx resolves that name when it starts, so if nginx loaded **before** the frontend container existed, you could see:
