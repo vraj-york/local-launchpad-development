@@ -29,9 +29,18 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { BotMessageSquare, FileText, Lock } from "lucide-react";
+import {
+  AlertCircle,
+  BotMessageSquare,
+  FileText,
+  Laptop,
+  Lock,
+  Smartphone,
+  Tablet,
+} from "lucide-react";
 import { ClientLinkChatPanel } from "../components/ClientLinkChatPanel";
-import { formatProjectVersionLabel } from "@/lib/utils";
+import { ClientLinkResponsivePreviewShell } from "../components/ClientLinkResponsivePreviewShell";
+import { cn, formatProjectVersionLabel } from "@/lib/utils";
 import {
   ClientLinkPreviewPicker,
   canAccessIframeDocument,
@@ -43,6 +52,10 @@ import {
 
 const LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const PREVIEW_MOBILE_W = 390;
+const PREVIEW_TABLET_W = 820;
+const PREVIEW_MIN_W = 320;
+
 export const ClientLink = () => {
   const [publicProject, setPublicProject] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -53,12 +66,23 @@ export const ClientLink = () => {
   const [previewContextReleaseId, setPreviewContextReleaseId] = useState(null);
   const [chatOpen, setChatOpen] = useState(false);
   const previewIframeRef = useRef(null);
+  const feedbackWidgetRef = useRef(null);
+  const [feedbackCapturing, setFeedbackCapturing] = useState(false);
   const [visualPickMode, setVisualPickMode] = useState(false);
   const [pickedElementContext, setPickedElementContext] = useState(null);
+  /** Queued for next chat send: same image as preview replace, for Cursor + repo. */
+  const [stagedChatReplacementImage, setStagedChatReplacementImage] =
+    useState(null);
   const [previewIframeAccessible, setPreviewIframeAccessible] = useState(null);
   /** Version selected for iframe preview (may differ from live active). */
   const [previewMeta, setPreviewMeta] = useState(null);
   const [releaseNoteOpen, setReleaseNoteOpen] = useState(false);
+  const [previewStageWidth, setPreviewStageWidth] = useState(0);
+  const [responsivePreset, setResponsivePreset] = useState(
+    /** @type {'desktop' | 'tablet' | 'mobile' | 'custom'} */ ("desktop"),
+  );
+  const [responsiveCustomWidth, setResponsiveCustomWidth] =
+    useState(PREVIEW_TABLET_W);
   const { projectSlug } = useParams();
 
   /**
@@ -256,6 +280,32 @@ export const ClientLink = () => {
     [previewBuildUrl, rawBuildUrl, activeBuildUrl, toProxyUrl],
   );
 
+  const effectivePreviewWidth = React.useMemo(() => {
+    const stage =
+      previewStageWidth > 0
+        ? previewStageWidth
+        : typeof window !== "undefined"
+          ? Math.max(window.innerWidth - 48, PREVIEW_MIN_W)
+          : 1200;
+    const cap = Math.min(Math.max(stage, PREVIEW_MIN_W), 1920);
+    switch (responsivePreset) {
+      case "desktop":
+        return cap;
+      case "tablet":
+        return Math.min(PREVIEW_TABLET_W, cap);
+      case "mobile":
+        return Math.min(PREVIEW_MOBILE_W, cap);
+      case "custom":
+      default:
+        return Math.min(Math.max(responsiveCustomWidth, PREVIEW_MIN_W), cap);
+    }
+  }, [previewStageWidth, responsivePreset, responsiveCustomWidth]);
+
+  const handleResponsiveDragWidth = useCallback((w) => {
+    setResponsivePreset("custom");
+    setResponsiveCustomWidth(w);
+  }, []);
+
   const handlePreviewIframeLoad = useCallback(() => {
     const iframe = previewIframeRef.current;
     setPreviewIframeAccessible(canAccessIframeDocument(iframe));
@@ -264,12 +314,34 @@ export const ClientLink = () => {
   const handlePreviewPinnedChange = useCallback((ctx) => {
     setPickedElementContext(ctx);
     if (ctx) setVisualPickMode(false);
+    setStagedChatReplacementImage(null);
   }, []);
+
+  const handleReplacementStagedForRepo = useCallback((payload) => {
+    setStagedChatReplacementImage(payload);
+  }, []);
+
+  const handlePreviewReplaceImageResult = useCallback((r) => {
+    if (r?.ok) {
+      toast.success(
+        "Image updated in preview. Send a chat message so the agent can apply the same asset in the repository.",
+      );
+    } else {
+      toast.error(r?.message ?? "Could not replace image.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!pickedElementContext) {
+      setStagedChatReplacementImage(null);
+    }
+  }, [pickedElementContext]);
 
   useEffect(() => {
     if (!chatOpen) {
       setVisualPickMode(false);
       setPickedElementContext(null);
+      setStagedChatReplacementImage(null);
     }
   }, [chatOpen]);
 
@@ -287,6 +359,7 @@ export const ClientLink = () => {
     setPickedElementContext(null);
     setVisualPickMode(false);
     setPreviewIframeAccessible(null);
+    setStagedChatReplacementImage(null);
   }, [iframeSrc]);
 
   useEffect(() => {
@@ -377,6 +450,10 @@ export const ClientLink = () => {
     Number(previewMeta.versionId) !== Number(liveActiveVersionId) &&
     !activeReleaseLocked;
 
+  const previewResizeHandleEnabled = !(
+    visualPickMode && previewIframeAccessible === true
+  );
+
   const clientLinkPreviewBody = (
     <>
       <header className="shrink-0 flex items-center gap-3 border-b border-slate-200/60 bg-accent px-4 py-2 shadow-sm">
@@ -420,6 +497,73 @@ export const ClientLink = () => {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
+            {iframeSrc ? (
+              <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-200/90 bg-white/90 p-0.5 shadow-sm">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={
+                        responsivePreset === "desktop" ? "default" : "ghost"
+                      }
+                      size="sm"
+                      className={cn(
+                        "h-7 w-7 p-0",
+                        responsivePreset === "desktop" &&
+                          "border-0 bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-sm hover:from-violet-700 hover:to-indigo-700",
+                      )}
+                      onClick={() => setResponsivePreset("desktop")}
+                      aria-label="Preview width: desktop"
+                    >
+                      <Laptop className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Desktop</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={
+                        responsivePreset === "tablet" ? "default" : "ghost"
+                      }
+                      size="sm"
+                      className={cn(
+                        "h-7 w-7 p-0",
+                        responsivePreset === "tablet" &&
+                          "border-0 bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-sm hover:from-violet-700 hover:to-indigo-700",
+                      )}
+                      onClick={() => setResponsivePreset("tablet")}
+                      aria-label="Preview width: tablet"
+                    >
+                      <Tablet className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Tablet</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={
+                        responsivePreset === "mobile" ? "default" : "ghost"
+                      }
+                      size="sm"
+                      className={cn(
+                        "h-7 w-7 p-0",
+                        responsivePreset === "mobile" &&
+                          "border-0 bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-sm hover:from-violet-700 hover:to-indigo-700",
+                      )}
+                      onClick={() => setResponsivePreset("mobile")}
+                      aria-label="Preview width: mobile"
+                    >
+                      <Smartphone className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Mobile</TooltipContent>
+                </Tooltip>
+              </div>
+            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -431,6 +575,32 @@ export const ClientLink = () => {
               <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
                 Release note
               </span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 gap-1.5 border-red-200/80 bg-gradient-to-r from-red-50 to-rose-50 px-2.5 text-red-700 shadow-sm hover:from-red-100/90 hover:to-rose-100/90 hover:text-red-800 sm:px-3"
+              onClick={() => feedbackWidgetRef.current?.open()}
+              disabled={feedbackCapturing}
+              title="Report an issue or provide feedback"
+              aria-label="Report Issue"
+            >
+              {feedbackCapturing ? (
+                <span className="flex items-center gap-2">
+                  <Spinner className="size-4 text-red-600" />
+                  <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
+                    Capturing…
+                  </span>
+                </span>
+              ) : (
+                <>
+                  <AlertCircle className="size-4 shrink-0" />
+                  <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
+                    Report Issue
+                  </span>
+                </>
+              )}
             </Button>
             {showLockAndFeedback &&
               (isLocked ? (
@@ -498,7 +668,10 @@ export const ClientLink = () => {
           </div>
         </div>
       </header>
-      <div id="feedback-capture-area" className="relative mt-0 min-h-0 flex-1">
+      <div
+        id="feedback-capture-area"
+        className="relative mt-0 flex min-h-0 flex-1 flex-col"
+      >
         {!hasActiveVersion && !previewBuildUrl && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-gradient-to-b from-slate-50/95 via-white/90 to-violet-50/40 p-6 backdrop-blur-[2px]">
             <div className="w-full max-w-lg rounded-2xl border border-slate-200/80 bg-white/90 p-8 text-center shadow-lg shadow-primary/30">
@@ -527,31 +700,43 @@ export const ClientLink = () => {
           </div>
         )}
         {iframeSrc ? (
-          <iframe
-            key={iframeSrc}
-            ref={previewIframeRef}
-            id="previewFrame"
-            src={iframeSrc}
-            title="Build Preview"
-            className="absolute inset-0 h-full w-full border-0"
-            allow="display-capture"
-            onLoad={handlePreviewIframeLoad}
-          />
-        ) : null}
-        {chatOpen && showLockAndFeedback && iframeSrc ? (
-          <ClientLinkPreviewPicker
-            iframeRef={previewIframeRef}
-            active={
-              visualPickMode && previewIframeAccessible === true
-            }
-            pinned={pickedElementContext}
-            onPinnedChange={handlePreviewPinnedChange}
-          />
+          <ClientLinkResponsivePreviewShell
+            widthPx={effectivePreviewWidth}
+            resizeHandleEnabled={previewResizeHandleEnabled}
+            onStageWidthChange={setPreviewStageWidth}
+            onWidthChangeFromDrag={handleResponsiveDragWidth}
+          >
+            <iframe
+              key={iframeSrc}
+              ref={previewIframeRef}
+              id="previewFrame"
+              src={iframeSrc}
+              title="Build Preview"
+              className="absolute inset-0 h-full w-full border-0"
+              allow="display-capture"
+              onLoad={handlePreviewIframeLoad}
+            />
+            {chatOpen && showLockAndFeedback ? (
+              <ClientLinkPreviewPicker
+                iframeRef={previewIframeRef}
+                active={
+                  visualPickMode && previewIframeAccessible === true
+                }
+                pinned={pickedElementContext}
+                onPinnedChange={handlePreviewPinnedChange}
+                onReplaceImageResult={handlePreviewReplaceImageResult}
+                onReplacementStagedForRepo={handleReplacementStagedForRepo}
+              />
+            ) : null}
+          </ClientLinkResponsivePreviewShell>
         ) : null}
         <EmbeddedFeedbackWidget
+          ref={feedbackWidgetRef}
           projectId={String(publicProject.id)}
           captureTarget="#feedback-capture-wrapper"
           anchorToPreview
+          hideDefaultTrigger
+          onCapturingChange={setFeedbackCapturing}
           onSuccess={() => toast.success("Feedback submitted successfully")}
           onError={(err) =>
             toast.error(err?.message ?? "Failed to submit feedback")
@@ -562,7 +747,7 @@ export const ClientLink = () => {
   );
 
   return (
-    <div className="flex min-h-screen w-full flex-1 flex-col overflow-hidden bg-slate-50">
+    <div className="flex h-dvh max-h-dvh min-h-0 w-full flex-col overflow-hidden bg-slate-50">
       {chatOpen && chatShellEnabled ? (
         <ResizablePanelGroup
           orientation="horizontal"
@@ -572,6 +757,7 @@ export const ClientLink = () => {
             defaultSize="75%"
             minSize="25%"
             className="flex min-h-0 min-w-0 flex-col"
+            style={{ overflow: "hidden" }}
           >
             {/* Screenshot target: header + preview only (chat stays outside this wrapper) */}
             <div
@@ -586,6 +772,7 @@ export const ClientLink = () => {
             defaultSize="25%"
             minSize="20%"
             className="flex min-h-0 min-w-[280px] flex-col"
+            style={{ overflow: "hidden" }}
           >
             <ClientLinkChatPanel
               projectSlug={projectSlug}
@@ -602,6 +789,11 @@ export const ClientLink = () => {
               visualPickMode={visualPickMode}
               onVisualPickModeChange={setVisualPickMode}
               previewIframeAccessible={previewIframeAccessible}
+              previewIframeRef={previewIframeRef}
+              onPreviewReplaceImageResult={handlePreviewReplaceImageResult}
+              stagedChatReplacementImage={stagedChatReplacementImage}
+              onStagedChatReplacementImageChange={setStagedChatReplacementImage}
+              onReplacementStagedForRepo={handleReplacementStagedForRepo}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

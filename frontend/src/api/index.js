@@ -256,7 +256,7 @@ export const fetchManagers = async () => {
   }
 };
 
-/** OAuth / integrations (GitHub + Jira) — Bearer required via api interceptor */
+/** OAuth / integrations (GitHub, Bitbucket, Jira) — Bearer required via api interceptor */
 export const fetchIntegrationsStatus = async () => {
   const { data } = await api.get("/api/integrations/status");
   return data;
@@ -288,8 +288,25 @@ export const getJiraOAuthAuthorizeUrl = async (reconnectConnectionId) => {
   return data.url;
 };
 
+export const getBitbucketOAuthAuthorizeUrl = async (reconnectConnectionId) => {
+  const params = {};
+  if (reconnectConnectionId != null && reconnectConnectionId !== "") {
+    params.reconnectId = reconnectConnectionId;
+  }
+  const { data } = await api.get("/api/integrations/bitbucket/start", {
+    params,
+    headers: { Accept: "application/json" },
+  });
+  if (!data?.url) throw new Error("Bitbucket OAuth is not available");
+  return data.url;
+};
+
 export const disconnectGithubIntegration = async (connectionId) => {
   await api.delete(`/api/integrations/github/${connectionId}`);
+};
+
+export const disconnectBitbucketIntegration = async (connectionId) => {
+  await api.delete(`/api/integrations/bitbucket/${connectionId}`);
 };
 
 export const disconnectJiraIntegration = async (connectionId) => {
@@ -301,6 +318,14 @@ export const fetchGithubReposPage = async (connectionId, { page = 1, projectId }
   const params = { connectionId, page };
   if (projectId != null && projectId !== "") params.projectId = projectId;
   const { data } = await api.get("/api/integrations/github/repos", { params });
+  return data;
+};
+
+/** Paginated Bitbucket repos for the OAuth connection. */
+export const fetchBitbucketReposPage = async (connectionId, { page = 1, projectId } = {}) => {
+  const params = { connectionId, page };
+  if (projectId != null && projectId !== "") params.projectId = projectId;
+  const { data } = await api.get("/api/integrations/bitbucket/repos", { params });
   return data;
 };
 
@@ -396,13 +421,32 @@ export const publicLockRelease = async (releaseId, lockedBy) => {
 };
 
 /** Public client-link chat (routes under /api/chat). No JWT. */
-export const clientLinkSendFollowup = async (slug, releaseId, text, clientEmail) => {
+export const clientLinkSendFollowup = async (
+  slug,
+  releaseId,
+  text,
+  clientEmail,
+  replacementImage = null,
+) => {
   const enc = encodeURIComponent(String(slug).trim());
-  const response = await api.post(`/api/chat/${enc}/followup`, {
+  const body = {
     r: Number(releaseId),
     t: text,
     clientEmail: String(clientEmail || "").trim(),
-  });
+  };
+  if (
+    replacementImage &&
+    typeof replacementImage === "object" &&
+    typeof replacementImage.data === "string"
+  ) {
+    body.replacementImage = {
+      data: replacementImage.data,
+      mimeType: replacementImage.mimeType || "image/png",
+      width: Number(replacementImage.width) || 512,
+      height: Number(replacementImage.height) || 512,
+    };
+  }
+  const response = await api.post(`/api/chat/${enc}/followup`, body);
   return response.data;
 };
 
@@ -451,6 +495,22 @@ export const clientLinkConfirmMerge = async (
     body.m = mid;
   }
   const response = await api.post(`/api/chat/${enc}/confirm-merge`, body);
+  return response.data;
+};
+
+/** Public: git-revert a merged chat message on launchpad. */
+export const clientLinkRevertMerge = async (
+  slug,
+  releaseId,
+  messageId,
+  clientEmail = "",
+) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const response = await api.post(`/api/chat/${enc}/revert-merge`, {
+    r: Number(releaseId),
+    m: Number(messageId),
+    clientEmail: String(clientEmail || "").trim(),
+  });
   return response.data;
 };
 

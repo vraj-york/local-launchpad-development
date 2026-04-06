@@ -254,7 +254,7 @@ const CreateProject = () => {
 
       if (user?.role === "admin") {
         projectData.assignedManagerId = parseInt(selectedManager);
-      } else if (user?.role === "manager") {
+      } else {
         projectData.assignedManagerId = user.id;
       }
       const response = await createProject(projectData);

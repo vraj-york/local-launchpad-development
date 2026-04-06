@@ -122,3 +122,27 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Radix Select injects rules that hide the viewport scrollbar; restore a visible one. */
+[data-slot="select-content"].select-viewport-scrollbar [data-radix-select-viewport] {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  -ms-overflow-style: auto;
+}
+
+[data-slot="select-content"].select-viewport-scrollbar
+  [data-radix-select-viewport]::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+}
+
+[data-slot="select-content"].select-viewport-scrollbar
+  [data-radix-select-viewport]::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+
+[data-slot="select-content"].select-viewport-scrollbar
+  [data-radix-select-viewport]::-webkit-scrollbar-track {
+  background: transparent;
+}

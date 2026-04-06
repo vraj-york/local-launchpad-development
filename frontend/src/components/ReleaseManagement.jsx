@@ -48,6 +48,7 @@ import {
   CollapsibleTrigger,
 } from "./ui/collapsible";
 import { formatProjectVersionLabel } from "../lib/utils";
+import { storageStringToEmailsArray } from "../utils/emailList";
 import {
   Select,
   SelectContent,
@@ -237,8 +238,29 @@ function getSuggestedPatchReleaseNameFromList(releasesList) {
   return bumpLastSegment(maxTuple).map(String).join(".");
 }
 
-const ReleaseManagement = ({ projectId, projectName }) => {
+function normalizeEmailForAccess(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+/** Aligns with backend: admin, project creator, or assignedUserEmails. */
+function userCanManageReleasesForProject(user, project) {
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  const creatorId = project?.createdBy?.id ?? project?.createdById;
+  if (creatorId != null && Number(user.id) === Number(creatorId)) return true;
+  const userEmail = normalizeEmailForAccess(user.email);
+  if (!userEmail) return false;
+  const assigned = storageStringToEmailsArray(project?.assignedUserEmails);
+  return assigned.some((a) => normalizeEmailForAccess(a) === userEmail);
+}
+
+const ReleaseManagement = ({ projectId, projectName, project }) => {
   const { user } = useAuth();
+  const canManageReleases = project
+    ? userCanManageReleasesForProject(user, project)
+    : user?.role === "admin";
+  /** Edit release uses the same gate as Create Release. */
+  const canEditRelease = canManageReleases;
 
   const [releases, setReleases] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -292,6 +314,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     : null;
 
   const openCreateReleaseDialog = () => {
+    if (!canManageReleases) return;
     setNewRelease({
       name: suggestedPatchReleaseName,
       description: "",
@@ -309,6 +332,13 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       loadRoadmaps();
     }
   }, [projectId]);
+
+  useEffect(() => {
+    if (!canManageReleases) {
+      setShowCreateForm(false);
+      setEditDialog(null);
+    }
+  }, [canManageReleases]);
 
   const loadReleases = async () => {
     try {
@@ -349,6 +379,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
   };
 
   const openEditRelease = (release) => {
+    if (!canEditRelease) return;
     setEditDialog({
       id: release.id,
       name: release.name ?? "",
@@ -608,7 +639,6 @@ const ReleaseManagement = ({ projectId, projectName }) => {
     }
   };
 
-  const canManageReleases = user?.role === "admin" || user?.role === "manager";
   const getRoadmapIdForItem = (itemId) => {
     for (const roadmap of roadmaps) {
       if (roadmap.items?.some((item) => item.id.toString() === itemId)) {
@@ -814,7 +844,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
                               </span>
                             </div>
                             <div className="flex gap-2">
-                              {canManageReleases && (
+                              {canEditRelease && (
                                 <Button
                                   type="button"
                                   variant="secondary"
@@ -1203,7 +1233,10 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       </div>
 
       {/* Create Release Form Modal */}
-      <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
+      <Dialog
+        open={canManageReleases && showCreateForm}
+        onOpenChange={setShowCreateForm}
+      >
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Create New Release</DialogTitle>
@@ -1373,7 +1406,7 @@ const ReleaseManagement = ({ projectId, projectName }) => {
       </Dialog>
 
       <Dialog
-        open={!!editDialog}
+        open={canEditRelease && !!editDialog}
         onOpenChange={(open) => {
           if (!open && !editSaving) setEditDialog(null);
         }}
