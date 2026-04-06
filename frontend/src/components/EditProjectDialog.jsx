@@ -48,6 +48,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+const GH_REPO_PATH_RE =
+  /^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i;
+
 function normEmailListField(v) {
   if (v == null || String(v).trim() === "") return null;
   return String(v).trim();
@@ -66,14 +69,17 @@ function buildUpdatePayload({
   jiraProjectKey,
   jiraApiToken,
   gitRepoPath,
+  developmentRepoUrl,
   assignedUserEmails,
   stakeholderEmails,
   project,
   useOAuthGithub,
   useOAuthJira,
   selectedGithubConnectionId,
+  selectedBitbucketConnectionId,
   selectedJiraConnectionId,
   creatorIntegrations,
+  sharedOAuthScmHost,
 }) {
   const payload = {};
 
@@ -123,6 +129,12 @@ function buildUpdatePayload({
     payload.gitRepoPath = repoPath;
   }
 
+  const prevDev = String(project?.developmentRepoUrl ?? "").trim();
+  const devTrim = developmentRepoUrl.trim();
+  if (devTrim !== prevDev) {
+    payload.developmentRepoUrl = devTrim === "" ? null : devTrim;
+  }
+
   if (
     normEmailListField(assignedUserEmails) !==
     normEmailListField(project?.assignedUserEmails)
@@ -136,7 +148,27 @@ function buildUpdatePayload({
     payload.stakeholderEmails = normEmailListField(stakeholderEmails);
   }
 
-  if (
+  if (sharedOAuthScmHost === "github") {
+    if (project?.bitbucketConnectionId != null) {
+      payload.bitbucketConnectionId = null;
+    }
+    if (
+      selectedGithubConnectionId &&
+      String(selectedGithubConnectionId) !== String(project?.githubConnectionId ?? "")
+    ) {
+      payload.githubConnectionId = Number(selectedGithubConnectionId);
+    }
+  } else if (sharedOAuthScmHost === "bitbucket") {
+    if (project?.githubConnectionId != null) {
+      payload.githubConnectionId = null;
+    }
+    if (
+      selectedBitbucketConnectionId &&
+      String(selectedBitbucketConnectionId) !== String(project?.bitbucketConnectionId ?? "")
+    ) {
+      payload.bitbucketConnectionId = Number(selectedBitbucketConnectionId);
+    }
+  } else if (
     useOAuthGithub &&
     selectedGithubConnectionId &&
     String(selectedGithubConnectionId) !== String(project?.githubConnectionId ?? "")
@@ -162,6 +194,7 @@ function buildUpdatePayload({
 const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const { user } = useAuth();
   const useOAuthGithub = Boolean(project?.githubConnectionId);
+  const useOAuthBitbucket = Boolean(project?.bitbucketConnectionId);
   const useOAuthJira = Boolean(project?.jiraConnectionId);
   const creatorId = project?.createdBy?.id ?? project?.createdById;
   const canReconnectOAuth =
@@ -172,7 +205,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
     user?.role === "admin" ||
     (creatorId != null && user != null && Number(user.id) === Number(creatorId));
   const useSharedOAuthCard =
-    canEditOAuthLinks && useOAuthGithub && useOAuthJira;
+    canEditOAuthLinks && (useOAuthGithub || useOAuthBitbucket) && useOAuthJira;
   const gitJiraRef = useRef(null);
 
   const [projectDescription, setProjectDescription] = useState("");
@@ -183,6 +216,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const [jiraApiToken, setJiraApiToken] = useState("");
   const [jiraProjectKey, setJiraProjectKey] = useState("");
   const [gitRepoPath, setGitRepoPath] = useState("");
+  const [developmentRepoUrl, setDevelopmentRepoUrl] = useState("");
 
   const [assignedUserEmailTags, setAssignedUserEmailTags] = useState([]);
   const [stakeholderEmailTags, setStakeholderEmailTags] = useState([]);
@@ -204,6 +238,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   const [jiraProjectsEdit, setJiraProjectsEdit] = useState([]);
   const [jiraProjectsLoadingEdit, setJiraProjectsLoadingEdit] = useState(false);
   const [githubRepoPickSeq, setGithubRepoPickSeq] = useState(0);
+  const [developmentRepoPickSeq, setDevelopmentRepoPickSeq] = useState(0);
 
   useEffect(() => {
     if (!open || !project) return;
@@ -215,6 +250,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
     setJiraProjectKey(project.jiraProjectKey ?? "");
     setJiraApiToken(project.jiraApiToken ?? "");
     setGitRepoPath(project.gitRepoPath ?? "");
+    setDevelopmentRepoUrl(String(project.developmentRepoUrl ?? ""));
     setAssignedUserEmailTags(
       storageStringToEmailsArray(project.assignedUserEmails),
     );
@@ -361,6 +397,12 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         errors.gitRepoPath = "Git repository path is required";
       }
 
+      const devLegacy = developmentRepoUrl.trim();
+      if (devLegacy && !GH_REPO_PATH_RE.test(devLegacy)) {
+        errors.developmentRepoUrl =
+          "Enter a valid GitHub path (e.g. github.com/org/other-repo)";
+      }
+
       if (useOAuthGithub) {
         if (!githubUsername.trim() && !project?.githubUsername?.trim()) {
           errors.githubUsername = "GitHub login missing; reconnect under Integrations";
@@ -428,6 +470,9 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
       const resolvedGitPath = useSharedOAuthCard
         ? gitJiraRef.current?.getEditResolvedGitRepoPath?.(project) ?? ""
         : gitRepoPath;
+      const resolvedDevelopmentRepo = useSharedOAuthCard
+        ? gitJiraRef.current?.getDevelopmentRepoUrl?.() ?? ""
+        : developmentRepoUrl;
       const resolvedJiraKey = useSharedOAuthCard
         ? gitJiraRef.current?.getJiraProjectKey?.() ?? ""
         : jiraProjectKey;
@@ -437,9 +482,15 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
       const resolvedGhConn = useSharedOAuthCard
         ? gitJiraRef.current?.getSelectedGithubConnectionId?.() ?? ""
         : selectedGithubConnectionId;
+      const resolvedBbConn = useSharedOAuthCard
+        ? gitJiraRef.current?.getSelectedBitbucketConnectionId?.() ?? ""
+        : "";
       const resolvedJiConn = useSharedOAuthCard
         ? gitJiraRef.current?.getSelectedJiraConnectionId?.() ?? ""
         : selectedJiraConnectionId;
+      const sharedScmHost = useSharedOAuthCard
+        ? gitJiraRef.current?.getScmHost?.() ?? "github"
+        : null;
 
       const payload = buildUpdatePayload({
         description: projectDescription,
@@ -450,14 +501,17 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
         jiraProjectKey: resolvedJiraKey,
         jiraApiToken,
         gitRepoPath: resolvedGitPath,
+        developmentRepoUrl: resolvedDevelopmentRepo,
         assignedUserEmails: emailsArrayToStorageString(assignedUserEmailTags),
         stakeholderEmails: emailsArrayToStorageString(stakeholderEmailTags),
         project,
         useOAuthGithub,
         useOAuthJira,
         selectedGithubConnectionId: resolvedGhConn,
+        selectedBitbucketConnectionId: resolvedBbConn,
         selectedJiraConnectionId: resolvedJiConn,
         creatorIntegrations,
+        sharedOAuthScmHost: sharedScmHost,
       });
 
       if (Object.keys(payload).length === 0) {
@@ -631,7 +685,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   </p>
                   {!canEditOAuthLinks && (
                     <p className="text-xs">
-                      Only the project creator or an admin can change OAuth links; managers can still
+                      Only the project creator or an admin can change OAuth links. Others can still
                       edit the repository path if the new repo is accessible with the creator&apos;s
                       GitHub account.
                     </p>
@@ -772,6 +826,49 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                         project must appear on the new remote after migration.
                       </p>
                     )}
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="edit-developmentRepoUrl">Developer repository (optional)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    On lock, the server clones the developer repo, pins the platform repo as a
+                    submodule at <code className="text-xs">launchpad-frontend/</code>, runs{" "}
+                    <code className="text-xs">git fetch</code> /{" "}
+                    <code className="text-xs">git checkout &lt;commit&gt;</code> there for the active
+                    version, then <code className="text-xs">git commit</code> /{" "}
+                    <code className="text-xs">git push</code> on the parent. Commit message: env{" "}
+                    <code className="text-xs">DEVELOPER_SUBMODULE_PARENT_COMMIT_MESSAGE</code> or
+                    &quot;Update the Launchpad branch&quot;.
+                  </p>
+                  <Input
+                    id="edit-developmentRepoUrl"
+                    placeholder="github.com/org/customer-repo"
+                    value={developmentRepoUrl}
+                    onChange={(e) => setDevelopmentRepoUrl(e.target.value)}
+                    className={validationErrors.developmentRepoUrl ? "border-destructive" : ""}
+                  />
+                  {githubReposEdit.length > 0 && useOAuthGithub && canEditOAuthLinks && (
+                    <Select
+                      key={developmentRepoPickSeq}
+                      onValueChange={(v) => {
+                        setDevelopmentRepoUrl(v);
+                        setDevelopmentRepoPickSeq((s) => s + 1);
+                      }}
+                    >
+                      <SelectTrigger className="h-9" disabled={reposLoadingEdit}>
+                        <SelectValue placeholder="Or pick developer repo from list…" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-52">
+                        {githubReposEdit.map((r) => (
+                          <SelectItem key={`edit-dev-${r.gitRepoPath}`} value={r.gitRepoPath}>
+                            {r.fullName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {validationErrors.developmentRepoUrl && (
+                    <p className="text-sm text-destructive">{validationErrors.developmentRepoUrl}</p>
+                  )}
                 </div>
                 {!useOAuthGithub && (
                   <div className="space-y-2 sm:col-span-2">

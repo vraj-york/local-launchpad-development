@@ -471,6 +471,7 @@ export async function getIntegrationsStatus(userId) {
       provider: true,
       label: true,
       githubLogin: true,
+      bitbucketUsername: true,
       jiraBaseUrl: true,
       atlassianAccountEmail: true,
       atlassianCloudId: true,
@@ -478,6 +479,7 @@ export async function getIntegrationsStatus(userId) {
     },
   });
   const gh = rows.filter((r) => r.provider === "github");
+  const bb = rows.filter((r) => r.provider === "bitbucket");
   const ji = rows.filter((r) => r.provider === "jira_atlassian");
   return {
     github: {
@@ -485,6 +487,14 @@ export async function getIntegrationsStatus(userId) {
         id: r.id,
         label: r.label,
         login: r.githubLogin || null,
+        expiresAt: r.accessTokenExpiresAt?.toISOString() || null,
+      })),
+    },
+    bitbucket: {
+      connections: bb.map((r) => ({
+        id: r.id,
+        label: r.label,
+        login: r.bitbucketUsername || null,
         expiresAt: r.accessTokenExpiresAt?.toISOString() || null,
       })),
     },
@@ -518,6 +528,16 @@ export async function deleteJiraConnection(userId, connectionId) {
   }
   await prisma.userOAuthConnection.deleteMany({
     where: { id: n, userId, provider: "jira_atlassian" },
+  });
+}
+
+export async function deleteBitbucketConnection(userId, connectionId) {
+  const n = Number(connectionId);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new ApiError(400, "Invalid connection id");
+  }
+  await prisma.userOAuthConnection.deleteMany({
+    where: { id: n, userId, provider: "bitbucket" },
   });
 }
 
@@ -557,6 +577,40 @@ export async function assertGithubConnectionRowForListing(requestUser, connectio
   }
 
   throw new ApiError(403, "Not allowed to use this GitHub connection");
+}
+
+export async function assertBitbucketConnectionRowForListing(requestUser, connectionId, projectId) {
+  const id = Number(connectionId);
+  if (!Number.isInteger(id) || id < 1) {
+    throw new ApiError(400, "connectionId is required");
+  }
+  const row = await prisma.userOAuthConnection.findFirst({
+    where: { id, provider: "bitbucket" },
+  });
+  if (!row) throw new ApiError(400, "Invalid Bitbucket connection");
+
+  if (Number(row.userId) === Number(requestUser.id)) return row;
+
+  if (projectId != null) {
+    const pid = Number(projectId);
+    if (!Number.isInteger(pid) || pid < 1) throw new ApiError(400, "Invalid projectId");
+    const project = await prisma.project.findUnique({
+      where: { id: pid },
+      select: { createdById: true },
+    });
+    if (!project) throw new ApiError(404, "Project not found");
+    if (Number(row.userId) !== Number(project.createdById)) {
+      throw new ApiError(400, "Bitbucket connection is not for this project's creator");
+    }
+    const allowed =
+      requestUser.role === "admin" || Number(requestUser.id) === Number(project.createdById);
+    if (!allowed) {
+      throw new ApiError(403, "Only the project creator or an admin can browse repositories here");
+    }
+    return row;
+  }
+
+  throw new ApiError(403, "Not allowed to use this Bitbucket connection");
 }
 
 export async function assertJiraConnectionRowForListing(requestUser, connectionId, projectId) {
@@ -647,4 +701,285 @@ export async function listJiraProjectsForConnection(accessToken, cloudId) {
     key: p.key,
     name: p.name,
   }));
+}
+
+/**
+ * Bitbucket Cloud CHANGE-2770: global GET /2.0/repositories?role=member is deprecated.
+ * Use workspace membership + GET /2.0/repositories/{workspace} with permission filtering.
+ */
+function mapBitbucketRepoRow(r) {
+  const fullName = r.full_name || "";
+  const parts = String(fullName).split("/");
+  const ws = parts[0] || "";
+  const slug = parts[1] || "";
+  return {
+    fullName,
+    gitRepoPath: ws && slug ? `bitbucket.org/${ws}/${slug}` : fullName,
+    private: Boolean(r.is_private),
+    defaultBranch: r.mainbranch?.name || r.mainbranch || null,
+    updatedOn: typeof r.updated_on === "string" ? r.updated_on : "",
+  };
+}
+
+async function bitbucketGetJson(accessToken, url) {
+  const res = await axios.get(url, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+    validateStatus: () => true,
+  });
+  if (res.status !== 200) {
+    const msg =
+      typeof res.data?.error?.message === "string"
+        ? res.data.error.message
+        : `Bitbucket returned ${res.status}`;
+    throw new Error(msg);
+  }
+  return res.data || {};
+}
+
+async function listBitbucketMemberWorkspaceSlugs(accessToken) {
+  const slugs = [];
+  let nextUrl = "https://api.bitbucket.org/2.0/workspaces?role=member&pagelen=100";
+  while (nextUrl) {
+    const data = await bitbucketGetJson(accessToken, nextUrl);
+    const values = Array.isArray(data.values) ? data.values : [];
+    for (const w of values) {
+      const s = w?.slug != null ? String(w.slug).trim() : "";
+      if (s) slugs.push(s);
+    }
+    nextUrl = typeof data.next === "string" && data.next ? data.next : null;
+  }
+  return slugs;
+}
+
+async function listReposInBitbucketWorkspace(accessToken, workspaceSlug) {
+  const rows = [];
+  const base = new URL(
+    `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspaceSlug)}`,
+  );
+  base.searchParams.set("role", "member");
+  base.searchParams.set("pagelen", "100");
+  base.searchParams.set("sort", "-updated_on");
+  let nextUrl = base.toString();
+  while (nextUrl) {
+    const data = await bitbucketGetJson(accessToken, nextUrl);
+    const values = Array.isArray(data.values) ? data.values : [];
+    for (const r of values) rows.push(mapBitbucketRepoRow(r));
+    nextUrl = typeof data.next === "string" && data.next ? data.next : null;
+  }
+  return rows;
+}
+
+export async function listBitbucketReposPage(accessToken, { page = 1, pagelen = 100 } = {}) {
+  const pl = Math.min(100, Math.max(1, Number(pagelen) || 100));
+  const pg = Math.max(1, Number(page) || 1);
+
+  const workspaces = await listBitbucketMemberWorkspaceSlugs(accessToken);
+  if (!workspaces.length) {
+    return { repos: [], page: pg, hasMore: false };
+  }
+
+  const perWs = await Promise.all(
+    workspaces.map((ws) => listReposInBitbucketWorkspace(accessToken, ws)),
+  );
+  const byFullName = new Map();
+  for (const inWs of perWs) {
+    for (const row of inWs) {
+      if (row.fullName && !byFullName.has(row.fullName)) byFullName.set(row.fullName, row);
+    }
+  }
+
+  const merged = [...byFullName.values()].sort((a, b) =>
+    String(b.updatedOn).localeCompare(String(a.updatedOn)),
+  );
+  const start = (pg - 1) * pl;
+  const pageSlice = merged.slice(start, start + pl);
+  const repos = pageSlice.map(({ updatedOn: _u, ...repo }) => repo);
+  const hasMore = start + pl < merged.length;
+
+  return { repos, page: pg, hasMore };
+}
+
+/* ---------- Bitbucket Cloud OAuth ---------- */
+
+function bitbucketBasicAuthHeader() {
+  const clientId = process.env.BITBUCKET_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.BITBUCKET_OAUTH_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+  const b64 = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64");
+  return `Basic ${b64}`;
+}
+
+async function exchangeBitbucketCode(code) {
+  const redirectUri = process.env.BITBUCKET_OAUTH_REDIRECT_URI;
+  const auth = bitbucketBasicAuthHeader();
+  if (!auth || !redirectUri) {
+    throw new Error("Bitbucket OAuth env not configured");
+  }
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri,
+  });
+  const { data } = await axios.post("https://bitbucket.org/site/oauth2/access_token", body.toString(), {
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: auth,
+    },
+  });
+  if (data.error) {
+    throw new Error(data.error_description || data.error);
+  }
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || "",
+    expiresIn: data.expires_in,
+  };
+}
+
+async function refreshBitbucketTokens(refreshTokenPlain) {
+  const auth = bitbucketBasicAuthHeader();
+  if (!auth || !refreshTokenPlain) {
+    throw new Error("Cannot refresh Bitbucket token");
+  }
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshTokenPlain,
+  });
+  const { data } = await axios.post("https://bitbucket.org/site/oauth2/access_token", body.toString(), {
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: auth,
+    },
+  });
+  if (data.error) {
+    throw new Error(data.error_description || data.error);
+  }
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || refreshTokenPlain,
+    expiresIn: data.expires_in,
+  };
+}
+
+async function bitbucketProfileFromToken(accessToken) {
+  const { data } = await axios.get("https://api.bitbucket.org/2.0/user", {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+  });
+  const uuid = data.uuid ? String(data.uuid).replace(/[{}]/g, "") : null;
+  const username = data.username ? String(data.username).trim() : null;
+  return { uuid, username };
+}
+
+export async function createBitbucketConnectionRecord(userId, accessToken, refreshToken, expiresInSec) {
+  const { uuid, username } = await bitbucketProfileFromToken(accessToken);
+  return prisma.userOAuthConnection.create({
+    data: {
+      userId,
+      provider: "bitbucket",
+      encryptedAccessToken: encryptToken(accessToken),
+      encryptedRefreshToken: encryptToken(refreshToken || ""),
+      accessTokenExpiresAt: tokenExpiryDate(expiresInSec),
+      bitbucketUuid: uuid,
+      bitbucketUsername: username,
+    },
+  });
+}
+
+export async function updateBitbucketConnectionTokens(
+  connectionId,
+  userId,
+  accessToken,
+  refreshToken,
+  expiresInSec,
+) {
+  const row = await prisma.userOAuthConnection.findFirst({
+    where: { id: connectionId, userId, provider: "bitbucket" },
+  });
+  if (!row) throw new Error("Bitbucket connection not found");
+  const { uuid, username } = await bitbucketProfileFromToken(accessToken);
+  return prisma.userOAuthConnection.update({
+    where: { id: connectionId },
+    data: {
+      encryptedAccessToken: encryptToken(accessToken),
+      encryptedRefreshToken: encryptToken(refreshToken || ""),
+      accessTokenExpiresAt: tokenExpiryDate(expiresInSec),
+      bitbucketUuid: uuid || row.bitbucketUuid,
+      bitbucketUsername: username || row.bitbucketUsername,
+    },
+  });
+}
+
+export async function completeBitbucketOAuth(code, stateToken) {
+  const { userId, reconnectConnectionId } = verifyOAuthState(stateToken);
+  const tokens = await exchangeBitbucketCode(code);
+  if (reconnectConnectionId != null) {
+    await updateBitbucketConnectionTokens(
+      reconnectConnectionId,
+      userId,
+      tokens.accessToken,
+      tokens.refreshToken,
+      tokens.expiresIn,
+    );
+    return userId;
+  }
+  const { uuid } = await bitbucketProfileFromToken(tokens.accessToken);
+  if (uuid) {
+    const rows = await prisma.userOAuthConnection.findMany({
+      where: { userId, provider: "bitbucket" },
+      select: { id: true, bitbucketUuid: true },
+    });
+    const norm = uuid.replace(/[{}]/g, "").toLowerCase();
+    const existing = rows.find(
+      (r) => r.bitbucketUuid && String(r.bitbucketUuid).replace(/[{}]/g, "").toLowerCase() === norm,
+    );
+    if (existing) {
+      await updateBitbucketConnectionTokens(
+        existing.id,
+        userId,
+        tokens.accessToken,
+        tokens.refreshToken,
+        tokens.expiresIn,
+      );
+      return userId;
+    }
+  }
+  await createBitbucketConnectionRecord(
+    userId,
+    tokens.accessToken,
+    tokens.refreshToken,
+    tokens.expiresIn,
+  );
+  return userId;
+}
+
+export async function ensureFreshBitbucketConnection(row) {
+  const access = decryptToken(row.encryptedAccessToken);
+  const refresh = row.encryptedRefreshToken ? decryptToken(row.encryptedRefreshToken) : "";
+  const exp = row.accessTokenExpiresAt ? row.accessTokenExpiresAt.getTime() : null;
+  const expiredOrSoon = exp != null && exp - EXPIRY_SKEW_MS <= Date.now();
+
+  if (expiredOrSoon && refresh) {
+    const t = await refreshBitbucketTokens(refresh);
+    const { uuid, username } = await bitbucketProfileFromToken(t.accessToken);
+    const updated = await prisma.userOAuthConnection.update({
+      where: { id: row.id },
+      data: {
+        encryptedAccessToken: encryptToken(t.accessToken),
+        encryptedRefreshToken: encryptToken(t.refreshToken || ""),
+        accessTokenExpiresAt: tokenExpiryDate(t.expiresIn),
+        bitbucketUuid: uuid || row.bitbucketUuid,
+        bitbucketUsername: username || row.bitbucketUsername,
+      },
+    });
+    return {
+      accessToken: decryptToken(updated.encryptedAccessToken),
+      bitbucketUsername: updated.bitbucketUsername,
+    };
+  }
+
+  if (expiredOrSoon && !refresh) {
+    throw new Error("Bitbucket token expired; reconnect OAuth in Integrations.");
+  }
+  if (!access) throw new Error("Bitbucket connection has no access token");
+  return { accessToken: access, bitbucketUsername: row.bitbucketUsername };
 }

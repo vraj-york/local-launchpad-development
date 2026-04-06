@@ -256,7 +256,7 @@ export const fetchManagers = async () => {
   }
 };
 
-/** OAuth / integrations (GitHub + Jira) — Bearer required via api interceptor */
+/** OAuth / integrations (GitHub, Bitbucket, Jira) — Bearer required via api interceptor */
 export const fetchIntegrationsStatus = async () => {
   const { data } = await api.get("/api/integrations/status");
   return data;
@@ -288,8 +288,25 @@ export const getJiraOAuthAuthorizeUrl = async (reconnectConnectionId) => {
   return data.url;
 };
 
+export const getBitbucketOAuthAuthorizeUrl = async (reconnectConnectionId) => {
+  const params = {};
+  if (reconnectConnectionId != null && reconnectConnectionId !== "") {
+    params.reconnectId = reconnectConnectionId;
+  }
+  const { data } = await api.get("/api/integrations/bitbucket/start", {
+    params,
+    headers: { Accept: "application/json" },
+  });
+  if (!data?.url) throw new Error("Bitbucket OAuth is not available");
+  return data.url;
+};
+
 export const disconnectGithubIntegration = async (connectionId) => {
   await api.delete(`/api/integrations/github/${connectionId}`);
+};
+
+export const disconnectBitbucketIntegration = async (connectionId) => {
+  await api.delete(`/api/integrations/bitbucket/${connectionId}`);
 };
 
 export const disconnectJiraIntegration = async (connectionId) => {
@@ -301,6 +318,14 @@ export const fetchGithubReposPage = async (connectionId, { page = 1, projectId }
   const params = { connectionId, page };
   if (projectId != null && projectId !== "") params.projectId = projectId;
   const { data } = await api.get("/api/integrations/github/repos", { params });
+  return data;
+};
+
+/** Paginated Bitbucket repos for the OAuth connection. */
+export const fetchBitbucketReposPage = async (connectionId, { page = 1, projectId } = {}) => {
+  const params = { connectionId, page };
+  if (projectId != null && projectId !== "") params.projectId = projectId;
+  const { data } = await api.get("/api/integrations/bitbucket/repos", { params });
   return data;
 };
 

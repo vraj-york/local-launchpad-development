@@ -9,6 +9,8 @@ import {
   performMergeToLaunchpad,
 } from "../services/cursor.service.js";
 import { resolveGithubCredentialsFromProject } from "../services/integrationCredential.service.js";
+import { assertProjectAccess } from "../services/project.service.js";
+import ApiError from "../utils/apiError.js";
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -44,19 +46,13 @@ router.post("/agents", authenticateToken, requireCursorKey, async (req, res) => 
     return res.status(400).json({ error: "releaseId is required and must be a positive integer" });
   }
 
-  const userId = req.user.id;
-  const role = req.user.role;
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { id: true, assignedManagerId: true },
-  });
-  if (!project) {
-    return res.status(404).json({ error: "Project not found" });
-  }
-  const hasAccess =
-    role === "admin" || (role === "manager" && project.assignedManagerId === userId);
-  if (!hasAccess) {
-    return res.status(403).json({ error: "Forbidden: no access to this project" });
+  try {
+    await assertProjectAccess(projectId, req.user);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    throw err;
   }
   const release = await prisma.release.findFirst({
     where: { id: releaseId, projectId },
@@ -75,7 +71,7 @@ router.post("/agents", authenticateToken, requireCursorKey, async (req, res) => 
     const result = await createAgentForProjectRelease({
       projectId,
       releaseId,
-      attemptedById: userId,
+      attemptedById: req.user.id,
       prompt: body.prompt,
       nodeCount,
       source: body.source,
@@ -93,6 +89,7 @@ router.post("/agents", authenticateToken, requireCursorKey, async (req, res) => 
     }
     if (
       err.code === "GITHUB_NOT_CONFIGURED" ||
+      err.code === "SCM_NOT_CONFIGURED" ||
       err.code === "REPO_UNRESOLVED" ||
       err.code === "REPO_INACCESSIBLE"
     ) {
@@ -131,17 +128,13 @@ router.post(
     if (!conversion) {
       return res.status(404).json({ error: "Agent not linked to a project" });
     }
-    const project = await prisma.project.findUnique({
-      where: { id: conversion.projectId },
-      select: { assignedManagerId: true },
-    });
-    const role = req.user.role;
-    const uid = req.user.id;
-    const hasAccess =
-      role === "admin" ||
-      (role === "manager" && project?.assignedManagerId === uid);
-    if (!hasAccess) {
-      return res.status(403).json({ error: "Forbidden: no access to this project" });
+    try {
+      await assertProjectAccess(conversion.projectId, req.user);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        return res.status(err.statusCode).json({ error: err.message });
+      }
+      throw err;
     }
 
     try {
@@ -221,9 +214,6 @@ router.post(
       return res.status(400).json({ error: "Agent id is required" });
     }
 
-    const userId = req.user.id;
-    const role = req.user.role;
-
     const conversion = await prisma.figmaConversion.findFirst({
       where: { agentId: id },
       select: { projectId: true },
@@ -232,10 +222,18 @@ router.post(
       return res.status(404).json({ error: "Agent not found or not linked to a project" });
     }
 
+    try {
+      await assertProjectAccess(conversion.projectId, req.user);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        return res.status(err.statusCode).json({ error: err.message });
+      }
+      throw err;
+    }
+
     const project = await prisma.project.findUnique({
       where: { id: conversion.projectId },
       select: {
-        assignedManagerId: true,
         githubToken: true,
         gitRepoPath: true,
         githubConnectionId: true,
@@ -245,11 +243,6 @@ router.post(
     });
     if (!project) {
       return res.status(404).json({ error: "Project not found" });
-    }
-    const hasAccess =
-      role === "admin" || (role === "manager" && project.assignedManagerId === userId);
-    if (!hasAccess) {
-      return res.status(403).json({ error: "Forbidden: no access to this project" });
     }
     let ghTokRoute = "";
     try {

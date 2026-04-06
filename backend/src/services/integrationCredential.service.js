@@ -3,15 +3,33 @@ import ApiError from "../utils/apiError.js";
 import {
   ensureFreshGithubConnection,
   ensureFreshJiraConnection,
+  ensureFreshBitbucketConnection,
 } from "./oauthConnection.service.js";
 
 const prisma = new PrismaClient();
 
 /**
- * @param {object} project - Must include createdById, githubConnectionId?, githubToken?, githubUsername?
- * @returns {Promise<{ githubToken: string, githubUsername: string, source: 'oauth'|'legacy' }>}
+ * Unified SCM token for GitHub or Bitbucket (OAuth or legacy PAT/app password).
+ * @returns {Promise<{ provider: 'github'|'bitbucket', token: string, username: string, source: 'oauth'|'legacy' }>}
  */
-export async function resolveGithubCredentialsFromProject(project) {
+export async function resolveScmCredentialsFromProject(project) {
+  if (project.bitbucketConnectionId) {
+    const row = await prisma.userOAuthConnection.findUnique({
+      where: { id: project.bitbucketConnectionId },
+    });
+    if (!row || row.provider !== "bitbucket") {
+      throw new ApiError(400, "Project Bitbucket connection is invalid");
+    }
+    if (row.userId !== project.createdById) {
+      throw new ApiError(403, "Bitbucket connection does not match project owner");
+    }
+    const { accessToken, bitbucketUsername } = await ensureFreshBitbucketConnection(row);
+    const username = (bitbucketUsername || project.bitbucketUsername || "").trim();
+    if (!username) {
+      throw new ApiError(400, "Bitbucket username missing for OAuth connection");
+    }
+    return { provider: "bitbucket", token: accessToken, username, source: "oauth" };
+  }
   if (project.githubConnectionId) {
     const row = await prisma.userOAuthConnection.findUnique({
       where: { id: project.githubConnectionId },
@@ -27,24 +45,40 @@ export async function resolveGithubCredentialsFromProject(project) {
     if (!username) {
       throw new ApiError(400, "GitHub login missing for OAuth connection");
     }
-    return {
-      githubToken: accessToken,
-      githubUsername: username,
-      source: "oauth",
-    };
+    return { provider: "github", token: accessToken, username, source: "oauth" };
+  }
+  const bbUser = project.bitbucketUsername?.trim() || "";
+  const bbTok = project.bitbucketToken?.trim() || "";
+  if (bbUser && bbTok) {
+    return { provider: "bitbucket", token: bbTok, username: bbUser, source: "legacy" };
   }
   const token = project.githubToken?.trim() || "";
   const username = project.githubUsername?.trim() || "";
-  if (!username || !token) {
+  if (username && token) {
+    return { provider: "github", token, username, source: "legacy" };
+  }
+  throw new ApiError(
+    400,
+    "Repository host not configured. Connect GitHub or Bitbucket under Integrations (or set legacy tokens on the project).",
+  );
+}
+
+/**
+ * @param {object} project - Must include createdById, githubConnectionId?, githubToken?, githubUsername?
+ * @returns {Promise<{ githubToken: string, githubUsername: string, source: 'oauth'|'legacy' }>}
+ */
+export async function resolveGithubCredentialsFromProject(project) {
+  const scm = await resolveScmCredentialsFromProject(project);
+  if (scm.provider !== "github") {
     throw new ApiError(
       400,
-      "GitHub credentials not configured. Connect GitHub under Integrations or set githubUsername and githubToken on the project.",
+      "This operation requires GitHub credentials; this project uses Bitbucket.",
     );
   }
   return {
-    githubToken: token,
-    githubUsername: username,
-    source: "legacy",
+    githubToken: scm.token,
+    githubUsername: scm.username,
+    source: scm.source,
   };
 }
 
@@ -127,6 +161,16 @@ export async function assertGithubConnectionOwned(userId, connectionId) {
   });
   if (!row) {
     throw new ApiError(400, "Invalid GitHub connection for this user");
+  }
+  return row;
+}
+
+export async function assertBitbucketConnectionOwned(userId, connectionId) {
+  const row = await prisma.userOAuthConnection.findFirst({
+    where: { id: Number(connectionId), userId, provider: "bitbucket" },
+  });
+  if (!row) {
+    throw new ApiError(400, "Invalid Bitbucket connection for this user");
   }
   return row;
 }
