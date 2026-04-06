@@ -132,6 +132,14 @@ fi
 # Fails fast on error (no db push fallback — that hid failures and could drift schema).
 # Emergency only: set SKIP_PRISMA_MIGRATE=1 in Compose env to skip (not for production).
 if [ -n "$DATABASE_URL" ]; then
+  case "$DATABASE_URL" in
+    postgresql://*|postgres://*) ;;
+    *)
+      echo "[ERROR] DATABASE_URL must start with postgresql:// or postgres:// (Prisma P1012)."
+      echo "        Fix the value in your EC2/host .env or Docker Compose environment — see EC2_DEPLOYMENT.md."
+      exit 1
+      ;;
+  esac
   if [ "${SKIP_PRISMA_MIGRATE:-}" = "1" ] || [ "${SKIP_PRISMA_MIGRATE:-}" = "true" ]; then
     echo "[WARN] SKIP_PRISMA_MIGRATE is set — skipping prisma migrate deploy."
   else
