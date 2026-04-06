@@ -1,23 +1,15 @@
 -- ChatHistory: revert metadata, isActiveChat + index, drop legacy tone/msgKey
 -- Release: actual ship date + notes
+-- Idempotent: safe if columns/index already exist (e.g. partial apply or drift).
 
--- AlterTable
-ALTER TABLE "ChatHistory" ADD COLUMN "revertedAt" TIMESTAMP(3),
-ADD COLUMN "revertCommitSha" TEXT;
+ALTER TABLE "ChatHistory" ADD COLUMN IF NOT EXISTS "revertedAt" TIMESTAMP(3);
+ALTER TABLE "ChatHistory" ADD COLUMN IF NOT EXISTS "revertCommitSha" TEXT;
+ALTER TABLE "ChatHistory" ADD COLUMN IF NOT EXISTS "isActiveChat" BOOLEAN NOT NULL DEFAULT true;
 
--- AlterTable
-ALTER TABLE "ChatHistory" ADD COLUMN "isActiveChat" BOOLEAN NOT NULL DEFAULT true;
+CREATE INDEX IF NOT EXISTS "ChatHistory_projectId_releaseId_isActiveChat_idx" ON "ChatHistory"("projectId", "releaseId", "isActiveChat");
 
--- CreateIndex
-CREATE INDEX "ChatHistory_projectId_releaseId_isActiveChat_idx" ON "ChatHistory"("projectId", "releaseId", "isActiveChat");
-
--- AlterTable
 ALTER TABLE "ChatHistory" DROP COLUMN IF EXISTS "tone",
 DROP COLUMN IF EXISTS "msgKey";
 
--- AlterTable
-ALTER TABLE "Release" ADD COLUMN "actualReleaseDate" TIMESTAMP(3);
-
--- AlterTable
-ALTER TABLE "Release" ADD COLUMN "actualReleaseNotes" TEXT;
-
+ALTER TABLE "Release" ADD COLUMN IF NOT EXISTS "actualReleaseDate" TIMESTAMP(3);
+ALTER TABLE "Release" ADD COLUMN IF NOT EXISTS "actualReleaseNotes" TEXT;

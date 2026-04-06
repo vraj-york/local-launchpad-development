@@ -43,7 +43,7 @@ Set these repository secrets:
 Each workflow runs over SSH in this order:
 
 1. **Preflight** – `UAT_APP_PATH` / `PROD_APP_PATH` is non-empty, directory exists, `docker` and `docker compose` are available.
-2. **Deploy** – checkout branch, pull, `docker compose up -d --build`, `docker compose exec -T backend npx prisma migrate deploy`.
+2. **Deploy** – checkout branch, pull, `docker compose up -d --build`. The backend image entrypoint runs `prisma migrate deploy` before starting Node, so you do not need a separate `exec` migration step unless you intentionally skip migrations at boot (`SKIP_PRISMA_MIGRATE`).
 3. **Verify** – `docker compose ps`, then up to 10 attempts (3s apart) to `GET http://127.0.0.1:5000/api/health` on the server. On failure, the last 100 lines of backend logs are printed and the job fails.
 
 - On push to `development`, workflow **Deploy UAT** runs the steps above on the UAT host.
