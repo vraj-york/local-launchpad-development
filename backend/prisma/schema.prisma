@@ -49,8 +49,6 @@ model UserOAuthConnection {
   jiraBaseUrl            String?
   atlassianAccountEmail  String?
   atlassianCloudId       String?
-  bitbucketUuid          String?
-  bitbucketUsername      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -59,7 +57,6 @@ model UserOAuthConnection {
   projectsGithub  Project[] @relation("ProjectGithubConnection")
   projectsBitbucket Project[] @relation("ProjectBitbucketConnection")
   projectsJira    Project[] @relation("ProjectJiraConnection")
-  projectsBitbucket Project[] @relation("ProjectBitbucketConnection")
 
   @@index([userId])
   @@index([userId, provider])
@@ -79,9 +76,6 @@ model Project {
   githubToken      String?
   bitbucketUsername String?
   bitbucketToken   String?
-
-  bitbucketUsername String?
-  bitbucketToken    String?
 
   jiraBaseUrl      String?
   jiraProjectKey   String?
@@ -104,7 +98,6 @@ model Project {
   githubConnectionId   Int?
   bitbucketConnectionId Int?
   jiraConnectionId   Int?
-  bitbucketConnectionId Int?
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -114,7 +107,6 @@ model Project {
   githubConnection  UserOAuthConnection? @relation("ProjectGithubConnection", fields: [githubConnectionId], references: [id], onDelete: SetNull)
   bitbucketConnection UserOAuthConnection? @relation("ProjectBitbucketConnection", fields: [bitbucketConnectionId], references: [id], onDelete: SetNull)
   jiraConnection    UserOAuthConnection? @relation("ProjectJiraConnection", fields: [jiraConnectionId], references: [id], onDelete: SetNull)
-  bitbucketConnection UserOAuthConnection? @relation("ProjectBitbucketConnection", fields: [bitbucketConnectionId], references: [id], onDelete: SetNull)
   versions          ProjectVersion[]
   releases          Release[]
   roadmaps          Roadmap[]
