@@ -150,7 +150,6 @@ async function resolveClientChatGitSource(project, forceLaunchpadBase = false) {
     });
     project.gitRepoPath = resolved.gitRepoPathToPersist;
   }
-  let sourceRef = "launchpad";
   let parsed = parseScmRepoPath(project.gitRepoPath || "");
   if (!parsed && resolved.repositoryUrl) {
     parsed = parseScmRepoPath(resolved.repositoryUrl);
@@ -187,6 +186,8 @@ async function resolveClientChatGitSource(project, forceLaunchpadBase = false) {
     err.code = "REPO_UNRESOLVED";
     throw err;
   }
+
+  let sourceRef = "launchpad";
   const lp = await scmGetBranchSha(parsed.provider, parsed.owner, parsed.repo, "launchpad", token);
   const launchpadMissing = !lp?.sha;
   if (launchpadMissing && !forceLaunchpadBase) {
@@ -660,6 +661,51 @@ async function assertShaOnTrackedAgentBranch(project, releaseId, sha, chatHistor
 }
 
 /**
+ * True when a `FigmaConversion` exists for this project+release with a linked `ProjectVersion`
+ * whose `projectId` and `releaseId` match (version identity via `projectVersionId`).
+ */
+async function hasVersionedFigmaConversionForRelease(projectId, releaseId) {
+  const rid = Number(releaseId);
+  if (!Number.isInteger(rid) || rid < 1) return false;
+  const row = await prisma.figmaConversion.findFirst({
+    where: {
+      projectId,
+      releaseId: rid,
+      projectVersionId: { not: null },
+      projectVersion: {
+        projectId,
+        releaseId: rid,
+      },
+    },
+    select: { id: true },
+  });
+  return Boolean(row);
+}
+
+/**
+ * Git clone ref for the first client-link Cursor agent: `launchpad` when a versioned
+ * `FigmaConversion` exists for this project+release; otherwise the repository default branch.
+ */
+async function resolveGitSourceForNewClientChatAgent(project, forceLaunchpadBase, releaseId) {
+  const useLaunchpad = await hasVersionedFigmaConversionForRelease(project.id, releaseId);
+  const resolved = await resolveClientChatGitSource(project, forceLaunchpadBase);
+  if (useLaunchpad) {
+    return resolved;
+  }
+  const meta = await scmGetRepositoryMetadata(
+    resolved.parsed.provider,
+    resolved.parsed.owner,
+    resolved.parsed.repo,
+    resolved.token,
+  );
+  const def = meta.ok ? String(meta.defaultBranch || "").trim() : "";
+  return {
+    ...resolved,
+    sourceRef: def || "main",
+  };
+}
+
+/**
  * @param {{ forceLaunchpadBase?: boolean }} opts - when true, always use ref launchpad (never main) so a new
  * agent after a prior client-link merge builds on merged work, not the default branch.
  */
@@ -670,9 +716,10 @@ async function createClientChatAgent({
   forceLaunchpadBase = false,
   promptImages = null,
 }) {
-  const { repositoryUrl, sourceRef, parsed, token } = await resolveClientChatGitSource(
+  const { repositoryUrl, sourceRef, parsed, token } = await resolveGitSourceForNewClientChatAgent(
     project,
     forceLaunchpadBase,
+    releaseId,
   );
 
   const meta = await getRepositoryMetadata(parsed.owner, parsed.repo, token);
@@ -800,7 +847,11 @@ export async function clientLinkFollowup({
       const repoCtx = await resolveClientChatRepository(project);
       let commitBranch = null;
       if (needFreshAgent) {
-        const git = await resolveClientChatGitSource(project, forceLaunchpadBase);
+        const git = await resolveGitSourceForNewClientChatAgent(
+          project,
+          forceLaunchpadBase,
+          releaseId,
+        );
         commitBranch = git.sourceRef;
       } else {
         commitBranch = await resolveAgentTargetBranchForFollowup(conv);
