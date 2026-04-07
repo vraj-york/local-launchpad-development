@@ -1,7 +1,37 @@
+import { execFileSync } from "child_process";
+import crypto from "crypto";
+import fs from "fs-extra";
+import path from "path";
 import fetch from "node-fetch";
 import { parseScmRepoPath } from "../utils/scmPath.js";
+import { getBackendRoot } from "../utils/instanceRoot.js";
 
 const GITHUB_API = "https://api.github.com";
+
+const GIT_REVERT_IDENTITY = [
+  "-c",
+  "user.email=client-link-revert@noreply.local",
+  "-c",
+  "user.name=Client Link Revert",
+];
+
+function gitStderrFromError(err) {
+  if (!err || typeof err !== "object") return String(err || "git failed");
+  const b = err.stderr;
+  if (Buffer.isBuffer(b)) return b.toString("utf8").trim();
+  if (typeof b === "string") return b.trim();
+  return String(err.message || "git failed");
+}
+
+function gitExecInDir(args, cwd) {
+  execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 50 * 1024 * 1024,
+    timeout: 600000,
+  });
+}
 
 /**
  * Parse gitRepoPath for GitHub only (e.g. github.com/owner/repo). Bitbucket paths return null.
@@ -93,7 +123,7 @@ export async function getBranchSha(owner, repo, branch, token) {
 /**
  * Get commit SHA + parent SHAs for a ref or SHA.
  * GET /repos/:owner/:repo/commits/:ref
- * @returns {Promise<{ ok: true, sha: string, parents: string[] } | { ok: false, status: number, message: string }>}
+ * @returns {Promise<{ ok: true, sha: string, parents: string[], message?: string | null } | { ok: false, status: number, message: string }>}
  */
 export async function getCommitInfo(owner, repo, ref, token) {
   const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(ref)}`;
@@ -121,7 +151,48 @@ export async function getCommitInfo(owner, repo, ref, token) {
   if (!sha) {
     return { ok: false, status: 502, message: "GitHub commit response missing SHA." };
   }
-  return { ok: true, sha, parents };
+  const commitMessage =
+    typeof data?.commit?.message === "string" ? data.commit.message.trim() : null;
+  return { ok: true, sha, parents, message: commitMessage };
+}
+
+/**
+ * List recent commits on a ref (branch name or SHA). Newest first.
+ * GET /repos/:owner/:repo/commits?sha=&per_page=
+ */
+export async function listCommitsOnRef(owner, repo, ref, token, perPage = 5) {
+  const refEnc = typeof ref === "string" ? ref.trim() : "";
+  if (!refEnc) return { ok: false, message: "ref required" };
+  const n = Math.min(Math.max(Number(perPage) || 5, 1), 30);
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(refEnc)}&per_page=${n}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+    },
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg =
+      data && typeof data.message === "string" ? data.message : res.statusText;
+    return { ok: false, message: msg };
+  }
+  if (!Array.isArray(data)) {
+    return { ok: false, message: "unexpected commits response" };
+  }
+  const commits = data.map((row) => {
+    const shaFull = typeof row?.sha === "string" ? row.sha : "";
+    const rawMsg =
+      typeof row?.commit?.message === "string" ? row.commit.message.trim() : "";
+    const messageFirstLine = rawMsg ? rawMsg.split("\n")[0].trim() || null : null;
+    return {
+      sha: shaFull,
+      shaShort: shaFull ? shaFull.slice(0, 7) : "",
+      messageFirstLine,
+    };
+  });
+  return { ok: true, commits };
 }
 
 /**
@@ -408,4 +479,87 @@ export async function createTagIdempotent(owner, repo, tagName, sha, token) {
     status: moved.status,
     message: moved.message || first.message || "Failed to create or move tag",
   };
+}
+
+/**
+ * Clone `branchName`, run `git revert <commitSha>` on it, push to origin.
+ * Requires the `git` CLI on the server. Used for client-link “revert merged chat” on the agent branch.
+ *
+ * @param {string} owner
+ * @param {string} repo
+ * @param {string} token
+ * @param {string} branchName
+ * @param {string} commitSha — full or short SHA of the commit to revert (the chat’s applied commit)
+ * @returns {Promise<{ ok: true, newHeadSha: string } | { ok: false, message: string }>}
+ */
+export async function revertCommitOnRemoteBranch(owner, repo, token, branchName, commitSha) {
+  const branch = String(branchName || "").trim();
+  const sha = String(commitSha || "").trim();
+  if (!branch || !sha) {
+    return { ok: false, message: "Branch and commit SHA are required." };
+  }
+
+  const cmp = await compareRefs(owner, repo, sha, branch, token);
+  if (!cmp.ok) {
+    return {
+      ok: false,
+      message: cmp.message || "Could not verify commit is on the agent branch.",
+    };
+  }
+  const st = String(cmp.data?.status || "").toLowerCase();
+  if (st !== "ahead" && st !== "identical") {
+    return {
+      ok: false,
+      message:
+        "That commit is not an ancestor of the agent branch tip; cannot revert it on that branch.",
+    };
+  }
+
+  const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+  const tmp = path.join(
+    getBackendRoot(),
+    "_tmp_git_revert",
+    `rv_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
+  );
+
+  try {
+    await fs.ensureDir(tmp);
+    gitExecInDir(["clone", "--branch", branch, "--single-branch", cloneUrl, "."], tmp);
+
+    try {
+      gitExecInDir([...GIT_REVERT_IDENTITY, "revert", sha, "--no-edit"], tmp);
+    } catch (e1) {
+      const t1 = gitStderrFromError(e1);
+      if (/merge commit/i.test(t1) && !/-m\s+/.test(t1)) {
+        try {
+          gitExecInDir([...GIT_REVERT_IDENTITY, "revert", "-m", "1", sha, "--no-edit"], tmp);
+        } catch (e2) {
+          return {
+            ok: false,
+            message: gitStderrFromError(e2) || "git revert failed for merge commit (-m 1).",
+          };
+        }
+      } else {
+        return {
+          ok: false,
+          message: t1 || "git revert failed (resolve conflicts locally if needed).",
+        };
+      }
+    }
+
+    gitExecInDir(["push", "origin", `HEAD:refs/heads/${branch}`], tmp);
+
+    const head = await getBranchSha(owner, repo, branch, token);
+    if (!head?.sha) {
+      return { ok: false, message: "Revert pushed but could not read branch HEAD from GitHub." };
+    }
+    return { ok: true, newHeadSha: head.sha };
+  } catch (err) {
+    return {
+      ok: false,
+      message: gitStderrFromError(err) || err?.message || "Git revert or push failed.",
+    };
+  } finally {
+    await fs.remove(tmp).catch(() => {});
+  }
 }

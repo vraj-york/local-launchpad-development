@@ -152,6 +152,10 @@ model Release {
   description String?
   /// Planned ship / target date (timeline).
   releaseDate DateTime?
+  /// When the release actually shipped (vs planned releaseDate).
+  actualReleaseDate DateTime?
+  /// Optional notes when recording actual ship (internal / roadmap).
+  actualReleaseNotes String? @db.Text
   /// Planned start date (timeline).
   startDate   DateTime?
   status      ReleaseStatus @default(draft)
@@ -224,19 +228,20 @@ model ChatHistory {
   projectId Int
   releaseId Int
   role      String
-  tone      String?
   text      String   @db.Text
-  msgKey    String?
   appliedCommitSha String?
   mergedAt  DateTime?
   revertedAt       DateTime?
   revertCommitSha  String?
+  /// When false, row is kept for audit but omitted from the client-link chat panel.
+  isActiveChat     Boolean  @default(true)
   createdAt DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   release Release @relation(fields: [releaseId], references: [id], onDelete: Cascade)
 
   @@index([projectId, releaseId, createdAt])
+  @@index([projectId, releaseId, isActiveChat])
   @@index([projectId, releaseId, appliedCommitSha])
 }
 

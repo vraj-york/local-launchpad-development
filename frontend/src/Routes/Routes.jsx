@@ -15,6 +15,7 @@ import CreateProject from "@/pages/CreateProject";
 import IntegrationsCallbackPage from "@/pages/IntegrationsCallbackPage";
 import IntegrationsSettingsPage from "@/pages/IntegrationsSettingsPage";
 import { ClientLink } from "@/pages/ClientLink";
+import ReleaseRoadmapPage from "@/pages/ReleaseRoadmapPage";
 
 export const Routes = () => {
   const { user, loading } = useAuth();
@@ -38,6 +39,10 @@ export const Routes = () => {
     { path: "/projects", element: <Projects /> },
     { path: "/projects/new", element: <CreateProject /> },
     { path: "/projects/details/:projectId", element: <ProjectDetails /> },
+    {
+      path: "/projects/roadmap/:projectId",
+      element: <ReleaseRoadmapPage />,
+    },
     { path: "/settings/integrations", element: <IntegrationsSettingsPage /> },
   ];
 

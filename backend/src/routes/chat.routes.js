@@ -4,9 +4,6 @@ import {
   clientLinkAgentStatus,
   clientLinkExecutionSummary,
   clientLinkListChatMessages,
-  clientLinkConfirmLaunchpadMerge,
-  clientLinkPreviewCommit,
-  clientLinkRestoreVersion,
   clientLinkRevertMergedMessage,
 } from "../services/chat.service.js";
 import ApiError from "../utils/apiError.js";
@@ -120,7 +117,7 @@ router.get("/:slug/messages", async (req, res) => {
   }
 });
 
-/** POST /api/chat/:slug/revert-merge — point launchpad at this message's merged SHA and redeploy */
+/** POST /api/chat/:slug/revert-merge — git revert the message's commit on the agent branch, then merge to launchpad */
 router.post("/:slug/revert-merge", async (req, res) => {
   const slug = req.params.slug;
   const releaseId = readReleaseId(req.body, req.query);
@@ -138,88 +135,6 @@ router.post("/:slug/revert-merge", async (req, res) => {
       slug,
       releaseId,
       messageId,
-      clientEmail: readClientEmail(req.body),
-    });
-    return res.json(result);
-  } catch (err) {
-    if (err instanceof ApiError) {
-      return res.status(err.statusCode).json({ error: err.message });
-    }
-    return res.status(500).json({ error: "Server error" });
-  }
-});
-
-/** POST /api/chat/:slug/confirm-merge — merge agent work to launchpad after user confirms */
-router.post("/:slug/confirm-merge", async (req, res) => {
-  const slug = req.params.slug;
-  const releaseId = readReleaseId(req.body, req.query);
-  const sha = req.body?.sha ?? req.body?.commitSha;
-  const rawMsgId = req.body?.m ?? req.body?.messageId;
-  const messageId =
-    rawMsgId != null && rawMsgId !== ""
-      ? Number(Array.isArray(rawMsgId) ? rawMsgId[0] : rawMsgId)
-      : null;
-  try {
-    if (!releaseId) return res.status(400).json({ error: "Release (r) required" });
-    const result = await clientLinkConfirmLaunchpadMerge({
-      slug,
-      releaseId,
-      commitSha: sha,
-      messageId:
-        Number.isInteger(messageId) && messageId > 0 ? messageId : null,
-      clientEmail: readClientEmail(req.body),
-    });
-    return res.json(result);
-  } catch (err) {
-    if (err instanceof ApiError) {
-      return res.status(err.statusCode).json({ error: err.message });
-    }
-    return res.status(500).json({ error: "Server error" });
-  }
-});
-
-/** POST /api/chat/:slug/restore-version — body: r, versionId */
-router.post("/:slug/restore-version", async (req, res) => {
-  const slug = req.params.slug;
-  const releaseId = readReleaseId(req.body, req.query);
-  const vid = req.body?.versionId ?? req.body?.v;
-  try {
-    if (!releaseId) return res.status(400).json({ error: "Release (r) required" });
-    const result = await clientLinkRestoreVersion({
-      slug,
-      releaseId,
-      versionId: vid,
-      clientEmail: readClientEmail(req.body),
-    });
-    return res.json(result);
-  } catch (err) {
-    if (err instanceof ApiError) {
-      return res.status(err.statusCode).json({ error: err.message });
-    }
-    return res.status(500).json({ error: "Server error" });
-  }
-});
-
-/** POST /api/chat/:slug/preview-commit — body: r, sha, before?, m|messageId */
-router.post("/:slug/preview-commit", async (req, res) => {
-  const slug = req.params.slug;
-  const releaseId = readReleaseId(req.body, req.query);
-  const sha = req.body?.sha ?? req.body?.commitSha;
-  const before = req.body?.before === true || req.body?.mode === "before";
-  const rawMsgId = req.body?.m ?? req.body?.messageId;
-  const messageId =
-    rawMsgId != null && rawMsgId !== ""
-      ? Number(Array.isArray(rawMsgId) ? rawMsgId[0] : rawMsgId)
-      : null;
-  try {
-    if (!releaseId) return res.status(400).json({ error: "Release (r) required" });
-    const result = await clientLinkPreviewCommit({
-      slug,
-      releaseId,
-      commitSha: sha,
-      before,
-      messageId:
-        Number.isInteger(messageId) && messageId > 0 ? messageId : null,
       clientEmail: readClientEmail(req.body),
     });
     return res.json(result);

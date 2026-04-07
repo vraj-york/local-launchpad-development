@@ -5,6 +5,7 @@ import { PrismaClient } from "@prisma/client";
 import ApiError from "../utils/apiError.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import { parseGitRepoPath } from "./github.service.js";
+import { parseScmRepoPath } from "../utils/scmPath.js";
 import { resolveGithubCredentialsFromProject } from "./integrationCredential.service.js";
 
 const prisma = new PrismaClient();
@@ -156,7 +157,7 @@ async function getSubmoduleNameForPath(workDir, relPath) {
 }
 
 /**
- * When developmentRepoUrl is set, clone that repo, ensure the platform gitRepoPath is a submodule
+ * Requires developmentRepoUrl (GitHub). Clone that repo, ensure the platform gitRepoPath is a submodule
  * at launchpad-frontend/, then follow the usual submodule pin flow:
  *   cd launchpad-frontend && git fetch origin && git checkout &lt;commit-sha&gt;
  *   cd .. && git commit -m "…" && git push
@@ -172,10 +173,28 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
       ? params.releaseName.trim()
       : `release-${releaseId}`;
 
+  const trimmedDev = String(project.developmentRepoUrl || "").trim();
+  if (!trimmedDev) {
+    throw new ApiError(
+      400,
+      "Add a developer repository (development repository URL) on the project before locking this release.",
+    );
+  }
+
   const devNorm = normalizeGithubRepoPath(project.developmentRepoUrl || "");
   const srcNorm = normalizeGithubRepoPath(project.gitRepoPath || "");
   if (!devNorm) {
-    return { skipped: true, reason: "developmentRepoUrl not set" };
+    const scm = parseScmRepoPath(trimmedDev);
+    if (scm?.provider === "bitbucket") {
+      throw new ApiError(
+        400,
+        "Release lock submodule sync supports GitHub developer repositories only. Set developmentRepoUrl to github.com/owner/repo.",
+      );
+    }
+    throw new ApiError(
+      400,
+      "developmentRepoUrl must be a valid GitHub repository path (e.g. github.com/owner/repo) before locking.",
+    );
   }
   if (!srcNorm) {
     throw new ApiError(

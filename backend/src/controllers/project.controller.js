@@ -136,7 +136,6 @@ export const projectController = {
     switchVersion: asyncHandler(async (req, res) => {
         const { projectId } = req.params;
         const { versionId, isPermanent } = req.body;
-        console.log('Switching project version', versionId, typeof versionId);
         // Default isPermanent to false if not provided
         const result = await switchProjectVersion(
             projectId,

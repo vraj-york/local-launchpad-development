@@ -138,10 +138,6 @@ router.post(
     }
 
     try {
-      console.log("[cursor] manager followup", {
-        agentIdPrefix: id.slice(0, 8),
-        projectId: conversion.projectId,
-      });
       const { status, data } = await postCursorAgentFollowup(id, body.prompt);
       return res.status(status).json(data);
     } catch (err) {

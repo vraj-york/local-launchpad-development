@@ -507,6 +507,8 @@ export const createReleaseService = async (data, user) => {
     roadmapItemId,
     isMvp,
     releaseDate: releaseDateInput,
+    actualReleaseDate: actualReleaseDateInput,
+    actualReleaseNotes: actualReleaseNotesInput,
     startDate: startDateInput,
     clientReleaseNote: clientNoteInput,
   } = data;
@@ -555,6 +557,10 @@ export const createReleaseService = async (data, user) => {
     releaseDateInput != null && releaseDateInput !== ""
       ? toDate(releaseDateInput, "releaseDate")
       : null;
+  const actualShipDate =
+    actualReleaseDateInput != null && actualReleaseDateInput !== ""
+      ? toDate(actualReleaseDateInput, "actualReleaseDate")
+      : null;
   const startDate =
     startDateInput != null && startDateInput !== ""
       ? toDate(startDateInput, "startDate")
@@ -563,6 +569,10 @@ export const createReleaseService = async (data, user) => {
   const clientReleaseNote =
     typeof clientNoteInput === "string" && clientNoteInput.trim()
       ? clientNoteInput.trim()
+      : null;
+  const actualReleaseNotes =
+    typeof actualReleaseNotesInput === "string" && actualReleaseNotesInput.trim()
+      ? actualReleaseNotesInput.trim()
       : null;
 
   return prisma.$transaction(async (tx) => {
@@ -574,6 +584,8 @@ export const createReleaseService = async (data, user) => {
         status: ReleaseStatus.draft,
         isMvp: Boolean(isMvp),
         releaseDate: shipDate,
+        actualReleaseDate: actualShipDate,
+        actualReleaseNotes,
         startDate,
         clientReleaseNote,
         createdBy: userId,
@@ -882,7 +894,7 @@ export const lockReleaseService = async (releaseId, locked, user) => {
 };
 
 /**
- * Partial update: name, description, isMvp, releaseDate, startDate, clientReleaseNote.
+ * Partial update: name, description, isMvp, releaseDate, actualReleaseDate, actualReleaseNotes, startDate, clientReleaseNote.
  * Locked releases may only update clientReleaseNote for the public client link.
  * Requires non-empty reason when any non–client-facing field actually changes.
  */
@@ -893,6 +905,8 @@ export const updateReleaseService = async (releaseId, data, user) => {
     description,
     isMvp,
     releaseDate: releaseDateInput,
+    actualReleaseDate: actualReleaseDateInput,
+    actualReleaseNotes: actualReleaseNotesInput,
     startDate: startDateInput,
     reason: reasonRaw,
     clientReleaseNote: clientNoteInput,
@@ -908,6 +922,8 @@ export const updateReleaseService = async (releaseId, data, user) => {
       description: true,
       isMvp: true,
       releaseDate: true,
+      actualReleaseDate: true,
+      actualReleaseNotes: true,
       startDate: true,
       clientReleaseNote: true,
       project: { select: { assignedManagerId: true } },
@@ -924,6 +940,8 @@ export const updateReleaseService = async (releaseId, data, user) => {
     description !== undefined ||
     isMvp !== undefined ||
     releaseDateInput !== undefined ||
+    actualReleaseDateInput !== undefined ||
+    actualReleaseNotesInput !== undefined ||
     startDateInput !== undefined;
 
   if (!wantsClientNote && !wantsOther) {
@@ -1009,6 +1027,32 @@ export const updateReleaseService = async (releaseId, data, user) => {
         from: dateToIsoOrNull(current.releaseDate),
         to: dateToIsoOrNull(nextDate),
       };
+    }
+  }
+
+  if (!locked && actualReleaseDateInput !== undefined) {
+    const nextActual =
+      actualReleaseDateInput === null || actualReleaseDateInput === ""
+        ? null
+        : toDate(actualReleaseDateInput, "actualReleaseDate");
+    if (!datesEqual(nextActual, current.actualReleaseDate)) {
+      updateData.actualReleaseDate = nextActual;
+      changes.actualReleaseDate = {
+        from: dateToIsoOrNull(current.actualReleaseDate),
+        to: dateToIsoOrNull(nextActual),
+      };
+    }
+  }
+
+  if (!locked && actualReleaseNotesInput !== undefined) {
+    const nextNotes =
+      actualReleaseNotesInput == null || actualReleaseNotesInput === ""
+        ? null
+        : String(actualReleaseNotesInput).trim() || null;
+    const prevNotes = current.actualReleaseNotes ?? null;
+    if (nextNotes !== prevNotes) {
+      updateData.actualReleaseNotes = nextNotes;
+      changes.actualReleaseNotes = { from: prevNotes, to: nextNotes };
     }
   }
 
@@ -1290,9 +1334,6 @@ async function prepareNextStaticExportForPreview(absBuild, pkg) {
     await fs.remove(backupPath).catch(() => { });
     await fs.copy(foundPath, backupPath);
     await fs.writeFile(foundPath, patched, "utf8");
-    console.log(
-      `[runBuildSequence] Next.js: merged output: 'export' into ${baseName} for static preview (original backed up as ${backupName}).`,
-    );
     let restored = false;
     return async () => {
       if (restored) return;
@@ -1326,9 +1367,6 @@ async function prepareNextStaticExportForPreview(absBuild, pkg) {
   }
 
   await fs.writeFile(foundPath, wrapper, "utf8");
-  console.log(
-    `[runBuildSequence] Next.js: merged output: 'export' into ${baseName} for static preview (original backed up as ${backupName}).`,
-  );
 
   let restored = false;
   return async () => {
@@ -1438,12 +1476,6 @@ export const runBuildSequence = async (buildContextPath, opts = {}) => {
     const npmBuildCmd = useNextWebpack
       ? ["run", "build", "--", "--webpack"]
       : ["run", "build"];
-    if (useNextWebpack) {
-      console.log(
-        "[runBuildSequence] Next.js detected: using `next build --webpack` so the app folder is the build root (avoids parent lockfile / Turbopack workspace confusion).",
-      );
-    }
-
     await execa("npm", npmBuildCmd, {
       cwd: absBuild,
       stdio: "inherit",
@@ -1652,13 +1684,13 @@ export const uploadReleaseVersionService = async (
     try {
       runCommand(`git commit -m "Release ${version}"`, gitWorkingDir);
     } catch {
-      console.log("No changes detected.");
+      /* no changes */
     }
 
     try {
       runCommand(`git tag -a ${tag} -m "Release ${version}"`, gitWorkingDir);
     } catch {
-      console.log("Tag already exists");
+      /* tag may already exist */
     }
 
     /* Push: always force — upload is source of truth; no pull/merge step. */

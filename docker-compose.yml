@@ -3,6 +3,7 @@
 #
 # Nginx runs inside the backend container only (port 80). Frontend is served with `serve` (no nginx).
 # Database: set DATABASE_URL in repo root .env
+# Migrations: backend entrypoint runs `prisma migrate deploy` when DATABASE_URL is set (fails startup on error).
 # - Supabase / external only: docker compose up -d  (db service is NOT started)
 # - Local DB in Docker: DATABASE_URL=...@db:5432/... then: docker compose --profile with-db up -d
 #

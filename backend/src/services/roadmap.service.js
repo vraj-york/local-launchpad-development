@@ -149,7 +149,6 @@ export const updateRoadmapService = async ({ projectId, user, roadmap }) => {
 
         // 4️⃣ Update existing items (parallel)
         if (existingItems && existingItems.length > 0) {
-            console.log('Updating existing items:', existingItems);
             await Promise.all(
                 existingItems.map(item =>
                     tx.roadmapItem.update({

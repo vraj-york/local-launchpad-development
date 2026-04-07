@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { format } from "date-fns";
+import { format, startOfDay } from "date-fns";
 import {
   fetchReleases,
   createRelease,
@@ -57,6 +57,7 @@ import {
   SelectValue,
 } from "./ui/select";
 import { DatePickerWithRange } from "./ui/date-range-picker";
+import { DatePickerSingle } from "./ui/date-picker-single";
 import { cn } from "@/lib/utils";
 
 const RELEASE_STATUS_CHANGELOG_LABELS = {
@@ -69,6 +70,8 @@ const RELEASE_STATUS_CHANGELOG_LABELS = {
 const CHANGELOG_FIELD_LABELS = {
   status: "Status",
   releaseDate: "Target release",
+  actualReleaseDate: "Actual release",
+  actualReleaseNotes: "Actual release notes",
   startDate: "Start date",
   name: "Name",
   description: "Description",
@@ -76,6 +79,18 @@ const CHANGELOG_FIELD_LABELS = {
   lockedBy: "Locked by",
   clientReleaseNote: "Client release note",
 };
+
+function actualShipDateChanged(prevDate, nextDate) {
+  const p =
+    prevDate instanceof Date && !Number.isNaN(prevDate.getTime())
+      ? startOfDay(prevDate).getTime()
+      : null;
+  const n =
+    nextDate instanceof Date && !Number.isNaN(nextDate.getTime())
+      ? startOfDay(nextDate).getTime()
+      : null;
+  return p !== n;
+}
 
 function formatReadableDate(value) {
   if (value == null || value === "") return "—";
@@ -289,6 +304,8 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     description: "",
     startDate: null,
     releaseDate: null,
+    actualReleaseDate: null,
+    actualReleaseNotes: "",
     isMvp: false,
     clientReleaseNote: "",
   });
@@ -320,6 +337,8 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       description: "",
       startDate: null,
       releaseDate: null,
+      actualReleaseDate: null,
+      actualReleaseNotes: "",
       isMvp: false,
       clientReleaseNote: "",
     });
@@ -387,6 +406,10 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       isMvp: !!release.isMvp,
       startDate: release.startDate ? new Date(release.startDate) : null,
       releaseDate: release.releaseDate ? new Date(release.releaseDate) : null,
+      actualReleaseDate: release.actualReleaseDate
+        ? new Date(release.actualReleaseDate)
+        : null,
+      actualReleaseNotes: release.actualReleaseNotes ?? "",
       clientReleaseNote: release.clientReleaseNote ?? "",
       isLocked: isReleaseLocked(release),
       reason: "",
@@ -408,6 +431,11 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
         releaseDate: editDialog.releaseDate
           ? format(editDialog.releaseDate, "yyyy-MM-dd")
           : null,
+        actualReleaseDate: editDialog.actualReleaseDate
+          ? format(editDialog.actualReleaseDate, "yyyy-MM-dd")
+          : null,
+        actualReleaseNotes:
+          editDialog.actualReleaseNotes.trim() || null,
         clientReleaseNote: noteTrimmed,
         reason: editDialog.reason.trim(),
       };
@@ -469,6 +497,10 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
         releaseDate: newRelease.releaseDate
           ? format(newRelease.releaseDate, "yyyy-MM-dd")
           : null,
+        actualReleaseDate: newRelease.actualReleaseDate
+          ? format(newRelease.actualReleaseDate, "yyyy-MM-dd")
+          : null,
+        actualReleaseNotes: newRelease.actualReleaseNotes.trim() || null,
         isMvp: newRelease.isMvp,
         clientReleaseNote: newRelease.clientReleaseNote.trim() || null,
       };
@@ -478,6 +510,8 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
         description: "",
         startDate: null,
         releaseDate: null,
+        actualReleaseDate: null,
+        actualReleaseNotes: "",
         isMvp: false,
         clientReleaseNote: "",
       });
@@ -1345,6 +1379,70 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
               )}
             </div>
 
+            <div className="space-y-2">
+              <Label>Actual release date (optional)</Label>
+              <p className="text-xs text-slate-500">
+                When the release actually shipped. Shown on the release roadmap
+                next to the planned target date.
+              </p>
+              <DatePickerSingle
+                className="h-10 w-full max-w-md border-slate-200 bg-white hover:bg-slate-50/90"
+                date={newRelease.actualReleaseDate}
+                onDateChange={(d) => {
+                  setNewRelease((prev) => {
+                    if (
+                      actualShipDateChanged(prev.actualReleaseDate, d) &&
+                      d
+                    ) {
+                      toast.message(
+                        "Optional: add actual release notes below for this ship date.",
+                        { duration: 5000 },
+                      );
+                    }
+                    return { ...prev, actualReleaseDate: d };
+                  });
+                }}
+                placeholder="Not set"
+              />
+              {newRelease.actualReleaseDate && (
+                <>
+                  <div className="space-y-2 pt-1">
+                    <Label htmlFor="new-actual-release-notes">
+                      Actual release notes (optional)
+                    </Label>
+                    <Textarea
+                      id="new-actual-release-notes"
+                      rows={3}
+                      placeholder="e.g. What shipped, caveats, or rollout notes."
+                      value={newRelease.actualReleaseNotes}
+                      onChange={(e) =>
+                        setNewRelease((prev) => ({
+                          ...prev,
+                          actualReleaseNotes: e.target.value,
+                        }))
+                      }
+                      className="resize-y min-h-[72px]"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-xs text-slate-500"
+                    onClick={() =>
+                      setNewRelease((prev) => ({
+                        ...prev,
+                        actualReleaseDate: null,
+                        actualReleaseNotes: "",
+                      }))
+                    }
+                  >
+                    Clear actual date
+                  </Button>
+                </>
+              )}
+            </div>
+
             <div className="flex items-start gap-3 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-3">
               <Checkbox
                 id="release-is-mvp"
@@ -1527,6 +1625,80 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                     Clear schedule
                   </Button>
                 )}
+                <div className="space-y-2 pt-2 border-t border-slate-100 mt-2">
+                  <Label>Actual release date (optional)</Label>
+                  <p className="text-xs text-slate-500">
+                    When the release actually shipped. Used on the release
+                    roadmap.
+                  </p>
+                  <DatePickerSingle
+                    className="h-10 w-full max-w-md border-slate-200 bg-white hover:bg-slate-50/90"
+                    date={editDialog.actualReleaseDate}
+                    disabled={editDialog.isLocked}
+                    onDateChange={(d) => {
+                      setEditDialog((prev) => {
+                        if (!prev) return prev;
+                        if (
+                          !prev.isLocked &&
+                          actualShipDateChanged(prev.actualReleaseDate, d) &&
+                          d
+                        ) {
+                          toast.message(
+                            "Optional: add actual release notes below for this ship date.",
+                            { duration: 5000 },
+                          );
+                        }
+                        return { ...prev, actualReleaseDate: d };
+                      });
+                    }}
+                    placeholder="Not set"
+                  />
+                  {editDialog.actualReleaseDate && !editDialog.isLocked && (
+                    <>
+                      <div className="space-y-2 pt-2">
+                        <Label htmlFor="edit-actual-release-notes">
+                          Actual release notes (optional)
+                        </Label>
+                        <Textarea
+                          id="edit-actual-release-notes"
+                          rows={3}
+                          placeholder="e.g. What shipped, caveats, or rollout notes."
+                          value={editDialog.actualReleaseNotes}
+                          onChange={(e) =>
+                            setEditDialog((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    actualReleaseNotes: e.target.value,
+                                  }
+                                : prev,
+                            )
+                          }
+                          className="resize-y min-h-[72px]"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-xs text-slate-500"
+                        onClick={() =>
+                          setEditDialog((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  actualReleaseDate: null,
+                                  actualReleaseNotes: "",
+                                }
+                              : prev,
+                          )
+                        }
+                      >
+                        Clear actual date
+                      </Button>
+                    </>
+                  )}
+                </div>
               </div>
               <div className="flex items-start gap-3 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-3">
                 <Checkbox

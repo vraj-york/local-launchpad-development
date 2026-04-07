@@ -23,6 +23,7 @@ server {
     ssl_prefer_server_ciphers off;
     client_max_body_size 1024m;
 
+    # Release upload: npm build + git push can exceed nginx default ~60s (504).
     location /api/ {
         proxy_pass http://127.0.0.1:5000/api/;
         proxy_http_version 1.1;
@@ -33,6 +34,9 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_cache_bypass \$http_upgrade;
+        proxy_connect_timeout 75s;
+        proxy_send_timeout 7200s;
+        proxy_read_timeout 7200s;
     }
     location /api {
         proxy_pass http://127.0.0.1:5000/api;
@@ -41,6 +45,9 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_connect_timeout 75s;
+        proxy_send_timeout 7200s;
+        proxy_read_timeout 7200s;
     }
     location /iframe-preview/ {
         proxy_pass http://127.0.0.1:5000/iframe-preview/;
@@ -121,10 +128,25 @@ if [ -n "$DATABASE_URL" ]; then
   esac
 fi
 
-# Run migrations and seed when DATABASE_URL is set
+# Migrations: run before Node starts so every `docker compose up` / deploy applies pending SQL.
+# Fails fast on error (no db push fallback — that hid failures and could drift schema).
+# Emergency only: set SKIP_PRISMA_MIGRATE=1 in Compose env to skip (not for production).
 if [ -n "$DATABASE_URL" ]; then
-  echo "Running database migrations..."
-  npx prisma migrate deploy 2>/dev/null || npx prisma db push --accept-data-loss 2>/dev/null || true
+  case "$DATABASE_URL" in
+    postgresql://*|postgres://*) ;;
+    *)
+      echo "[ERROR] DATABASE_URL must start with postgresql:// or postgres:// (Prisma P1012)."
+      echo "        Fix the value in your EC2/host .env or Docker Compose environment — see EC2_DEPLOYMENT.md."
+      exit 1
+      ;;
+  esac
+  if [ "${SKIP_PRISMA_MIGRATE:-}" = "1" ] || [ "${SKIP_PRISMA_MIGRATE:-}" = "true" ]; then
+    echo "[WARN] SKIP_PRISMA_MIGRATE is set — skipping prisma migrate deploy."
+  else
+    echo "Running database migrations (prisma migrate deploy)..."
+    npx prisma migrate deploy
+    echo "Database migrations completed."
+  fi
   echo "Seeding default admin user (if none exists)..."
   npx prisma db seed 2>/dev/null || true
 fi
