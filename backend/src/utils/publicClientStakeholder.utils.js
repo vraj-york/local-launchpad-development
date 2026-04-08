@@ -7,33 +7,27 @@ import { parseStoredEmailListToSet } from "./emailList.utils.js";
 const GATE_MESSAGES = {
   aiChat: {
     emailRequired:
-      "Enter your email address to use AI chat.",
+      "Please enter your email to continue.",
     invalidEmail:
-      "That email address is not valid. Correct it to continue with AI chat.",
-    noStakeholdersOnProject:
-      "AI chat is not available: no stakeholder emails are set up for this project yet. Ask the product manager to add stakeholder emails in project settings.",
-    emailNotOnStakeholderList:
-      "Your email is not listed under this project's stakeholder emails. Ask the product manager to add your address to stakeholder emails in project settings, then try AI chat again.",
+      "Please enter a valid email address.",
+    unauthorized:
+      "You are not authorized. Please contact your product manager to request access.",
   },
   issueReporter: {
     emailRequired:
-      "Enter your email address on the issue form to submit.",
+      "Please enter your email to submit.",
     invalidEmail:
-      "That email address is not valid. Fix it in the issue form and try again.",
-    noStakeholdersOnProject:
-      "Issue reporting is not available: no stakeholder emails are set up for this project yet. Ask the product manager to add stakeholder emails in project settings.",
-    emailNotOnStakeholderList:
-      "Your email is not listed under this project's stakeholder emails. Ask the product manager to add your address to stakeholder emails in project settings, then submit the issue again.",
+      "Please enter a valid email address.",
+    unauthorized:
+      "You are not authorized. Please contact your product manager to request access.",
   },
   releaseLock: {
     emailRequired:
-      "Enter your email address to lock this release.",
+      "Please enter your email to continue.",
     invalidEmail:
-      "That email address is not valid. Enter a valid email to lock this release.",
-    noStakeholdersOnProject:
-      "Release lock is not available: no stakeholder emails are set up for this project yet. Ask the product manager to add stakeholder emails in project settings.",
-    emailNotOnStakeholderList:
-      "Your email is not listed under this project's stakeholder emails. Ask the product manager to add your address to stakeholder emails in project settings before locking a release.",
+      "Please enter a valid email address.",
+    unauthorized:
+      "You are not authorized. Please contact your product manager to request access.",
   },
 };
 
