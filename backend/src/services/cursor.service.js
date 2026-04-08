@@ -162,20 +162,6 @@ export function isCursorAgentSuccessTerminal(status) {
   );
 }
 
-/** Terminal failure / cancelled — no version will be produced without a new run. */
-export function isCursorAgentFailureTerminal(status) {
-  if (status == null || status === "") return false;
-  const u = String(status).trim().toUpperCase().replace(/\s+/g, "_");
-  return (
-    u === "FAILED" ||
-    u === "FAILURE" ||
-    u === "CANCELLED" ||
-    u === "CANCELED" ||
-    u === "STOPPED" ||
-    u === "ERROR"
-  );
-}
-
 /**
  * Resolve https URL for Cursor agents (GitHub or Bitbucket). Uses gitRepoPath when parseable;
  * otherwise derives owner/repo from bitbucketUsername or githubUsername / GITHUB_USERNAME + slug from name.

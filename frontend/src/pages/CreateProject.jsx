@@ -275,15 +275,14 @@ const CreateProject = () => {
       }
       const response = await createProject(projectData);
       if (response?.scratchAgentStarted) {
-        toast.success(
-          `Project created. Base release ${response.scratchReleaseName ?? "1.0.0"} — Cursor agent started.`,
-        );
+        toast.success("Project created");
+        navigate(`/projects/details/${response.id}`, {
+          state: { scratchAgentRunning: true },
+        });
       } else {
         toast.success("Project created successfully");
+        navigate("/dashboard");
       }
-
-      // Navigate to the new project or dashboard
-      navigate("/dashboard");
     } catch (err) {
       console.error(err);
       toast.error(err.error || "Failed to create project. Please try again.");

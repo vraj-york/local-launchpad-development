@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 // import {
@@ -14,6 +14,7 @@ import {
   Maximize2,
   PencilLine,
   Route,
+  X,
 } from "lucide-react";
 import EditProjectDialog from "@/components/EditProjectDialog";
 import {
@@ -29,20 +30,6 @@ import { PageHeader } from "@/components/PageHeader";
 import config from "@/config";
 // import { toast } from 'sonner';
 
-function getScratchSetupDescription(setup) {
-  if (!setup) return "";
-  if (setup.setupFailed) {
-    return `Status: ${setup.status || "unknown"}. You can retry from the release or run the agent again.`;
-  }
-  if (setup.awaitingProjectVersion) {
-    return "The agent finished successfully. Merging to launchpad and creating the project version may take a minute.";
-  }
-  const label = setup.status
-    ? String(setup.status).replace(/_/g, " ")
-    : "Starting";
-  return `Current status: ${label}. This page updates automatically.`;
-}
-
 const ProjectDetails = () => {
   const { projectId } = useParams();
   const location = useLocation();
@@ -55,6 +42,15 @@ const ProjectDetails = () => {
   // const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("releases");
   const [editProjectOpen, setEditProjectOpen] = useState(false);
+  const [scratchAgentBannerOpen, setScratchAgentBannerOpen] = useState(
+    () => Boolean(location.state?.scratchAgentRunning),
+  );
+
+  useEffect(() => {
+    if (location.state?.scratchAgentRunning) {
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.pathname, location.state?.scratchAgentRunning, navigate]);
 
   // Helper to refresh project data
   // const refreshProject = async () => {
@@ -66,21 +62,15 @@ const ProjectDetails = () => {
   //     }
   // };
 
-  const refreshProject = useCallback(async () => {
-    try {
-      const data = await fetchProjectById(projectId);
-      setProject(data);
-    } catch (error) {
-      console.error("Failed to refresh project:", error);
-    }
-  }, [projectId]);
-
   // Fetch project details if not passed in state or to get fresh data
   useEffect(() => {
     const loadProject = async () => {
       try {
         if (!project) setLoading(true); // Only show loading if we don't have project data yet
-        await refreshProject();
+        const data = await fetchProjectById(projectId);
+        setProject(data);
+      } catch (error) {
+        console.error("Failed to load project:", error);
       } finally {
         setLoading(false);
       }
@@ -90,16 +80,14 @@ const ProjectDetails = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- seed from location.state; refresh by projectId only
   }, [projectId]);
 
-  /** Poll while a Cursor conversion is still waiting for a project version (agent or merge in progress). */
-  useEffect(() => {
-    const setup = project?.scratchSetup;
-    if (!setup || setup.setupFailed) return undefined;
-
-    const t = setInterval(() => {
-      refreshProject();
-    }, 4000);
-    return () => clearInterval(t);
-  }, [project?.scratchSetup, refreshProject]);
+  const refreshProject = async () => {
+    try {
+      const data = await fetchProjectById(projectId);
+      setProject(data);
+    } catch (error) {
+      console.error("Failed to refresh project:", error);
+    }
+  };
 
   // useEffect(() => {
   //     const loadRoadmap = async () => {
@@ -257,36 +245,33 @@ const ProjectDetails = () => {
         </PageHeader>
       </div>
 
-      {project.scratchSetup ? (
+      {scratchAgentBannerOpen && (
         <div
-          className={`mb-6 rounded-lg border px-4 py-3 text-sm flex gap-3 items-start ${
-            project.scratchSetup.setupFailed
-              ? "border-red-200 bg-red-50 text-red-900"
-              : "border-amber-200 bg-amber-50 text-amber-950"
-          }`}
+          role="status"
+          className="mb-6 flex gap-3 rounded-lg border border-emerald-200 bg-emerald-50/90 px-4 py-3 text-emerald-950 shadow-sm"
         >
-          {!project.scratchSetup.setupFailed && (
-            <Loader2 className="h-4 w-4 shrink-0 mt-0.5 animate-spin text-amber-700" />
-          )}
-          <div className="space-y-1 min-w-0">
-            <p className="font-medium leading-snug">
-              {project.scratchSetup.setupFailed
-                ? "Initial Cursor agent failed"
-                : project.scratchSetup.awaitingProjectVersion
-                  ? "Deploying first version"
-                  : "Cursor agent running"}
+          <Loader2
+            className="h-5 w-5 shrink-0 animate-spin text-emerald-600"
+            aria-hidden
+          />
+          <div className="min-w-0 flex-1 space-y-1">
+            <p className="text-sm font-semibold leading-tight">
+              Cursor agent is running
             </p>
-            <p className="opacity-90 leading-snug">
-              {getScratchSetupDescription(project.scratchSetup)}
+            <p className="text-sm text-emerald-900/90 leading-snug">
+              Changes will appear in Version soon after the agent finishes.
             </p>
-            {project.scratchSetup.targetBranchName ? (
-              <p className="text-xs opacity-80 font-mono truncate">
-                Branch: {project.scratchSetup.targetBranchName}
-              </p>
-            ) : null}
           </div>
+          <button
+            type="button"
+            onClick={() => setScratchAgentBannerOpen(false)}
+            className="shrink-0 rounded-md p-1 text-emerald-700/80 transition hover:bg-emerald-100 hover:text-emerald-900"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
-      ) : null}
+      )}
 
       <EditProjectDialog
         open={editProjectOpen}
