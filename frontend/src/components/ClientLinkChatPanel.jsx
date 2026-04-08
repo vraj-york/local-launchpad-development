@@ -9,6 +9,7 @@ import {
   clientLinkFetchAgentStatus,
   clientLinkFetchChatMessages,
   clientLinkFetchExecutionSummary,
+  clientLinkRefreshLiveBuild,
   clientLinkRevertMerge,
   clientLinkSendFollowup,
 } from "@/api";
@@ -33,6 +34,7 @@ import {
   ArrowUp,
   Check,
   Crosshair,
+  RefreshCw,
   SquareMousePointer,
   Undo2,
   User,
@@ -426,7 +428,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   effectiveChatReleaseId,
   isLocked,
   isOpen,
-  onProjectReload,
+  onProjectReloadQuiet,
   onResetPreview,
   onCloseChat,
   pickedElementContext = null,
@@ -446,6 +448,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const [chatPolling, setChatPolling] = useState(false);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
   const [revertLoadingKey, setRevertLoadingKey] = useState(null);
+  const [refreshBuildBusy, setRefreshBuildBusy] = useState(false);
   const [revertConfirmOpen, setRevertConfirmOpen] = useState(false);
   const [revertPendingMsg, setRevertPendingMsg] = useState(null);
   const [verifyBump, setVerifyBump] = useState(0);
@@ -472,6 +475,46 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const canViewChat =
     Boolean(projectSlug?.trim()) && effectiveChatReleaseId != null;
   const canMutateChat = canViewChat && !isLocked && identityLooksValid;
+
+  /** Checkout release tag, build, deploy — then refresh project JSON quietly (no full-page loader) and bust iframe cache. */
+  const runTagBuildAndRefreshUi = useCallback(async () => {
+    if (!projectSlug?.trim() || effectiveChatReleaseId == null) {
+      throw new Error("Missing release or project.");
+    }
+    const email = identityEmail?.trim();
+    if (!email || !LOCK_EMAIL_RE.test(email)) {
+      throw new Error("Client email is not verified.");
+    }
+    await clientLinkRefreshLiveBuild(
+      projectSlug,
+      Number(effectiveChatReleaseId),
+      email,
+    );
+    await onProjectReloadQuiet?.();
+    onResetPreview?.();
+  }, [
+    effectiveChatReleaseId,
+    identityEmail,
+    onProjectReloadQuiet,
+    onResetPreview,
+    projectSlug,
+  ]);
+
+  const handleRefreshLiveBuild = useCallback(async () => {
+    if (!canMutateChat || effectiveChatReleaseId == null || !projectSlug?.trim()) {
+      return;
+    }
+    setRefreshBuildBusy(true);
+    try {
+      await runTagBuildAndRefreshUi();
+      toast.success("Preview refreshed from the latest tag.");
+    } catch (e) {
+      const raw = extractChatHttpErrorMessage(e);
+      toast.error(raw || "Could not refresh the preview.");
+    } finally {
+      setRefreshBuildBusy(false);
+    }
+  }, [canMutateChat, effectiveChatReleaseId, projectSlug, runTagBuildAndRefreshUi]);
 
   const visualPickSupported = previewIframeAccessible === true;
   const visualPickDisabledReason =
@@ -684,11 +727,16 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                   role: "system",
                   tone: "success",
                   key: `merged-live:${effectiveChatReleaseId}:${Date.now()}`,
-                  text: "Changes merged to launchpad. Refreshing preview…",
+                  text: "Changes merged to launchpad. Rebuilding preview from tag…",
                 },
               ]);
-              await onProjectReload?.();
-              onResetPreview?.();
+              try {
+                await runTagBuildAndRefreshUi();
+              } catch (e) {
+                toast.error(
+                  extractChatHttpErrorMessage(e) || "Preview rebuild failed.",
+                );
+              }
               await refreshChatMessages(effectiveChatReleaseId);
               return;
             }
@@ -699,11 +747,16 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                 role: "system",
                 tone: "success",
                 key: `applied:${effectiveChatReleaseId}:${Date.now()}`,
-                text: "Changes applied. Refreshing preview...",
+                text: "Changes applied. Rebuilding preview from tag...",
               },
             ]);
-            await onProjectReload?.();
-            onResetPreview?.();
+            try {
+              await runTagBuildAndRefreshUi();
+            } catch (e) {
+              toast.error(
+                extractChatHttpErrorMessage(e) || "Preview rebuild failed.",
+              );
+            }
 
             try {
               const sum = await clientLinkFetchExecutionSummary(
@@ -718,11 +771,16 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                     role: "system",
                     tone: "success",
                     key: `merged-live2:${effectiveChatReleaseId}:${Date.now()}`,
-                    text: "Changes merged to launchpad. Refreshing preview…",
+                    text: "Changes merged to launchpad. Rebuilding preview from tag…",
                   },
                 ]);
-                await onProjectReload?.();
-                onResetPreview?.();
+                try {
+                  await runTagBuildAndRefreshUi();
+                } catch (e) {
+                  toast.error(
+                    extractChatHttpErrorMessage(e) || "Preview rebuild failed.",
+                  );
+                }
                 await refreshChatMessages(effectiveChatReleaseId);
                 return;
               }
@@ -755,10 +813,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   }, [
     addSystemMessageOnce,
     effectiveChatReleaseId,
-    onProjectReload,
-    onResetPreview,
     projectSlug,
     refreshChatMessages,
+    runTagBuildAndRefreshUi,
     waitForClientLinkAutoMerge,
   ]);
 
@@ -895,8 +952,13 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           identityEmail,
         );
         toast.success("Reverted to this message.");
-        await onProjectReload?.();
-        onResetPreview?.();
+        try {
+          await runTagBuildAndRefreshUi();
+        } catch (e) {
+          toast.error(
+            extractChatHttpErrorMessage(e) || "Preview rebuild after revert failed.",
+          );
+        }
         await refreshChatMessages(effectiveChatReleaseId);
       } catch (e) {
         const msgText =
@@ -912,10 +974,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     [
       effectiveChatReleaseId,
       identityEmail,
-      onProjectReload,
-      onResetPreview,
       projectSlug,
       refreshChatMessages,
+      runTagBuildAndRefreshUi,
     ],
   );
 
@@ -975,20 +1036,48 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden border-l border-border bg-card text-card-foreground">
         <div className="shrink-0 border-b border-border bg-muted/50 px-4 py-2">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
-              <img src={logo} alt="launchpad logo" className="w-7 h-7" />
-              LaunchPad AI Chat
+            <h2 className="flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
+              <img src={logo} alt="launchpad logo" className="w-7 h-7 shrink-0" />
+              <span className="truncate">LaunchPad AI Chat</span>
             </h2>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={onCloseChat}
-              className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
-              aria-label="Close chat panel"
-            >
-              <X className="size-4" />
-            </Button>
+            <div className="flex shrink-0 items-center gap-0.5">
+              {showMainChatUi && canViewChat && !isLocked ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => void handleRefreshLiveBuild()}
+                      disabled={
+                        refreshBuildBusy ||
+                        !identityLooksValid ||
+                        effectiveChatReleaseId == null
+                      }
+                      className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
+                      aria-label="Refresh preview from git tag"
+                    >
+                      <RefreshCw
+                        className={`size-4 ${refreshBuildBusy ? "animate-spin" : ""}`}
+                      />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-[14rem]">
+                    Re-fetch the release tag, rebuild, and reload the live preview
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={onCloseChat}
+                className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
+                aria-label="Close chat panel"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
           </div>
         </div>
 

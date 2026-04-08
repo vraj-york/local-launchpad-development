@@ -86,6 +86,9 @@ export const Routes = () => {
 
         <Route path="/projects/:projectSlug" element={<ClientLink />} />
 
+        {/* If index.html is served for iframe proxy URLs (e.g. proxy miss), avoid catch-all redirect */}
+        <Route path="/iframe-preview/*" element={<></>} />
+
         <Route
           path="*"
           element={<Navigate to={user ? "/dashboard" : "/login"} replace />}

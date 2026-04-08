@@ -180,6 +180,36 @@ export const createProjectValidation = [
     optionalEmailList("assignedUserEmails"),
     optionalEmailList("stakeholderEmails"),
 
+    body("isScratch").optional(),
+    body("prompt").optional(),
+    body().custom((value, { req }) => {
+        const b = req.body || {};
+        if (b.isScratch === undefined || b.isScratch === null || b.isScratch === "") {
+            return true;
+        }
+        const scratch =
+            b.isScratch === true ||
+            b.isScratch === "true" ||
+            String(b.isScratch).toLowerCase() === "true";
+        const notScratch =
+            b.isScratch === false ||
+            b.isScratch === "false" ||
+            String(b.isScratch).toLowerCase() === "false";
+        if (!scratch && !notScratch) {
+            throw new Error("isScratch must be a boolean");
+        }
+        if (scratch) {
+            const p = typeof b.prompt === "string" ? b.prompt.trim() : "";
+            if (!p) {
+                throw new Error("prompt is required when isScratch is true");
+            }
+            if (p.length > 100000) {
+                throw new Error("prompt must be at most 100000 characters");
+            }
+        }
+        return true;
+    }),
+
     body().custom((value, { req }) => {
         const b = req.body || {};
         const ghOAuth =

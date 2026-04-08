@@ -22,7 +22,13 @@ import {
   addGithubCollaborator,
   findProjectRoot,
   setReleaseStatusService as applyReleaseStatus,
+  createReleaseService,
 } from "./release.service.js";
+import {
+  createAgentForProjectRelease,
+  isCursorAgentFailureTerminal,
+  isCursorAgentSuccessTerminal,
+} from "./cursor.service.js";
 import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
 import { parseScmRepoPath, repositoryPlatformFromUrl } from "../utils/scmPath.js";
 import {
@@ -610,7 +616,16 @@ export const createProjectService = async ({ userId, body }) => {
     githubToken,
     gitRepoPath,
     developmentRepoUrl,
+    isScratch: isScratchRaw,
+    prompt: scratchPromptRaw,
   } = body;
+
+  const isScratch =
+    isScratchRaw === true ||
+    isScratchRaw === "true" ||
+    String(isScratchRaw || "").toLowerCase() === "true";
+  const scratchPromptTrimmed =
+    typeof scratchPromptRaw === "string" ? scratchPromptRaw.trim() : "";
 
   const jiraKeyTrim = (jiraProjectKey && String(jiraProjectKey).trim()) || "";
 
@@ -1033,6 +1048,8 @@ export const createProjectService = async ({ userId, body }) => {
             persistedGitRepoPath || path.join(relativeProjectPath, ".git"),
           developmentRepoUrl: persistedDeveloperRepoUrl,
           nginxConfigPath: path.join('nginx-configs', configFileName),
+          scratchPrompt:
+            isScratch && scratchPromptTrimmed ? scratchPromptTrimmed : null,
         },
       });
     });
@@ -1040,7 +1057,80 @@ export const createProjectService = async ({ userId, body }) => {
     // 9. Start static server on this project's port (so http://localhost:8004/ works)
     startProjectServer(port, absoluteProjectPath);
 
-    return maskProjectSecrets(project);
+    if (isScratch) {
+      if (!process.env.CURSOR_API_KEY?.trim()) {
+        await prisma.project
+          .update({
+            where: { id: project.id },
+            data: { scratchPrompt: null },
+          })
+          .catch(() => {});
+        throw new ApiError(
+          503,
+          "Scratch project requires Cursor API to be configured (CURSOR_API_KEY).",
+        );
+      }
+      let scratchRelease = null;
+      try {
+        scratchRelease = await createReleaseService(
+          {
+            projectId: project.id,
+            name: "1.0.0",
+            description: "Base Release for Project From Scratch",
+          },
+          { id: userId },
+        );
+        const agentResult = await createAgentForProjectRelease({
+          projectId: project.id,
+          releaseId: scratchRelease.id,
+          attemptedById: userId,
+          prompt: { text: scratchPromptTrimmed },
+          model: "composer-1.5",
+          // false: startAgentPolling → performMergeToLaunchpad (omitTargetFromBody false → default autoBranch target)
+          deferLaunchpadMerge: false,
+          omitTargetFromBody: false,
+        });
+        if (!agentResult.ok) {
+          const msg =
+            typeof agentResult.data?.error === "string"
+              ? agentResult.data.error
+              : "Failed to start scratch Cursor agent";
+          throw new ApiError(
+            agentResult.status >= 400 && agentResult.status < 600
+              ? agentResult.status
+              : 502,
+            msg,
+          );
+        }
+      } catch (e) {
+        if (scratchRelease?.id) {
+          await prisma.release
+            .delete({ where: { id: scratchRelease.id } })
+            .catch(() => {});
+        }
+        await prisma.project
+          .update({
+            where: { id: project.id },
+            data: { scratchPrompt: null },
+          })
+          .catch(() => {});
+        if (e instanceof ApiError) throw e;
+        throw new ApiError(
+          502,
+          `Scratch agent setup failed: ${e?.message || String(e)}`,
+        );
+      }
+    }
+
+    const masked = maskProjectSecrets(project);
+    if (isScratch) {
+      return {
+        ...masked,
+        scratchAgentStarted: true,
+        scratchReleaseName: "1.0.0",
+      };
+    }
+    return masked;
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(500, `Project creation failed: ${error.message}`);
@@ -1195,6 +1285,41 @@ export async function listProjectsService(user) {
     })
     .map(maskProjectSecrets);
 }
+
+/**
+ * Pending agent → merge pipeline: `FigmaConversion` rows still without a linked `ProjectVersion`.
+ * Used by project details UI (scratch / first-version flow).
+ */
+async function getScratchSetupForProject(projectId) {
+  const conv = await prisma.figmaConversion.findFirst({
+    where: { projectId: Number(projectId), projectVersionId: null },
+    orderBy: { id: "desc" },
+    select: {
+      id: true,
+      releaseId: true,
+      status: true,
+      targetBranchName: true,
+      agentId: true,
+      projectVersionId: true,
+    },
+  });
+  if (!conv) return null;
+  const st = conv.status;
+  const successTerminal = isCursorAgentSuccessTerminal(st);
+  const failureTerminal = isCursorAgentFailureTerminal(st);
+  return {
+    conversionId: conv.id,
+    releaseId: conv.releaseId,
+    status: st,
+    targetBranchName: conv.targetBranchName,
+    agentId: conv.agentId,
+    projectVersionId: conv.projectVersionId,
+    /** Agent finished OK; platform merge/deploy may still be running. */
+    awaitingProjectVersion: Boolean(successTerminal && !failureTerminal),
+    setupFailed: failureTerminal,
+  };
+}
+
 /**
  * GET project by ID or public slug (single entry point).
  * @param {number|null} projectId — numeric id (ignored when `options.slug` is set for public).
@@ -1308,7 +1433,10 @@ export const getProjectByIdService = async (
       releases: releasesQuery,
     },
   });
-  return maskProjectSecrets(project);
+  const masked = maskProjectSecrets(project);
+  if (!masked) return null;
+  const scratchSetup = await getScratchSetupForProject(Number(projectId));
+  return { ...masked, scratchSetup };
 };
 
 /**

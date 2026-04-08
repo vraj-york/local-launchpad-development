@@ -24,8 +24,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useNavigate } from "react-router-dom";
-import { Loader2, Info } from "lucide-react";
+import { Loader2, Info, Sparkles } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -53,6 +54,9 @@ const CreateProject = () => {
 
   const [assignedUserEmailTags, setAssignedUserEmailTags] = useState([]);
   const [stakeholderEmailTags, setStakeholderEmailTags] = useState([]);
+
+  const [startFromScratch, setStartFromScratch] = useState(false);
+  const [scratchPrompt, setScratchPrompt] = useState("");
 
   // UI State
   const [error, setError] = useState("");
@@ -169,6 +173,14 @@ const CreateProject = () => {
     );
     if (stakeholderErr) errors.stakeholderEmails = stakeholderErr;
 
+    if (startFromScratch) {
+      const p = typeof scratchPrompt === "string" ? scratchPrompt.trim() : "";
+      if (!p) {
+        errors.scratchPrompt =
+          "Initial agent prompt is required when starting from scratch";
+      }
+    }
+
     // Roadmap is optional; validate only when user has added roadmaps
     // if (roadmaps.length > 0) {
     //   roadmaps.forEach((roadmap) => {
@@ -257,8 +269,18 @@ const CreateProject = () => {
       } else {
         projectData.assignedManagerId = user.id;
       }
+      if (startFromScratch) {
+        projectData.isScratch = true;
+        projectData.prompt = scratchPrompt.trim();
+      }
       const response = await createProject(projectData);
-      toast.success("Project created successfully");
+      if (response?.scratchAgentStarted) {
+        toast.success(
+          `Project created. Base release ${response.scratchReleaseName ?? "1.0.0"} — Cursor agent started.`,
+        );
+      } else {
+        toast.success("Project created successfully");
+      }
 
       // Navigate to the new project or dashboard
       navigate("/dashboard");
@@ -427,6 +449,62 @@ const CreateProject = () => {
                 />
               </div>
 
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-primary/5 p-4">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    id="start-from-scratch"
+                    checked={startFromScratch}
+                    onCheckedChange={(v) => setStartFromScratch(v === true)}
+                    className="mt-0.5"
+                  />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Sparkles
+                        className="size-4 shrink-0 text-primary"
+                        aria-hidden
+                      />
+                      <Label
+                        htmlFor="start-from-scratch"
+                        className="cursor-pointer font-medium text-slate-800"
+                      >
+                        Starting from Scratch
+                      </Label>
+                    </div>
+                    <p className="max-w-prose text-xs text-muted-foreground">
+                      Create a base release and run the first Cursor agent on
+                      your connected repo with the prompt below. Requires
+                      Cursor API configuration on the server.
+                    </p>
+                  </div>
+                </div>
+                {startFromScratch && (
+                  <div className="space-y-2 border-t border-primary/15 pt-3">
+                    <Label htmlFor="scratch-prompt">
+                      Initial agent prompt{" "}
+                      <span className="text-destructive">*</span>
+                    </Label>
+                    <Textarea
+                      id="scratch-prompt"
+                      placeholder="Describe what the agent should build or change in the repository..."
+                      value={scratchPrompt}
+                      onChange={(e) => setScratchPrompt(e.target.value)}
+                      rows={5}
+                      className={`resize-y min-h-[120px] ${
+                        validationErrors.scratchPrompt
+                          ? "border-destructive"
+                          : ""
+                      }`}
+                      aria-invalid={Boolean(validationErrors.scratchPrompt)}
+                    />
+                    {validationErrors.scratchPrompt && (
+                      <p className="text-sm text-destructive">
+                        {validationErrors.scratchPrompt}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="assigned-user-emails">
@@ -514,7 +592,9 @@ const CreateProject = () => {
           {loading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Creating...
+              {startFromScratch
+                ? "Creating project & starting agent..."
+                : "Creating..."}
             </>
           ) : (
             "Create Project"

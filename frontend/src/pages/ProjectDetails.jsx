@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 // import {
@@ -10,6 +10,7 @@ import { Button } from "../components/ui/button";
 import {
   ArrowLeft,
   ExternalLink,
+  Loader2,
   Maximize2,
   PencilLine,
   Route,
@@ -27,6 +28,20 @@ import ReleaseManagement from "@/components/ReleaseManagement";
 import { PageHeader } from "@/components/PageHeader";
 import config from "@/config";
 // import { toast } from 'sonner';
+
+function getScratchSetupDescription(setup) {
+  if (!setup) return "";
+  if (setup.setupFailed) {
+    return `Status: ${setup.status || "unknown"}. You can retry from the release or run the agent again.`;
+  }
+  if (setup.awaitingProjectVersion) {
+    return "The agent finished successfully. Merging to launchpad and creating the project version may take a minute.";
+  }
+  const label = setup.status
+    ? String(setup.status).replace(/_/g, " ")
+    : "Starting";
+  return `Current status: ${label}. This page updates automatically.`;
+}
 
 const ProjectDetails = () => {
   const { projectId } = useParams();
@@ -51,15 +66,21 @@ const ProjectDetails = () => {
   //     }
   // };
 
+  const refreshProject = useCallback(async () => {
+    try {
+      const data = await fetchProjectById(projectId);
+      setProject(data);
+    } catch (error) {
+      console.error("Failed to refresh project:", error);
+    }
+  }, [projectId]);
+
   // Fetch project details if not passed in state or to get fresh data
   useEffect(() => {
     const loadProject = async () => {
       try {
         if (!project) setLoading(true); // Only show loading if we don't have project data yet
-        const data = await fetchProjectById(projectId);
-        setProject(data);
-      } catch (error) {
-        console.error("Failed to load project:", error);
+        await refreshProject();
       } finally {
         setLoading(false);
       }
@@ -69,14 +90,16 @@ const ProjectDetails = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- seed from location.state; refresh by projectId only
   }, [projectId]);
 
-  const refreshProject = async () => {
-    try {
-      const data = await fetchProjectById(projectId);
-      setProject(data);
-    } catch (error) {
-      console.error("Failed to refresh project:", error);
-    }
-  };
+  /** Poll while a Cursor conversion is still waiting for a project version (agent or merge in progress). */
+  useEffect(() => {
+    const setup = project?.scratchSetup;
+    if (!setup || setup.setupFailed) return undefined;
+
+    const t = setInterval(() => {
+      refreshProject();
+    }, 4000);
+    return () => clearInterval(t);
+  }, [project?.scratchSetup, refreshProject]);
 
   // useEffect(() => {
   //     const loadRoadmap = async () => {
@@ -233,6 +256,37 @@ const ProjectDetails = () => {
           </div>
         </PageHeader>
       </div>
+
+      {project.scratchSetup ? (
+        <div
+          className={`mb-6 rounded-lg border px-4 py-3 text-sm flex gap-3 items-start ${
+            project.scratchSetup.setupFailed
+              ? "border-red-200 bg-red-50 text-red-900"
+              : "border-amber-200 bg-amber-50 text-amber-950"
+          }`}
+        >
+          {!project.scratchSetup.setupFailed && (
+            <Loader2 className="h-4 w-4 shrink-0 mt-0.5 animate-spin text-amber-700" />
+          )}
+          <div className="space-y-1 min-w-0">
+            <p className="font-medium leading-snug">
+              {project.scratchSetup.setupFailed
+                ? "Initial Cursor agent failed"
+                : project.scratchSetup.awaitingProjectVersion
+                  ? "Deploying first version"
+                  : "Cursor agent running"}
+            </p>
+            <p className="opacity-90 leading-snug">
+              {getScratchSetupDescription(project.scratchSetup)}
+            </p>
+            {project.scratchSetup.targetBranchName ? (
+              <p className="text-xs opacity-80 font-mono truncate">
+                Branch: {project.scratchSetup.targetBranchName}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <EditProjectDialog
         open={editProjectOpen}

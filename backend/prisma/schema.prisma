@@ -94,6 +94,8 @@ model Project {
   assignedUserEmails  String?
   /// Optional comma-separated stakeholder emails; public release lock only allowed for these addresses.
   stakeholderEmails   String?
+  /// Initial Cursor agent prompt when creating a project from scratch (`isScratch` flow).
+  scratchPrompt         String?  @db.Text
 
   githubConnectionId   Int?
   bitbucketConnectionId Int?
