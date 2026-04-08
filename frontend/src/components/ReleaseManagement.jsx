@@ -418,7 +418,6 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       clientReleaseNote: release.clientReleaseNote ?? "",
       clientReviewAiSummary: release.clientReviewAiSummary ?? "",
       clientReviewAiSummaryAt: release.clientReviewAiSummaryAt ?? null,
-      clientReviewAiSummaryError: release.clientReviewAiSummaryError ?? null,
       showClientReviewSummary: release.showClientReviewSummary !== false,
       clientReviewAiGenerationContext:
         release.clientReviewAiGenerationContext ?? "",
@@ -448,8 +447,6 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                 ...prev,
                 clientReviewAiSummary: rel.clientReviewAiSummary ?? "",
                 clientReviewAiSummaryAt: rel.clientReviewAiSummaryAt ?? null,
-                clientReviewAiSummaryError:
-                  rel.clientReviewAiSummaryError ?? null,
                 showClientReviewSummary:
                   rel.showClientReviewSummary !== false,
                 clientReviewAiGenerationContext:
@@ -1918,11 +1915,6 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                       </span>
                     ) : null}
                   </div>
-                  {editDialog.clientReviewAiSummaryError ? (
-                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
-                      AI summary error: {editDialog.clientReviewAiSummaryError}
-                    </p>
-                  ) : null}
                 </div>
               </div>
               <DialogFooter className="gap-2">

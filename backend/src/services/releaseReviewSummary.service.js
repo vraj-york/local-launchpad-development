@@ -204,19 +204,11 @@ export async function regenerateClientReviewSummaryNow(releaseId, options = {}) 
       data: {
         clientReviewAiSummary: summary,
         clientReviewAiSummaryAt: new Date(),
-        clientReviewAiSummaryError: null,
       },
     });
     return { ok: true };
   } catch (err) {
     const msg = (err && err.message) || String(err);
-    const short = msg.length > 480 ? `${msg.slice(0, 477)}...` : msg;
-    await prisma.release.update({
-      where: { id },
-      data: {
-        clientReviewAiSummaryError: short,
-      },
-    });
     console.error("[releaseReviewSummary]", id, msg);
     return { ok: false, error: msg };
   }
