@@ -9,6 +9,9 @@ export const submitFeedback = async (apiUrl, projectId, data) => {
     formData.append("metadata", JSON.stringify(data.metadata));
     formData.append("screenshot", data.screenshot);
     if (data.issueType) formData.append("issueType", data.issueType);
+    if (data.clientEmail) {
+      formData.append("clientEmail", String(data.clientEmail).trim());
+    }
 
     const response = await fetch(`${apiUrl}/api/feedback`, {
       method: "POST",

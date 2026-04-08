@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   createProject,
   fetchManagers,
@@ -24,8 +24,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useNavigate } from "react-router-dom";
-import { Loader2, Info } from "lucide-react";
+import { Loader2, Info, Sparkles } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -35,6 +36,10 @@ import { PageHeader } from "@/components/PageHeader";
 import ProjectGitJiraOAuthCard from "@/components/project/ProjectGitJiraOAuthCard";
 // import RoadMapManagement from "@/components/RoadMapManagement";
 import { toast } from "sonner";
+
+const PM_CREATE_BODY_OAUTH_DRAFT = "pm_create_body_oauth_draft";
+const OAUTH_DRAFT_MAX_AGE_MS = 15 * 60 * 1000;
+const CREATE_PROJECT_OAUTH_RETURN = "/projects/new";
 
 const CreateProject = () => {
   const { user } = useAuth();
@@ -53,6 +58,9 @@ const CreateProject = () => {
 
   const [assignedUserEmailTags, setAssignedUserEmailTags] = useState([]);
   const [stakeholderEmailTags, setStakeholderEmailTags] = useState([]);
+
+  const [startFromScratch, setStartFromScratch] = useState(false);
+  const [scratchPrompt, setScratchPrompt] = useState("");
 
   // UI State
   const [error, setError] = useState("");
@@ -97,6 +105,77 @@ const CreateProject = () => {
   useEffect(() => {
     loadIntegrations();
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(PM_CREATE_BODY_OAUTH_DRAFT);
+      if (!raw) return;
+      const d = JSON.parse(raw);
+      if (
+        typeof d?.savedAt !== "number" ||
+        Date.now() - d.savedAt > OAUTH_DRAFT_MAX_AGE_MS
+      ) {
+        sessionStorage.removeItem(PM_CREATE_BODY_OAUTH_DRAFT);
+        return;
+      }
+      sessionStorage.removeItem(PM_CREATE_BODY_OAUTH_DRAFT);
+      if (d.selectedHubProjectId != null && d.selectedHubProjectId !== "") {
+        setSelectedHubProjectId(d.selectedHubProjectId);
+      }
+      if (typeof d.projectDescription === "string") {
+        setProjectDescription(d.projectDescription);
+      }
+      if (d.selectedManager != null && d.selectedManager !== "") {
+        setSelectedManager(d.selectedManager);
+      }
+      if (Array.isArray(d.assignedUserEmailTags)) {
+        setAssignedUserEmailTags(d.assignedUserEmailTags);
+      }
+      if (Array.isArray(d.stakeholderEmailTags)) {
+        setStakeholderEmailTags(d.stakeholderEmailTags);
+      }
+      if (typeof d.startFromScratch === "boolean") {
+        setStartFromScratch(d.startFromScratch);
+      }
+      if (typeof d.scratchPrompt === "string") {
+        setScratchPrompt(d.scratchPrompt);
+      }
+    } catch {
+      try {
+        sessionStorage.removeItem(PM_CREATE_BODY_OAUTH_DRAFT);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
+  const persistCreateBodyDraftForOAuth = useCallback(() => {
+    try {
+      sessionStorage.setItem(
+        PM_CREATE_BODY_OAUTH_DRAFT,
+        JSON.stringify({
+          savedAt: Date.now(),
+          selectedHubProjectId,
+          projectDescription,
+          selectedManager,
+          assignedUserEmailTags,
+          stakeholderEmailTags,
+          startFromScratch,
+          scratchPrompt,
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [
+    selectedHubProjectId,
+    projectDescription,
+    selectedManager,
+    assignedUserEmailTags,
+    stakeholderEmailTags,
+    startFromScratch,
+    scratchPrompt,
+  ]);
 
   useEffect(() => {
     const onVis = () => {
@@ -168,6 +247,14 @@ const CreateProject = () => {
       "Stakeholders",
     );
     if (stakeholderErr) errors.stakeholderEmails = stakeholderErr;
+
+    if (startFromScratch) {
+      const p = typeof scratchPrompt === "string" ? scratchPrompt.trim() : "";
+      if (!p) {
+        errors.scratchPrompt =
+          "Initial agent prompt is required when starting from scratch";
+      }
+    }
 
     // Roadmap is optional; validate only when user has added roadmaps
     // if (roadmaps.length > 0) {
@@ -257,11 +344,20 @@ const CreateProject = () => {
       } else {
         projectData.assignedManagerId = user.id;
       }
+      if (startFromScratch) {
+        projectData.isScratch = true;
+        projectData.prompt = scratchPrompt.trim();
+      }
       const response = await createProject(projectData);
-      toast.success("Project created successfully");
-
-      // Navigate to the new project or dashboard
-      navigate("/dashboard");
+      if (response?.scratchAgentStarted) {
+        toast.success("Project created");
+        navigate(`/projects/details/${response.id}`, {
+          state: { scratchAgentRunning: true },
+        });
+      } else {
+        toast.success("Project created successfully");
+        navigate("/dashboard");
+      }
     } catch (err) {
       console.error(err);
       toast.error(err.error || "Failed to create project. Please try again.");
@@ -427,6 +523,62 @@ const CreateProject = () => {
                 />
               </div>
 
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-primary/5 p-4">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    id="start-from-scratch"
+                    checked={startFromScratch}
+                    onCheckedChange={(v) => setStartFromScratch(v === true)}
+                    className="mt-0.5"
+                  />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Sparkles
+                        className="size-4 shrink-0 text-primary"
+                        aria-hidden
+                      />
+                      <Label
+                        htmlFor="start-from-scratch"
+                        className="cursor-pointer font-medium text-slate-800"
+                      >
+                        Starting from Scratch
+                      </Label>
+                    </div>
+                    <p className="max-w-prose text-xs text-muted-foreground">
+                      Create a base release and run the first Cursor agent on
+                      your connected repo with the prompt below. Requires
+                      Cursor API configuration on the server.
+                    </p>
+                  </div>
+                </div>
+                {startFromScratch && (
+                  <div className="space-y-2 border-t border-primary/15 pt-3">
+                    <Label htmlFor="scratch-prompt">
+                      Initial agent prompt{" "}
+                      <span className="text-destructive">*</span>
+                    </Label>
+                    <Textarea
+                      id="scratch-prompt"
+                      placeholder="Describe what the agent should build or change in the repository..."
+                      value={scratchPrompt}
+                      onChange={(e) => setScratchPrompt(e.target.value)}
+                      rows={5}
+                      className={`resize-y min-h-[120px] ${
+                        validationErrors.scratchPrompt
+                          ? "border-destructive"
+                          : ""
+                      }`}
+                      aria-invalid={Boolean(validationErrors.scratchPrompt)}
+                    />
+                    {validationErrors.scratchPrompt && (
+                      <p className="text-sm text-destructive">
+                        {validationErrors.scratchPrompt}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="assigned-user-emails">
@@ -482,6 +634,8 @@ const CreateProject = () => {
           integrationsPayload={integrationsStatus}
           integrationsLoading={integrationsLoading}
           validationErrors={validationErrors}
+          oauthReturnTo={CREATE_PROJECT_OAUTH_RETURN}
+          onBeforeOAuthRedirect={persistCreateBodyDraftForOAuth}
         />
 
         {/* Roadmap Configuration */}
@@ -514,7 +668,9 @@ const CreateProject = () => {
           {loading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Creating...
+              {startFromScratch
+                ? "Creating project & starting agent..."
+                : "Creating..."}
             </>
           ) : (
             "Create Project"

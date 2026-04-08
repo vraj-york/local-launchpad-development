@@ -1,5 +1,5 @@
 import express from "express";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import { createJiraTicketsFromSummary, testJiraConnection, getJiraProjectInfo } from "../utils/jiraIntegration.js";
 import path from "path";
@@ -17,7 +17,6 @@ import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 dotenv.config();
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
 // Project locks to prevent concurrent uploads
 const projectLocks = new Map();

@@ -1,9 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import { validateRoadmapItems } from "../validators/roadmap.validator.js";
 import ApiError from "../utils/apiError.js";
 import { assertProjectAccess, assertProjectReadAccess } from "./project.service.js";
-const prisma = new PrismaClient();
-
 export const createRoadmapWithItems = async (tx, projectId, roadmap) => {
     const newRoadmap = await tx.roadmap.create({
         data: {

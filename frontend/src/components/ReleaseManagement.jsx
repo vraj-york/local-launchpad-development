@@ -8,6 +8,7 @@ import {
   getRoadmapItemsByProjectId,
   patchRelease,
   fetchReleaseChangelog,
+  regenerateReleaseReviewSummary,
 } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -78,6 +79,9 @@ const CHANGELOG_FIELD_LABELS = {
   isMvp: "MVP",
   lockedBy: "Locked by",
   clientReleaseNote: "Client release note",
+  clientReviewAiSummary: "Review checklist (client link)",
+  showClientReviewSummary: "Show checklist on client link",
+  clientReviewAiGenerationContext: "AI-only instructions (not shown to clients)",
 };
 
 function actualShipDateChanged(prevDate, nextDate) {
@@ -312,6 +316,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
 
   const [editDialog, setEditDialog] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
+  const [aiSummaryRegenerating, setAiSummaryRegenerating] = useState(false);
 
   const [changelogByRelease, setChangelogByRelease] = useState({});
   const [changelogLoadingId, setChangelogLoadingId] = useState(null);
@@ -411,17 +416,69 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
         : null,
       actualReleaseNotes: release.actualReleaseNotes ?? "",
       clientReleaseNote: release.clientReleaseNote ?? "",
+      clientReviewAiSummary: release.clientReviewAiSummary ?? "",
+      clientReviewAiSummaryAt: release.clientReviewAiSummaryAt ?? null,
+      showClientReviewSummary: release.showClientReviewSummary !== false,
+      clientReviewAiGenerationContext:
+        release.clientReviewAiGenerationContext ?? "",
       isLocked: isReleaseLocked(release),
       reason: "",
     });
+  };
+
+  const handleRegenerateClientReviewSummary = async () => {
+    if (!editDialog?.id) return;
+    setAiSummaryRegenerating(true);
+    try {
+      const data = await regenerateReleaseReviewSummary(editDialog.id, {
+        clientReviewAiGenerationContext:
+          editDialog.clientReviewAiGenerationContext ?? "",
+      });
+      if (data.ok) {
+        toast.success("Review checklist updated");
+      } else {
+        toast.error(data.error || "Could not generate checklist");
+      }
+      const rel = data.release;
+      if (rel && editDialog && Number(rel.id) === Number(editDialog.id)) {
+        setEditDialog((prev) =>
+          prev
+            ? {
+                ...prev,
+                clientReviewAiSummary: rel.clientReviewAiSummary ?? "",
+                clientReviewAiSummaryAt: rel.clientReviewAiSummaryAt ?? null,
+                showClientReviewSummary:
+                  rel.showClientReviewSummary !== false,
+                clientReviewAiGenerationContext:
+                  rel.clientReviewAiGenerationContext ?? "",
+              }
+            : prev,
+        );
+      }
+      await loadReleases();
+    } catch (err) {
+      toast.error(err.error || err.message || "Failed to generate checklist");
+    } finally {
+      setAiSummaryRegenerating(false);
+    }
   };
 
   const saveEditRelease = async (e) => {
     e.preventDefault();
     if (!editDialog) return;
     const noteTrimmed = editDialog.clientReleaseNote.trim() || null;
+    const reviewSummaryTrimmed =
+      editDialog.clientReviewAiSummary.trim() || null;
+    const aiContextTrimmed =
+      editDialog.clientReviewAiGenerationContext.trim() || null;
+    const clientLinkPayload = {
+      clientReleaseNote: noteTrimmed,
+      clientReviewAiSummary: reviewSummaryTrimmed,
+      showClientReviewSummary: editDialog.showClientReviewSummary === true,
+      clientReviewAiGenerationContext: aiContextTrimmed,
+    };
     const payload = editDialog.isLocked
-      ? { clientReleaseNote: noteTrimmed }
+      ? clientLinkPayload
       : {
         description: editDialog.description.trim() || null,
         isMvp: editDialog.isMvp,
@@ -436,7 +493,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
           : null,
         actualReleaseNotes:
           editDialog.actualReleaseNotes.trim() || null,
-        clientReleaseNote: noteTrimmed,
+        ...clientLinkPayload,
         reason: editDialog.reason.trim(),
       };
     try {
@@ -653,17 +710,12 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       setUploadProgress(100);
 
       const revisionLabel = formatProjectVersionLabel(result?.version);
-      setUploadStatus(
-        `Upload successful! Revision: ${revisionLabel}`,
-      );
-      setUploadFile(null);
-      setSelectedRelease("");
-      setSelectedRoadmapItemIds([]);
-      if (uploadFileInputRef.current) uploadFileInputRef.current.value = "";
       await loadReleases();
       toast.success(
-        `Project uploaded successfully! Revision: ${revisionLabel}`,
+        `ZIP uploaded successfully. Revision: ${revisionLabel}`,
       );
+      setShowUploadForm(false);
+      resetUploadForm();
     } catch (err) {
       const errorMessage = err.error || err.message || "Upload failed";
       setUploadStatus(`Upload failed: ${errorMessage}`);
@@ -1738,6 +1790,10 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                   <Label htmlFor="edit-client-release-note">
                     Notes for clients (optional)
                   </Label>
+                  <p className="text-xs text-slate-500">
+                    Shown in <span className="font-medium">Release note</span> on
+                    the client link — scope, caveats, what not to test.
+                  </p>
                   <Textarea
                     id="edit-client-release-note"
                     rows={3}
@@ -1752,6 +1808,130 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                     }
                     className="resize-y min-h-[72px]"
                   />
+                </div>
+
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="edit-client-review-summary">
+                      Review checklist (optional)
+                    </Label>
+                    <p className="text-xs text-slate-600">
+                      Same content as <span className="font-medium">What to review</span>{" "}
+                      on the client link when you turn on the option below. Write it
+                      yourself or use <span className="font-medium">Generate with AI</span>{" "}
+                      from this release (roadmap, versions, and release details).
+                    </p>
+                  </div>
+                  <Textarea
+                    id="edit-client-review-summary"
+                    rows={6}
+                    placeholder="Bullet list of what clients should verify — or click Generate with AI."
+                    value={editDialog.clientReviewAiSummary}
+                    onChange={(e) =>
+                      setEditDialog((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              clientReviewAiSummary: e.target.value,
+                            }
+                          : prev,
+                      )
+                    }
+                    className="resize-y min-h-[120px] border-white/80 bg-white font-mono text-sm"
+                  />
+                  <div className="flex items-start gap-3 rounded-lg border border-slate-100 bg-white px-3 py-2">
+                    <Checkbox
+                      id="edit-show-client-review"
+                      checked={editDialog.showClientReviewSummary === true}
+                      onCheckedChange={(checked) =>
+                        setEditDialog((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                showClientReviewSummary: checked === true,
+                              }
+                            : prev,
+                        )
+                      }
+                      className="mt-0.5"
+                    />
+                    <Label
+                      htmlFor="edit-show-client-review"
+                      className="cursor-pointer text-sm leading-snug text-slate-700"
+                    >
+                      Show this checklist on the client link
+                    </Label>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={aiSummaryRegenerating || editSaving}
+                      onClick={handleRegenerateClientReviewSummary}
+                    >
+                      {aiSummaryRegenerating ? (
+                        <>
+                          <Spinner className="size-4" /> Generating…
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="size-4" />
+                          Generate with AI
+                        </>
+                      )}
+                    </Button>
+                    {editDialog.clientReviewAiSummaryAt ? (
+                      <span className="text-xs text-slate-500">
+                        Last generated:{" "}
+                        {new Date(
+                          editDialog.clientReviewAiSummaryAt,
+                        ).toLocaleString(undefined, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <Collapsible
+                    key={`edit-ai-ctx-${editDialog.id}`}
+                    defaultOpen={Boolean(
+                      editDialog.clientReviewAiGenerationContext?.trim(),
+                    )}
+                    className="rounded-lg border border-dashed border-slate-200 bg-white/90"
+                  >
+                    <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      <ChevronDown className="size-4 shrink-0 opacity-70 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                      Advanced — extra instructions for AI only (not shown to
+                      clients)
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-2 px-3 pb-3 pt-0">
+                      <Textarea
+                        id="edit-ai-generation-context"
+                        rows={4}
+                        placeholder="e.g. Emphasize checkout and login; skip admin settings."
+                        value={editDialog.clientReviewAiGenerationContext}
+                        onChange={(e) =>
+                          setEditDialog((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  clientReviewAiGenerationContext:
+                                    e.target.value,
+                                }
+                              : prev,
+                          )
+                        }
+                        className="resize-y min-h-[88px] text-sm"
+                      />
+                      <p className="text-xs text-slate-500">
+                        Used only when you click Generate with AI. Current text in
+                        this box is sent even if you have not saved the release yet.
+                      </p>
+                    </CollapsibleContent>
+                  </Collapsible>
                 </div>
               </div>
               <DialogFooter className="gap-2">

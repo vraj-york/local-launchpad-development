@@ -36,6 +36,7 @@ import {
   Laptop,
   Lock,
   Smartphone,
+  Sparkles,
   Tablet,
 } from "lucide-react";
 import { ClientLinkChatPanel } from "../components/ClientLinkChatPanel";
@@ -47,10 +48,9 @@ import {
 } from "../components/ClientLinkPreviewPicker";
 import {
   getClientLinkVerifiedEmail,
+  isPlausibleClientLinkEmail,
   setClientLinkVerifiedEmail,
 } from "@/lib/clientLinkVerifiedEmail";
-
-const LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const PREVIEW_MOBILE_W = 390;
 const PREVIEW_TABLET_W = 820;
@@ -78,7 +78,8 @@ export const ClientLink = () => {
   const [previewMeta, setPreviewMeta] = useState(null);
   /** Bumped after chat merge/revert + project reload so iframe URL changes when build URL is unchanged (cache bust). */
   const [previewRefreshNonce, setPreviewRefreshNonce] = useState(0);
-  const [releaseNoteOpen, setReleaseNoteOpen] = useState(false);
+  /** Combined release notes + what to review (client view only). */
+  const [releaseDetailsOpen, setReleaseDetailsOpen] = useState(false);
   const [previewStageWidth, setPreviewStageWidth] = useState(0);
   const [responsivePreset, setResponsivePreset] = useState(
     /** @type {'desktop' | 'tablet' | 'mobile' | 'custom'} */ ("desktop"),
@@ -180,6 +181,17 @@ export const ClientLink = () => {
     }
   }, [projectSlug]);
 
+  /** Fetch latest project JSON without full-page loading state or clearing preview context (post-chat / chat refresh). */
+  const reloadProjectQuiet = useCallback(async () => {
+    if (!projectSlug?.trim()) return;
+    try {
+      const data = await fetchPublicProjectBySlug(projectSlug);
+      setPublicProject(data);
+    } catch (error) {
+      console.error("Failed to refresh project data:", error);
+    }
+  }, [projectSlug]);
+
   useEffect(() => {
     loadProject();
   }, [loadProject]);
@@ -190,8 +202,7 @@ export const ClientLink = () => {
   }, [lockConfirmOpen]);
 
   const lockEmailValid = React.useMemo(() => {
-    const e = lockEmail.trim().toLowerCase();
-    return LOCK_EMAIL_RE.test(e);
+    return isPlausibleClientLinkEmail(lockEmail);
   }, [lockEmail]);
 
   const liveActiveVersionId = React.useMemo(() => {
@@ -213,6 +224,14 @@ export const ClientLink = () => {
   }, [releases, activeRelease, previewMeta]);
 
   const clientNote = displayRelease?.clientReleaseNote?.trim() || "";
+  const showReviewChecklist =
+    displayRelease?.showClientReviewSummary !== false;
+  const aiReviewSummary =
+    showReviewChecklist &&
+    (displayRelease?.clientReviewAiSummary?.trim() || "");
+  const aiReviewSummaryAt = showReviewChecklist
+    ? displayRelease?.clientReviewAiSummaryAt
+    : null;
 
   const activeReleaseLocked =
     String(activeRelease?.status ?? "").toLowerCase() === "locked";
@@ -233,7 +252,7 @@ export const ClientLink = () => {
   const handleLockConfirm = useCallback(async () => {
     if (!selectedReleaseId) return;
     const email = lockEmail.trim().toLowerCase();
-    if (!LOCK_EMAIL_RE.test(email)) {
+    if (!isPlausibleClientLinkEmail(email)) {
       toast.error("Please enter a valid email address.");
       return;
     }
@@ -584,18 +603,28 @@ export const ClientLink = () => {
                 </Tooltip>
               </div>
             ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 shrink-0 gap-1.5 border-slate-300 bg-white/80 px-2.5 hover:bg-white sm:px-3"
-              onClick={() => setReleaseNoteOpen(true)}
-            >
-              <FileText className="size-4 shrink-0" />
-              <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
-                Release note
-              </span>
-            </Button>
+            {(clientNote || aiReviewSummary) ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0 gap-1.5 border-slate-300 bg-white/80 px-2.5 hover:bg-white sm:px-3"
+                onClick={() => setReleaseDetailsOpen(true)}
+              >
+                <span className="flex shrink-0 items-center gap-0.5">
+                  <FileText className="size-4" aria-hidden />
+                  {aiReviewSummary ? (
+                    <Sparkles
+                      className="size-3.5 text-violet-600"
+                      aria-hidden
+                    />
+                  ) : null}
+                </span>
+                <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
+                  Release details
+                </span>
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -714,11 +743,7 @@ export const ClientLink = () => {
                   ) : (
                     <>
                       All latest releases are currently locked, so there is no
-                      active build to show. Remove{" "}
-                      <span className="font-mono text-slate-800">c=false</span>{" "}
-                      from the URL (or use{" "}
-                      <span className="font-mono text-slate-800">c=true</span>)
-                      to open the full client view and pick a version.
+                      active build to show.
                     </>
                   )
                 ) : (
@@ -781,11 +806,22 @@ export const ClientLink = () => {
           <EmbeddedFeedbackWidget
             ref={feedbackWidgetRef}
             projectId={String(publicProject.id)}
+            getClientEmail={() => getClientLinkVerifiedEmail()}
             captureTarget="#feedback-capture-wrapper"
             anchorToPreview
             hideDefaultTrigger
             onCapturingChange={setFeedbackCapturing}
-            onSuccess={() => toast.success("Feedback submitted successfully")}
+            onSuccess={(res) => {
+              if (
+                res &&
+                typeof res === "object" &&
+                res.jiraError != null &&
+                String(res.jiraError).trim() !== ""
+              ) {
+                return;
+              }
+              toast.success("Feedback submitted successfully");
+            }}
             onError={(err) =>
               toast.error(err?.message ?? "Failed to submit feedback")
             }
@@ -838,7 +874,7 @@ export const ClientLink = () => {
               isOpen={chatOpen}
               mergeTargetLabel={chatMergeTargetLabel}
               onPreviewCommitApplied={handleChatPreviewCommitApplied}
-              onProjectReload={loadProject}
+              onProjectReloadQuiet={reloadProjectQuiet}
               onResetPreview={handleChatResetPreview}
               onCloseChat={() => setChatOpen(false)}
               pickedElementContext={pickedElementContext}
@@ -914,26 +950,48 @@ export const ClientLink = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={releaseNoteOpen} onOpenChange={setReleaseNoteOpen}>
+      <Dialog open={releaseDetailsOpen} onOpenChange={setReleaseDetailsOpen}>
         <DialogContent className="max-h-[85vh] sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Release note</DialogTitle>
+            <DialogTitle>Release details</DialogTitle>
             <DialogDescription>
               {displayRelease?.name
-                ? `Release ${displayRelease.name}`
-                : "Current release"}
+                ? `Release ${displayRelease.name} — notes and review checklist`
+                : "Notes and review checklist for this release"}
             </DialogDescription>
           </DialogHeader>
-          <div className="max-h-[55vh] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="max-h-[55vh] space-y-4 overflow-y-auto pr-1">
             {clientNote ? (
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-                {clientNote}
-              </p>
-            ) : (
-              <p className="text-sm text-slate-500">
-                No release note available for this release.
-              </p>
-            )}
+              <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <FileText className="size-4 shrink-0 text-slate-600" />
+                  Release notes
+                </h3>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                  {clientNote}
+                </p>
+              </section>
+            ) : null}
+            {aiReviewSummary ? (
+              <section className="rounded-lg border border-violet-200/80 bg-violet-50/50 p-4">
+                <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-violet-950">
+                  <Sparkles className="size-4 shrink-0 text-violet-600" />
+                  What to review
+                </h3>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
+                  {aiReviewSummary}
+                </p>
+                {aiReviewSummaryAt ? (
+                  <p className="mt-3 border-t border-violet-200/60 pt-2 text-xs text-slate-500">
+                    Checklist updated{" "}
+                    {new Date(aiReviewSummaryAt).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </p>
+                ) : null}
+              </section>
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

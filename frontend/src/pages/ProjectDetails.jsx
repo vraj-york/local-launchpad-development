@@ -10,9 +10,11 @@ import { Button } from "../components/ui/button";
 import {
   ArrowLeft,
   ExternalLink,
+  Loader2,
   Maximize2,
   PencilLine,
   Route,
+  X,
 } from "lucide-react";
 import EditProjectDialog from "@/components/EditProjectDialog";
 import {
@@ -40,6 +42,15 @@ const ProjectDetails = () => {
   // const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("releases");
   const [editProjectOpen, setEditProjectOpen] = useState(false);
+  const [scratchAgentBannerOpen, setScratchAgentBannerOpen] = useState(
+    () => Boolean(location.state?.scratchAgentRunning),
+  );
+
+  useEffect(() => {
+    if (location.state?.scratchAgentRunning) {
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.pathname, location.state?.scratchAgentRunning, navigate]);
 
   // Helper to refresh project data
   // const refreshProject = async () => {
@@ -233,6 +244,34 @@ const ProjectDetails = () => {
           </div>
         </PageHeader>
       </div>
+
+      {scratchAgentBannerOpen && (
+        <div
+          role="status"
+          className="mb-6 flex gap-3 rounded-lg border border-emerald-200 bg-emerald-50/90 px-4 py-3 text-emerald-950 shadow-sm"
+        >
+          <Loader2
+            className="h-5 w-5 shrink-0 animate-spin text-emerald-600"
+            aria-hidden
+          />
+          <div className="min-w-0 flex-1 space-y-1">
+            <p className="text-sm font-semibold leading-tight">
+              Cursor agent is running
+            </p>
+            <p className="text-sm text-emerald-900/90 leading-snug">
+              Changes will appear in Version soon after the agent finishes.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setScratchAgentBannerOpen(false)}
+            className="shrink-0 rounded-md p-1 text-emerald-700/80 transition hover:bg-emerald-100 hover:text-emerald-900"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       <EditProjectDialog
         open={editProjectOpen}

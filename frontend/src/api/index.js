@@ -262,11 +262,15 @@ export const fetchIntegrationsStatus = async () => {
   return data;
 };
 
-export const getGithubOAuthAuthorizeUrl = async (reconnectConnectionId) => {
+export const getGithubOAuthAuthorizeUrl = async (
+  reconnectConnectionId,
+  { returnTo } = {},
+) => {
   const params = {};
   if (reconnectConnectionId != null && reconnectConnectionId !== "") {
     params.reconnectId = reconnectConnectionId;
   }
+  if (returnTo) params.returnTo = returnTo;
   const { data } = await api.get("/api/integrations/github/start", {
     params,
     headers: { Accept: "application/json" },
@@ -275,11 +279,15 @@ export const getGithubOAuthAuthorizeUrl = async (reconnectConnectionId) => {
   return data.url;
 };
 
-export const getJiraOAuthAuthorizeUrl = async (reconnectConnectionId) => {
+export const getJiraOAuthAuthorizeUrl = async (
+  reconnectConnectionId,
+  { returnTo } = {},
+) => {
   const params = {};
   if (reconnectConnectionId != null && reconnectConnectionId !== "") {
     params.reconnectId = reconnectConnectionId;
   }
+  if (returnTo) params.returnTo = returnTo;
   const { data } = await api.get("/api/integrations/jira/start", {
     params,
     headers: { Accept: "application/json" },
@@ -288,11 +296,15 @@ export const getJiraOAuthAuthorizeUrl = async (reconnectConnectionId) => {
   return data.url;
 };
 
-export const getBitbucketOAuthAuthorizeUrl = async (reconnectConnectionId) => {
+export const getBitbucketOAuthAuthorizeUrl = async (
+  reconnectConnectionId,
+  { returnTo } = {},
+) => {
   const params = {};
   if (reconnectConnectionId != null && reconnectConnectionId !== "") {
     params.reconnectId = reconnectConnectionId;
   }
+  if (returnTo) params.returnTo = returnTo;
   const { data } = await api.get("/api/integrations/bitbucket/start", {
     params,
     headers: { Accept: "application/json" },
@@ -489,6 +501,21 @@ export const clientLinkRevertMerge = async (
     m: Number(messageId),
     clientEmail: String(clientEmail || "").trim(),
   });
+  return response.data;
+};
+
+/** Public: re-fetch tag, rebuild, redeploy live preview (long-running; same timeout as release upload). */
+export const clientLinkRefreshLiveBuild = async (
+  slug,
+  releaseId,
+  clientEmail = "",
+) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const response = await api.post(
+    `/api/chat/${enc}/refresh-build`,
+    { r: Number(releaseId), clientEmail: String(clientEmail || "").trim() },
+    { timeout: 2 * 60 * 60 * 1000 },
+  );
   return response.data;
 };
 
@@ -856,5 +883,31 @@ export const fetchReleaseChangelog = async (releaseId) => {
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to load release history" };
+  }
+};
+
+/** POST — regenerate AI “what to review” summary for client link (requires server OPENAI_API_KEY). */
+export const regenerateReleaseReviewSummary = async (
+  releaseId,
+  opts = {},
+) => {
+  try {
+    const body = Object.prototype.hasOwnProperty.call(
+      opts,
+      "clientReviewAiGenerationContext",
+    )
+      ? { clientReviewAiGenerationContext: opts.clientReviewAiGenerationContext }
+      : {};
+    const response = await api.post(
+      `/api/releases/${releaseId}/regenerate-review-summary`,
+      body,
+    );
+    return response.data;
+  } catch (error) {
+    throw (
+      error.response?.data || {
+        error: "Failed to regenerate review summary",
+      }
+    );
   }
 };

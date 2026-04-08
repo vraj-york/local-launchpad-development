@@ -1,5 +1,6 @@
 import { body, param } from "express-validator";
 import { normalizeOptionalEmailListString } from "../utils/emailList.utils.js";
+import { repositoryPlatformFromUrl } from "../utils/scmPath.js";
 
 function optionalEmailList(field) {
     return body(field)
@@ -155,13 +156,59 @@ export const createProjectValidation = [
         .withMessage("gitRepoPath must be a valid GitHub or Bitbucket repository path"),
 
     body("developmentRepoUrl")
-        .optional({ checkFalsy: true })
         .trim()
+        .notEmpty()
+        .withMessage("Developer repository path (developmentRepoUrl) is required")
         .matches(/^(https?:\/\/)?(github\.com|bitbucket\.org)\/[^/\s]+\/[^/\s]+(?:\.git)?$/i)
         .withMessage("developmentRepoUrl must be a valid GitHub or Bitbucket repository path"),
 
+    body().custom((value, { req }) => {
+        const b = req.body || {};
+        const g = b.gitRepoPath != null && String(b.gitRepoPath).trim();
+        const d = b.developmentRepoUrl != null && String(b.developmentRepoUrl).trim();
+        if (!g || !d) return true;
+        const pg = repositoryPlatformFromUrl(g);
+        const pd = repositoryPlatformFromUrl(d);
+        if (pg && pd && pg !== pd) {
+            throw new Error(
+                "Source repository  and development repository  must be on the same platform (GitHub or Bitbucket).",
+            );
+        }
+        return true;
+    }),
+
     optionalEmailList("assignedUserEmails"),
     optionalEmailList("stakeholderEmails"),
+
+    body("isScratch").optional(),
+    body("prompt").optional(),
+    body().custom((value, { req }) => {
+        const b = req.body || {};
+        if (b.isScratch === undefined || b.isScratch === null || b.isScratch === "") {
+            return true;
+        }
+        const scratch =
+            b.isScratch === true ||
+            b.isScratch === "true" ||
+            String(b.isScratch).toLowerCase() === "true";
+        const notScratch =
+            b.isScratch === false ||
+            b.isScratch === "false" ||
+            String(b.isScratch).toLowerCase() === "false";
+        if (!scratch && !notScratch) {
+            throw new Error("isScratch must be a boolean");
+        }
+        if (scratch) {
+            const p = typeof b.prompt === "string" ? b.prompt.trim() : "";
+            if (!p) {
+                throw new Error("prompt is required when isScratch is true");
+            }
+            if (p.length > 100000) {
+                throw new Error("prompt must be at most 100000 characters");
+            }
+        }
+        return true;
+    }),
 
     body().custom((value, { req }) => {
         const b = req.body || {};
@@ -293,6 +340,24 @@ export const updateProjectValidation = [
             );
         })
         .withMessage("developmentRepoUrl must be a valid GitHub or Bitbucket repository path"),
+
+    body().custom((value, { req }) => {
+        const b = req.body || {};
+        if (b.gitRepoPath === undefined || b.developmentRepoUrl === undefined) return true;
+        if (b.gitRepoPath === null || b.gitRepoPath === "") return true;
+        if (b.developmentRepoUrl === null || b.developmentRepoUrl === "") return true;
+        const g = String(b.gitRepoPath).trim();
+        const d = String(b.developmentRepoUrl).trim();
+        if (!g || !d) return true;
+        const pg = repositoryPlatformFromUrl(g);
+        const pd = repositoryPlatformFromUrl(d);
+        if (pg && pd && pg !== pd) {
+            throw new Error(
+                "Source repository and development repository must be on the same platform (GitHub or Bitbucket).",
+            );
+        }
+        return true;
+    }),
 
     body("slug")
         .optional({ nullable: true })

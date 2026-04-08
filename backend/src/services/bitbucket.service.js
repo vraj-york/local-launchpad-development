@@ -73,6 +73,62 @@ export async function getDefaultBitbucketWorkspace(token) {
 }
 
 /**
+ * Grant write access to a user on a repository (Bitbucket Cloud), mirroring addGithubCollaborator intent.
+ * @param {string} workspace
+ * @param {string} repoSlug
+ * @param {string} collaborator - Bitbucket username; if it looks like an email, the local part is tried (same as GitHub helper)
+ * @param {string} token
+ * @returns {Promise<boolean>}
+ */
+export async function addBitbucketRepositoryCollaborator(
+  workspace,
+  repoSlug,
+  collaborator,
+  token,
+) {
+  if (!collaborator || !token || !workspace || !repoSlug) return false;
+  let username = collaborator.trim();
+  if (username.includes("@") && !username.includes(" ")) {
+    username = username.split("@")[0];
+  }
+  const userUrl = `${BB_API}/users/${encodeURIComponent(username)}`;
+  const userRes = await fetch(userUrl, { headers: authHeaders(token) });
+  const userData = await userRes.json().catch(() => ({}));
+  if (!userRes.ok) {
+    console.warn(
+      `[addBitbucketRepositoryCollaborator] User lookup failed (${userRes.status}): ${
+        typeof userData?.error?.message === "string" ? userData.error.message : userRes.statusText
+      }`,
+    );
+    return false;
+  }
+  const uuid = userData.uuid;
+  if (!uuid || typeof uuid !== "string") {
+    console.warn("[addBitbucketRepositoryCollaborator] User response missing uuid");
+    return false;
+  }
+  const permUrl = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(
+    repoSlug,
+  )}/permissions-config/users/${encodeURIComponent(uuid)}`;
+  const permRes = await fetch(permUrl, {
+    method: "PUT",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ permission: "write" }),
+  });
+  if (permRes.status === 200 || permRes.status === 201 || permRes.status === 204) {
+    return true;
+  }
+  const text = await permRes.text().catch(() => "");
+  console.warn(
+    `[addBitbucketRepositoryCollaborator] ${permRes.status}: ${text.slice(0, 400)}`,
+  );
+  return false;
+}
+
+/**
  * Compare two refs — returns GitHub-shaped payload for chat/cursor.
  * @returns {Promise<{ ok: true, data: object } | { ok: false, status: number, message: string }>}
  */

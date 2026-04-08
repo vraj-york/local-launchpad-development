@@ -820,10 +820,11 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                     gitRepoPath.trim() !== String(project?.gitRepoPath || "").trim() && (
                       <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/20 p-2">
                         Saving a <strong>new</strong> path runs a one-time migration: the server
-                        fetches <strong>all branches and tags</strong> from the old GitHub remote and
-                        pushes them to the new repo (append / update only — it does not delete
-                        existing refs on the destination). Release <strong>tags</strong> used by this
-                        project must appear on the new remote after migration.
+                        fetches <strong>all branches and tags</strong> from the old GitHub or
+                        Bitbucket remote and pushes them to the new repo (append / update only — it
+                        does not delete existing refs on the destination). Release{" "}
+                        <strong>tags</strong> used by this project must appear on the new remote
+                        after migration.
                       </p>
                     )}
                 </div>

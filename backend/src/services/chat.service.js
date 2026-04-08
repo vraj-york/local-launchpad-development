@@ -1,8 +1,9 @@
 import crypto from "crypto";
-import { PrismaClient, ReleaseStatus } from "@prisma/client";
+import { ReleaseStatus } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import validator from "validator";
 import ApiError from "../utils/apiError.js";
-import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
+import { assertPublicClientStakeholderEmail } from "../utils/publicClientStakeholder.utils.js";
 import {
   createAgentForProjectRelease,
   getCursorAgentById,
@@ -23,7 +24,6 @@ import {
 import {
   compareRefs,
   parseGitRepoPath,
-  getBranchSha,
   getCommitInfo,
   getRepositoryMetadata,
   putRepositoryContents,
@@ -35,44 +35,9 @@ import {
   deployVersionArtifactsToProjectFolder,
 } from "./project.service.js";
 import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
+import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 
-const prisma = new PrismaClient();
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Cursor reports FINISHED before GitHub's refs/heads often show the new push. Wait, then poll until
- * the branch tip SHA changes from the first read or we exhaust attempts; confirm with one more read.
- */
-const CLIENT_CHAT_BRANCH_TIP_INITIAL_DELAY_MS = 5500;
-const CLIENT_CHAT_BRANCH_TIP_POLL_MS = 2500;
-const CLIENT_CHAT_BRANCH_TIP_MAX_POLLS = 22;
-
-/** TEMP: GitHub /commits often lags refs/heads; wait before listing so [0] matches tip. */
-async function waitForClientChatBranchTipSha(repoCtx, branchName) {
-  const { owner, repo, token } = repoCtx;
-  const b = String(branchName || "").trim();
-  if (!b) return null;
-
-  await delay(CLIENT_CHAT_BRANCH_TIP_INITIAL_DELAY_MS);
-  let baseline = (await getBranchSha(owner, repo, b, token))?.sha ?? null;
-  let latest = baseline;
-
-  for (let i = 0; i < CLIENT_CHAT_BRANCH_TIP_MAX_POLLS; i++) {
-    await delay(CLIENT_CHAT_BRANCH_TIP_POLL_MS);
-    const next = (await getBranchSha(owner, repo, b, token))?.sha ?? null;
-    if (next) latest = next;
-    if (baseline != null && latest != null && latest !== baseline) {
-      await delay(CLIENT_CHAT_BRANCH_TIP_POLL_MS);
-      const confirmed = (await getBranchSha(owner, repo, b, token))?.sha ?? latest;
-      return confirmed;
-    }
-  }
-  return latest;
-}
 
 /** Appended to Cursor prompt only (not stored in ChatHistory). Max 5MB base64 payload. */
 const CLIENT_REPO_IMAGE_INSTRUCTION = `
@@ -150,7 +115,6 @@ async function resolveClientChatGitSource(project, forceLaunchpadBase = false) {
     });
     project.gitRepoPath = resolved.gitRepoPathToPersist;
   }
-  let sourceRef = "launchpad";
   let parsed = parseScmRepoPath(project.gitRepoPath || "");
   if (!parsed && resolved.repositoryUrl) {
     parsed = parseScmRepoPath(resolved.repositoryUrl);
@@ -187,6 +151,8 @@ async function resolveClientChatGitSource(project, forceLaunchpadBase = false) {
     err.code = "REPO_UNRESOLVED";
     throw err;
   }
+
+  let sourceRef = "launchpad";
   const lp = await scmGetBranchSha(parsed.provider, parsed.owner, parsed.repo, "launchpad", token);
   const launchpadMissing = !lp?.sha;
   if (launchpadMissing && !forceLaunchpadBase) {
@@ -316,31 +282,6 @@ async function assertReleaseBelongs(releaseId, projectId) {
 function assertReleaseNotLocked(release) {
   if (release.status === ReleaseStatus.locked) {
     throw new ApiError(400, "Release is locked");
-  }
-}
-
-/** Same rules as public release lock: stakeholders must be configured; email must be in the list. */
-function assertPublicClientStakeholderEmail(stakeholderCsv, clientEmailRaw) {
-  const email =
-    typeof clientEmailRaw === "string" ? clientEmailRaw.trim().toLowerCase() : "";
-  if (!email) {
-    throw new ApiError(400, "Client email is required.");
-  }
-  if (!validator.isEmail(email)) {
-    throw new ApiError(400, "Invalid email address.");
-  }
-  const stakeholderSet = parseStoredEmailListToSet(stakeholderCsv);
-  if (stakeholderSet.size === 0) {
-    throw new ApiError(
-      400,
-      "Public release lock is not available until project stakeholders are configured.",
-    );
-  }
-  if (!stakeholderSet.has(email)) {
-    throw new ApiError(
-      403,
-      "This email is not authorized to use this chat feature.",
-    );
   }
 }
 
@@ -477,7 +418,7 @@ async function resolveClientChatRepository(project) {
 }
 
 /**
- * Set ChatHistory.appliedCommitSha from GitHub HEAD of the branch where Cursor actually commits.
+ * Set ChatHistory.appliedCommitSha from the remote branch tip where Cursor actually commits.
  * Branch name is taken from Cursor GET agent `target.branchName` first, then DB `targetBranchName`.
  * Resolves FigmaConversion by ChatHistory id === pendingClientChatMessageId.
  */
@@ -549,7 +490,7 @@ async function syncPendingMessageCommitSha(project, conv) {
     if (!head?.sha) {
       return null;
     }
-    const tipSha = await waitForClientChatBranchTipSha(repo, branch);
+    const tipSha = await waitForAgentBranchTipSha({ ...repo, branch });
     if (!tipSha) {
       return null;
     }
@@ -660,6 +601,51 @@ async function assertShaOnTrackedAgentBranch(project, releaseId, sha, chatHistor
 }
 
 /**
+ * True when a `FigmaConversion` exists for this project+release with a linked `ProjectVersion`
+ * whose `projectId` and `releaseId` match (version identity via `projectVersionId`).
+ */
+async function hasVersionedFigmaConversionForRelease(projectId, releaseId) {
+  const rid = Number(releaseId);
+  if (!Number.isInteger(rid) || rid < 1) return false;
+  const row = await prisma.figmaConversion.findFirst({
+    where: {
+      projectId,
+      releaseId: rid,
+      projectVersionId: { not: null },
+      projectVersion: {
+        projectId,
+        releaseId: rid,
+      },
+    },
+    select: { id: true },
+  });
+  return Boolean(row);
+}
+
+/**
+ * Git clone ref for the first client-link Cursor agent: `launchpad` when a versioned
+ * `FigmaConversion` exists for this project+release; otherwise the repository default branch.
+ */
+async function resolveGitSourceForNewClientChatAgent(project, forceLaunchpadBase, releaseId) {
+  const useLaunchpad = await hasVersionedFigmaConversionForRelease(project.id, releaseId);
+  const resolved = await resolveClientChatGitSource(project, forceLaunchpadBase);
+  if (useLaunchpad) {
+    return resolved;
+  }
+  const meta = await scmGetRepositoryMetadata(
+    resolved.parsed.provider,
+    resolved.parsed.owner,
+    resolved.parsed.repo,
+    resolved.token,
+  );
+  const def = meta.ok ? String(meta.defaultBranch || "").trim() : "";
+  return {
+    ...resolved,
+    sourceRef: def || "main",
+  };
+}
+
+/**
  * @param {{ forceLaunchpadBase?: boolean }} opts - when true, always use ref launchpad (never main) so a new
  * agent after a prior client-link merge builds on merged work, not the default branch.
  */
@@ -670,9 +656,10 @@ async function createClientChatAgent({
   forceLaunchpadBase = false,
   promptImages = null,
 }) {
-  const { repositoryUrl, sourceRef, parsed, token } = await resolveClientChatGitSource(
+  const { repositoryUrl, sourceRef, parsed, token } = await resolveGitSourceForNewClientChatAgent(
     project,
     forceLaunchpadBase,
+    releaseId,
   );
 
   const meta = await getRepositoryMetadata(parsed.owner, parsed.repo, token);
@@ -735,7 +722,9 @@ export async function clientLinkFollowup({
   replacementImage: replacementImageRaw = null,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -800,7 +789,11 @@ export async function clientLinkFollowup({
       const repoCtx = await resolveClientChatRepository(project);
       let commitBranch = null;
       if (needFreshAgent) {
-        const git = await resolveClientChatGitSource(project, forceLaunchpadBase);
+        const git = await resolveGitSourceForNewClientChatAgent(
+          project,
+          forceLaunchpadBase,
+          releaseId,
+        );
         commitBranch = git.sourceRef;
       } else {
         commitBranch = await resolveAgentTargetBranchForFollowup(conv);
@@ -1519,7 +1512,7 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
     if (branchForHead) {
       try {
         const repo = await resolveClientChatRepository(project);
-        requestedSha = await waitForClientChatBranchTipSha(repo, branchForHead);
+        requestedSha = await waitForAgentBranchTipSha({ ...repo, branch: branchForHead });
         if (requestedSha && pendingOk) {
           await prisma.chatHistory.updateMany({
             where: {
@@ -1565,7 +1558,9 @@ export async function clientLinkConfirmLaunchpadMerge({
   clientEmail,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -1593,7 +1588,9 @@ export async function clientLinkRevertMergedMessage({
   clientEmail,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -1785,7 +1782,9 @@ export async function clientLinkRestoreVersion({
   clientEmail,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -1838,6 +1837,52 @@ export async function clientLinkRestoreVersion({
   };
 }
 
+/**
+ * Public: re-checkout the active version’s git tag, rebuild, and redeploy to the project folder
+ * (same as deploy after merge). Used by client-link “refresh preview” when the UI is stale.
+ */
+export async function clientLinkRefreshLiveBuild({
+  slug,
+  releaseId,
+  clientEmail,
+}) {
+  const project = await resolveProjectBySlug(slug);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  const release = await assertReleaseBelongs(releaseId, project.id);
+  assertReleaseNotLocked(release);
+
+  const version = await prisma.projectVersion.findFirst({
+    where: { projectId: project.id, isActive: true },
+    select: { id: true, version: true, gitTag: true, releaseId: true },
+  });
+  if (!version) {
+    throw new ApiError(
+      400,
+      "No active deployed version to refresh. Merge or restore a version first.",
+    );
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: project.assignedManagerId },
+  });
+  if (!user) {
+    throw new ApiError(500, "Project has no assigned manager");
+  }
+
+  const deployed = await deployVersionArtifactsToProjectFolder({
+    projectId: project.id,
+    versionId: version.id,
+    user,
+  });
+
+  return {
+    ok: true,
+    buildUrl: deployed.buildUrl,
+    version: deployed.version,
+    tag: deployed.tag,
+  };
+}
+
 /** Public: preview chat branch at a specific commit (or its parent) without merging live. */
 export async function clientLinkPreviewCommit({
   slug,
@@ -1848,7 +1893,9 @@ export async function clientLinkPreviewCommit({
   clientEmail,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 

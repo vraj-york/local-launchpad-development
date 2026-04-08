@@ -8,6 +8,7 @@ import {
     lockReleaseValidation,
     publicLockReleaseValidation,
     releaseChangelogParamValidation,
+    regenerateReviewSummaryValidation,
 } from "../validators/release.validator.js";
 import { validate } from "../validators/validate.middleware.js";
 import multer from "multer";
@@ -255,6 +256,14 @@ router.patch(
     setReleaseStatusValidation,
     validate,
     releaseController.setStatus,
+);
+
+router.post(
+    "/:id/regenerate-review-summary",
+    authenticateToken,
+    regenerateReviewSummaryValidation,
+    validate,
+    releaseController.regenerateReviewSummary,
 );
 
 /**

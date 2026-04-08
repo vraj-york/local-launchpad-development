@@ -1,5 +1,9 @@
-import React, { useState, useRef } from 'react';
-import { captureWithDisplayMedia, captureTargetArea, canvasToDataURL } from '../services/screenshot.service';
+import React, { useState, useRef } from "react";
+import {
+  captureWithDisplayMedia,
+  captureTargetArea,
+  canvasToDataURL,
+} from "../services/screenshot.service";
 
 // Minimum time to show the "Capturing Screenshot..." screen after we have the image (so it's never in the shot)
 const MIN_CAPTURE_SCREEN_MS = 800;
@@ -7,7 +11,7 @@ const MIN_CAPTURE_SCREEN_MS = 800;
 const ScreenshotCapture = ({ onCapture, onBack, captureTarget }) => {
   // 'selecting' = waiting for user to pick window/screen (no spinner - avoid capturing our own loader)
   // 'processing' = we have the stream/canvas, show brief loader then go to annotate
-  const [phase, setPhase] = useState('selecting');
+  const [phase, setPhase] = useState("selecting");
   const [error, setError] = useState(null);
   const processingStartRef = useRef(null);
 
@@ -25,10 +29,13 @@ const ScreenshotCapture = ({ onCapture, onBack, captureTarget }) => {
         }
 
         processingStartRef.current = Date.now();
-        setPhase('processing');
+        setPhase("processing");
 
         const elapsedSinceProcessing = Date.now() - processingStartRef.current;
-        const remaining = Math.max(0, MIN_CAPTURE_SCREEN_MS - elapsedSinceProcessing);
+        const remaining = Math.max(
+          0,
+          MIN_CAPTURE_SCREEN_MS - elapsedSinceProcessing,
+        );
         await new Promise((r) => setTimeout(r, remaining));
 
         if (cancelled) {
@@ -40,8 +47,8 @@ const ScreenshotCapture = ({ onCapture, onBack, captureTarget }) => {
         onCapture(canvas, dataUrl);
       } catch (err) {
         if (!cancelled) {
-          setError(err?.message || 'Capture failed');
-          setPhase('selecting');
+          setError(err?.message || "Capture failed");
+          setPhase("selecting");
         }
       }
     };
@@ -54,12 +61,12 @@ const ScreenshotCapture = ({ onCapture, onBack, captureTarget }) => {
 
   if (error) {
     return (
-      <div className="feedback-widget-capture feedback-widget-capture-loading">
-        <div className="feedback-widget-capture-loading-content">
-          <p className="feedback-widget-capture-title" style={{ color: '#b91c1c' }}>
+      <div className="flex min-h-[280px] items-center justify-center text-center">
+        <div className="px-6 py-[60px] text-center">
+          <p className="m-0 mb-2 font-sans text-lg font-semibold text-[#b91c1c]">
             {error}
           </p>
-          <p className="feedback-widget-capture-subtitle">
+          <p className="m-0 font-sans text-sm text-gray-500">
             Make sure you select a window or screen when the dialog appears.
           </p>
         </div>
@@ -67,19 +74,24 @@ const ScreenshotCapture = ({ onCapture, onBack, captureTarget }) => {
     );
   }
 
-  if (phase === 'selecting') {
+  if (phase === "selecting") {
     const useTarget = Boolean(captureTarget);
     return (
-      <div className="feedback-widget-capture feedback-widget-capture-loading">
-        <div className="feedback-widget-capture-loading-content">
-          {useTarget && <div className="feedback-widget-spinner feedback-widget-capture-spinner" />}
-          <h3 className="feedback-widget-capture-title">
-            {useTarget ? 'Capturing screenshot...' : 'Select window or screen'}
+      <div className="flex min-h-[280px] items-center justify-center text-center">
+        <div className="px-6 py-[60px] text-center">
+          {useTarget && (
+            <div
+              className="mx-auto mb-5 block h-12 w-12 shrink-0 animate-[spin_0.8s_linear_infinite] rounded-full border-4 border-gray-100 border-t-[#00b48a]"
+              aria-hidden
+            />
+          )}
+          <h3 className="m-0 mb-2 font-sans text-lg font-semibold text-gray-900">
+            {useTarget ? "Capturing screenshot..." : "Select window or screen"}
           </h3>
-          <p className="feedback-widget-capture-subtitle">
+          <p className="m-0 font-sans text-sm text-gray-500">
             {useTarget
-              ? 'Please wait while we capture your screen'
-              : 'A dialog will appear — choose the window or screen you want to capture. Do not select this dialog.'}
+              ? "Please wait while we capture your screen"
+              : "A dialog will appear — choose the window or screen you want to capture. Do not select this dialog."}
           </p>
         </div>
       </div>
@@ -88,11 +100,16 @@ const ScreenshotCapture = ({ onCapture, onBack, captureTarget }) => {
 
   // phase === 'processing': screenshot already taken, show brief "Capturing..." then we transition to annotate
   return (
-    <div className="feedback-widget-capture feedback-widget-capture-loading">
-      <div className="feedback-widget-capture-loading-content">
-        <div className="feedback-widget-spinner feedback-widget-capture-spinner" />
-        <h3 className="feedback-widget-capture-title">Capturing Screenshot...</h3>
-        <p className="feedback-widget-capture-subtitle">
+    <div className="flex min-h-[280px] items-center justify-center text-center">
+      <div className="px-6 py-[60px] text-center">
+        <div
+          className="mx-auto mb-5 block h-12 w-12 shrink-0 animate-[spin_0.8s_linear_infinite] rounded-full border-4 border-gray-100 border-t-[#00b48a]"
+          aria-hidden
+        />
+        <h3 className="m-0 mb-2 font-sans text-lg font-semibold text-gray-900">
+          Capturing Screenshot...
+        </h3>
+        <p className="m-0 font-sans text-sm text-gray-500">
           Please wait while we capture your screen
         </p>
       </div>

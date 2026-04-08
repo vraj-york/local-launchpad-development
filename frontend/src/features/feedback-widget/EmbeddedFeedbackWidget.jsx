@@ -5,6 +5,8 @@ import config from "@/config";
 const EmbeddedFeedbackWidget = forwardRef(function EmbeddedFeedbackWidget(
   {
     projectId,
+    /** When set with projectId, issue submission sends this email for stakeholder checks (client link). */
+    getClientEmail = null,
     captureTarget = null,
     /** When true, the Report Issue button is positioned in the bottom-right of its parent (e.g. preview panel), not the viewport. */
     anchorToPreview = false,
@@ -19,6 +21,7 @@ const EmbeddedFeedbackWidget = forwardRef(function EmbeddedFeedbackWidget(
   const widgetConfig = useMemo(
     () => ({
       projectId: String(projectId),
+      getClientEmail,
       apiUrl: config.API_URL,
       captureTarget,
       anchorToPreview,
@@ -29,6 +32,7 @@ const EmbeddedFeedbackWidget = forwardRef(function EmbeddedFeedbackWidget(
     }),
     [
       projectId,
+      getClientEmail,
       captureTarget,
       anchorToPreview,
       hideDefaultTrigger,

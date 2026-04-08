@@ -2,7 +2,7 @@ import fetch from "node-fetch";
 import path from "path";
 import fs from "fs-extra";
 import { execFileSync } from "child_process";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import {
   ensureBranchFrom,
   updateRef,
@@ -27,9 +27,9 @@ import {
 import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
 import ApiError from "../utils/apiError.js";
 import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
+import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 
 const CURSOR_BASE_URL = "https://api.cursor.com";
-const prisma = new PrismaClient();
 const POLL_INTERVAL_MS = 5000;
 const ENV_GITHUB_USERNAME = process.env.GITHUB_USERNAME;
 /**
@@ -673,31 +673,16 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
       try {
         gitExec(["clone", cloneUrl, "."], tempRoot);
 
-        // Merge already advanced refs/heads/launchpad to headSha. Build from that branch so the
-        // install/build always matches the merged tip (moved tags can lag or resolve stale in fetch).
-        let builtFromLaunchpad = false;
+        // Build only from the release tag at headSha (created/moved above). Do not use origin/launchpad.
         try {
           gitExec(
-            [
-              "fetch",
-              "origin",
-              `refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`,
-            ],
+            ["fetch", "origin", `refs/tags/${tagName}:refs/tags/${tagName}`],
             tempRoot,
           );
-          gitExec(["checkout", "-f", `origin/${baseBranch}`], tempRoot);
-          builtFromLaunchpad = true;
         } catch {
-          try {
-            gitExec(
-              ["fetch", "origin", `refs/tags/${tagName}:refs/tags/${tagName}`],
-              tempRoot,
-            );
-          } catch {
-            gitExec(["fetch", "origin", "tag", tagName], tempRoot);
-          }
-          gitExec(["checkout", "-f", tagName], tempRoot);
+          gitExec(["fetch", "origin", "tag", tagName], tempRoot);
         }
+        gitExec(["checkout", "-f", tagName], tempRoot);
 
         const sourceRoot = findProjectRoot(tempRoot);
         const buildOutputPath = await runBuildSequence(sourceRoot);
@@ -848,8 +833,17 @@ export async function performMergeToLaunchpad(agentId, agentData, options = {}) 
     throw new Error("Agent has no target branch name");
   }
 
-  const headShaResult = await scmGetBranchSha(provider, owner, repo, headBranch, token);
-  if (!headShaResult) {
+  const polledTip = await waitForAgentBranchTipSha({
+    provider,
+    owner,
+    repo,
+    branch: headBranch,
+    token,
+  });
+  const headShaResult = polledTip
+    ? { sha: polledTip }
+    : await scmGetBranchSha(provider, owner, repo, headBranch, token);
+  if (!headShaResult?.sha) {
     throw new Error("Could not get agent branch SHA; branch may not exist");
   }
   const headSha = headShaResult.sha;
