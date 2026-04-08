@@ -26,10 +26,16 @@ RUN npm ci
 COPY frontend/ .
 RUN npm run build
 
-# Serve dist on port 80 (no nginx)
+# Static app + /iframe-preview/<port>/ proxy (same behavior as Vite dev)
 FROM node:20-alpine
-RUN npm install -g serve
-COPY --from=build /app/dist /app/dist
 WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* ./
+# --ignore-scripts: prepare runs husky (devDependency); not needed in the runtime image
+RUN npm ci --omit=dev --ignore-scripts
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/serve-static.mjs /app/iframePreviewProxy.js ./
 EXPOSE 80
-CMD ["serve", "-s", "dist", "-l", "80"]
+ENV PORT=80
+# Preview servers listen on the backend container; override only for custom topologies
+ENV IFRAME_PREVIEW_HOST=http://backend
+CMD ["node", "serve-static.mjs"]

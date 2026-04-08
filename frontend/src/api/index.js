@@ -492,6 +492,21 @@ export const clientLinkRevertMerge = async (
   return response.data;
 };
 
+/** Public: re-fetch tag, rebuild, redeploy live preview (long-running; same timeout as release upload). */
+export const clientLinkRefreshLiveBuild = async (
+  slug,
+  releaseId,
+  clientEmail = "",
+) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const response = await api.post(
+    `/api/chat/${enc}/refresh-build`,
+    { r: Number(releaseId), clientEmail: String(clientEmail || "").trim() },
+    { timeout: 2 * 60 * 60 * 1000 },
+  );
+  return response.data;
+};
+
 
 // Function to upload ZIP to a release
 export const uploadToRelease = async (releaseId, file, roadmapItemIds) => {

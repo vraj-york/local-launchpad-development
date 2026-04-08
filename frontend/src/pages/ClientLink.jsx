@@ -182,6 +182,17 @@ export const ClientLink = () => {
     }
   }, [projectSlug]);
 
+  /** Fetch latest project JSON without full-page loading state or clearing preview context (post-chat / chat refresh). */
+  const reloadProjectQuiet = useCallback(async () => {
+    if (!projectSlug?.trim()) return;
+    try {
+      const data = await fetchPublicProjectBySlug(projectSlug);
+      setPublicProject(data);
+    } catch (error) {
+      console.error("Failed to refresh project data:", error);
+    }
+  }, [projectSlug]);
+
   useEffect(() => {
     loadProject();
   }, [loadProject]);
@@ -856,7 +867,7 @@ export const ClientLink = () => {
               isOpen={chatOpen}
               mergeTargetLabel={chatMergeTargetLabel}
               onPreviewCommitApplied={handleChatPreviewCommitApplied}
-              onProjectReload={loadProject}
+              onProjectReloadQuiet={reloadProjectQuiet}
               onResetPreview={handleChatResetPreview}
               onCloseChat={() => setChatOpen(false)}
               pickedElementContext={pickedElementContext}

@@ -5,6 +5,7 @@ import {
   clientLinkExecutionSummary,
   clientLinkListChatMessages,
   clientLinkRevertMergedMessage,
+  clientLinkRefreshLiveBuild,
 } from "../services/chat.service.js";
 import ApiError from "../utils/apiError.js";
 
@@ -108,6 +109,26 @@ router.get("/:slug/messages", async (req, res) => {
   try {
     if (!releaseId) return res.status(400).json({ error: "Release (r) required" });
     const result = await clientLinkListChatMessages({ slug, releaseId });
+    return res.json(result);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+/** POST /api/chat/:slug/refresh-build — re-checkout active version tag, rebuild, redeploy live folder */
+router.post("/:slug/refresh-build", async (req, res) => {
+  const slug = req.params.slug;
+  const releaseId = readReleaseId(req.body, req.query);
+  try {
+    if (!releaseId) return res.status(400).json({ error: "Release (r) required" });
+    const result = await clientLinkRefreshLiveBuild({
+      slug,
+      releaseId,
+      clientEmail: readClientEmail(req.body),
+    });
     return res.json(result);
   } catch (err) {
     if (err instanceof ApiError) {

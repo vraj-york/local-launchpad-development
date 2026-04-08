@@ -23,7 +23,6 @@ import {
 import {
   compareRefs,
   parseGitRepoPath,
-  getBranchSha,
   getCommitInfo,
   getRepositoryMetadata,
   putRepositoryContents,
@@ -35,44 +34,10 @@ import {
   deployVersionArtifactsToProjectFolder,
 } from "./project.service.js";
 import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
+import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 
 const prisma = new PrismaClient();
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Cursor reports FINISHED before GitHub's refs/heads often show the new push. Wait, then poll until
- * the branch tip SHA changes from the first read or we exhaust attempts; confirm with one more read.
- */
-const CLIENT_CHAT_BRANCH_TIP_INITIAL_DELAY_MS = 5500;
-const CLIENT_CHAT_BRANCH_TIP_POLL_MS = 2500;
-const CLIENT_CHAT_BRANCH_TIP_MAX_POLLS = 22;
-
-/** TEMP: GitHub /commits often lags refs/heads; wait before listing so [0] matches tip. */
-async function waitForClientChatBranchTipSha(repoCtx, branchName) {
-  const { owner, repo, token } = repoCtx;
-  const b = String(branchName || "").trim();
-  if (!b) return null;
-
-  await delay(CLIENT_CHAT_BRANCH_TIP_INITIAL_DELAY_MS);
-  let baseline = (await getBranchSha(owner, repo, b, token))?.sha ?? null;
-  let latest = baseline;
-
-  for (let i = 0; i < CLIENT_CHAT_BRANCH_TIP_MAX_POLLS; i++) {
-    await delay(CLIENT_CHAT_BRANCH_TIP_POLL_MS);
-    const next = (await getBranchSha(owner, repo, b, token))?.sha ?? null;
-    if (next) latest = next;
-    if (baseline != null && latest != null && latest !== baseline) {
-      await delay(CLIENT_CHAT_BRANCH_TIP_POLL_MS);
-      const confirmed = (await getBranchSha(owner, repo, b, token))?.sha ?? latest;
-      return confirmed;
-    }
-  }
-  return latest;
-}
 
 /** Appended to Cursor prompt only (not stored in ChatHistory). Max 5MB base64 payload. */
 const CLIENT_REPO_IMAGE_INSTRUCTION = `
@@ -478,7 +443,7 @@ async function resolveClientChatRepository(project) {
 }
 
 /**
- * Set ChatHistory.appliedCommitSha from GitHub HEAD of the branch where Cursor actually commits.
+ * Set ChatHistory.appliedCommitSha from the remote branch tip where Cursor actually commits.
  * Branch name is taken from Cursor GET agent `target.branchName` first, then DB `targetBranchName`.
  * Resolves FigmaConversion by ChatHistory id === pendingClientChatMessageId.
  */
@@ -550,7 +515,7 @@ async function syncPendingMessageCommitSha(project, conv) {
     if (!head?.sha) {
       return null;
     }
-    const tipSha = await waitForClientChatBranchTipSha(repo, branch);
+    const tipSha = await waitForAgentBranchTipSha({ ...repo, branch });
     if (!tipSha) {
       return null;
     }
@@ -1570,7 +1535,7 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
     if (branchForHead) {
       try {
         const repo = await resolveClientChatRepository(project);
-        requestedSha = await waitForClientChatBranchTipSha(repo, branchForHead);
+        requestedSha = await waitForAgentBranchTipSha({ ...repo, branch: branchForHead });
         if (requestedSha && pendingOk) {
           await prisma.chatHistory.updateMany({
             where: {
@@ -1880,6 +1845,52 @@ export async function clientLinkRestoreVersion({
       data: { isActive: true },
     }),
   ]);
+
+  return {
+    ok: true,
+    buildUrl: deployed.buildUrl,
+    version: deployed.version,
+    tag: deployed.tag,
+  };
+}
+
+/**
+ * Public: re-checkout the active version’s git tag, rebuild, and redeploy to the project folder
+ * (same as deploy after merge). Used by client-link “refresh preview” when the UI is stale.
+ */
+export async function clientLinkRefreshLiveBuild({
+  slug,
+  releaseId,
+  clientEmail,
+}) {
+  const project = await resolveProjectBySlug(slug);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  const release = await assertReleaseBelongs(releaseId, project.id);
+  assertReleaseNotLocked(release);
+
+  const version = await prisma.projectVersion.findFirst({
+    where: { projectId: project.id, isActive: true },
+    select: { id: true, version: true, gitTag: true, releaseId: true },
+  });
+  if (!version) {
+    throw new ApiError(
+      400,
+      "No active deployed version to refresh. Merge or restore a version first.",
+    );
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: project.assignedManagerId },
+  });
+  if (!user) {
+    throw new ApiError(500, "Project has no assigned manager");
+  }
+
+  const deployed = await deployVersionArtifactsToProjectFolder({
+    projectId: project.id,
+    versionId: version.id,
+    user,
+  });
 
   return {
     ok: true,
