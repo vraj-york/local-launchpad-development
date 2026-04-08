@@ -4,44 +4,38 @@ import { parseStoredEmailListToSet } from "./emailList.utils.js";
 
 /** @typedef {'aiChat' | 'issueReporter' | 'releaseLock'} StakeholderGateContext */
 
+/** Single copy used for every access denial in this module (empty list or email not allowed). */
+const UNAUTHORIZED_PUBLIC_CLIENT_MESSAGE =
+  "You are not authorized. Please contact your product manager to request access.";
+
 const GATE_MESSAGES = {
   aiChat: {
     emailRequired:
       "Please enter your email to continue.",
     invalidEmail:
       "Please enter a valid email address.",
-    unauthorized:
-      "You are not authorized. Please contact your product manager to request access.",
+    unauthorized: UNAUTHORIZED_PUBLIC_CLIENT_MESSAGE,
   },
   issueReporter: {
     emailRequired:
       "Please enter your email to submit.",
     invalidEmail:
       "Please enter a valid email address.",
-    unauthorized:
-      "You are not authorized. Please contact your product manager to request access.",
+    unauthorized: UNAUTHORIZED_PUBLIC_CLIENT_MESSAGE,
   },
   releaseLock: {
     emailRequired:
       "Please enter your email to continue.",
     invalidEmail:
       "Please enter a valid email address.",
-    unauthorized:
-      "You are not authorized. Please contact your product manager to request access.",
+    unauthorized: UNAUTHORIZED_PUBLIC_CLIENT_MESSAGE,
   },
 };
 
-/** HTTP status when the project has no stakeholder emails configured */
-const EMPTY_STAKEHOLDER_STATUS = {
-  aiChat: 400,
-  issueReporter: 400,
-  releaseLock: 403,
-};
-
 /**
- * Same rules for client-link surfaces: stakeholders must be configured; client
- * email must be present, valid, and in the list. Messages identify the feature
- * and what is missing.
+ * Client-link gates: client email must be present and valid (400).
+ * The project must have at least one stakeholder email, and the client email
+ * must be in that list; otherwise 403 with {@link UNAUTHORIZED_PUBLIC_CLIENT_MESSAGE}.
  *
  * @param {string|null|undefined} stakeholderCsv
  * @param {unknown} clientEmailRaw
@@ -72,10 +66,9 @@ export function assertPublicClientStakeholderEmail(
 
   const stakeholderSet = parseStoredEmailListToSet(stakeholderCsv);
   if (stakeholderSet.size === 0) {
-    const status = EMPTY_STAKEHOLDER_STATUS[context] ?? 400;
-    throw new ApiError(status, msgs.noStakeholdersOnProject);
+    throw new ApiError(403, msgs.unauthorized);
   }
   if (!stakeholderSet.has(email)) {
-    throw new ApiError(403, msgs.emailNotOnStakeholderList);
+    throw new ApiError(403, msgs.unauthorized);
   }
 }

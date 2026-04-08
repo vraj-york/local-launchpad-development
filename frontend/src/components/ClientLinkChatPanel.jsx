@@ -481,7 +481,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       throw new Error("Missing release or project.");
     }
     const email = identityEmail?.trim();
-    if (!email || !LOCK_EMAIL_RE.test(email)) {
+    if (!email || !isPlausibleClientLinkEmail(email)) {
       throw new Error("Client email is not verified.");
     }
     await clientLinkRefreshLiveBuild(
