@@ -8,6 +8,7 @@ import {
   getRoadmapItemsByProjectId,
   patchRelease,
   fetchReleaseChangelog,
+  regenerateReleaseReviewSummary,
 } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -78,6 +79,9 @@ const CHANGELOG_FIELD_LABELS = {
   isMvp: "MVP",
   lockedBy: "Locked by",
   clientReleaseNote: "Client release note",
+  clientReviewAiSummary: "What to review (client)",
+  showClientReviewSummary: "Show review checklist to client",
+  clientReviewAiGenerationContext: "AI generation context (internal)",
 };
 
 function actualShipDateChanged(prevDate, nextDate) {
@@ -312,6 +316,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
 
   const [editDialog, setEditDialog] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
+  const [aiSummaryRegenerating, setAiSummaryRegenerating] = useState(false);
 
   const [changelogByRelease, setChangelogByRelease] = useState({});
   const [changelogLoadingId, setChangelogLoadingId] = useState(null);
@@ -411,17 +416,72 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
         : null,
       actualReleaseNotes: release.actualReleaseNotes ?? "",
       clientReleaseNote: release.clientReleaseNote ?? "",
+      clientReviewAiSummary: release.clientReviewAiSummary ?? "",
+      clientReviewAiSummaryAt: release.clientReviewAiSummaryAt ?? null,
+      clientReviewAiSummaryError: release.clientReviewAiSummaryError ?? null,
+      showClientReviewSummary: release.showClientReviewSummary !== false,
+      clientReviewAiGenerationContext:
+        release.clientReviewAiGenerationContext ?? "",
       isLocked: isReleaseLocked(release),
       reason: "",
     });
+  };
+
+  const handleRegenerateClientReviewSummary = async () => {
+    if (!editDialog?.id) return;
+    setAiSummaryRegenerating(true);
+    try {
+      const data = await regenerateReleaseReviewSummary(editDialog.id, {
+        clientReviewAiGenerationContext:
+          editDialog.clientReviewAiGenerationContext ?? "",
+      });
+      if (data.ok) {
+        toast.success("Client review summary updated");
+      } else {
+        toast.error(data.error || "Could not generate summary");
+      }
+      const rel = data.release;
+      if (rel && editDialog && Number(rel.id) === Number(editDialog.id)) {
+        setEditDialog((prev) =>
+          prev
+            ? {
+                ...prev,
+                clientReviewAiSummary: rel.clientReviewAiSummary ?? "",
+                clientReviewAiSummaryAt: rel.clientReviewAiSummaryAt ?? null,
+                clientReviewAiSummaryError:
+                  rel.clientReviewAiSummaryError ?? null,
+                showClientReviewSummary:
+                  rel.showClientReviewSummary !== false,
+                clientReviewAiGenerationContext:
+                  rel.clientReviewAiGenerationContext ?? "",
+              }
+            : prev,
+        );
+      }
+      await loadReleases();
+    } catch (err) {
+      toast.error(err.error || err.message || "Failed to regenerate summary");
+    } finally {
+      setAiSummaryRegenerating(false);
+    }
   };
 
   const saveEditRelease = async (e) => {
     e.preventDefault();
     if (!editDialog) return;
     const noteTrimmed = editDialog.clientReleaseNote.trim() || null;
+    const reviewSummaryTrimmed =
+      editDialog.clientReviewAiSummary.trim() || null;
+    const aiContextTrimmed =
+      editDialog.clientReviewAiGenerationContext.trim() || null;
+    const clientLinkPayload = {
+      clientReleaseNote: noteTrimmed,
+      clientReviewAiSummary: reviewSummaryTrimmed,
+      showClientReviewSummary: editDialog.showClientReviewSummary === true,
+      clientReviewAiGenerationContext: aiContextTrimmed,
+    };
     const payload = editDialog.isLocked
-      ? { clientReleaseNote: noteTrimmed }
+      ? clientLinkPayload
       : {
         description: editDialog.description.trim() || null,
         isMvp: editDialog.isMvp,
@@ -436,7 +496,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
           : null,
         actualReleaseNotes:
           editDialog.actualReleaseNotes.trim() || null,
-        clientReleaseNote: noteTrimmed,
+        ...clientLinkPayload,
         reason: editDialog.reason.trim(),
       };
     try {
@@ -1752,6 +1812,117 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                     }
                     className="resize-y min-h-[72px]"
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-ai-generation-context">
+                    Notes for AI when generating checklist (optional, not shown to
+                    clients)
+                  </Label>
+                  <Textarea
+                    id="edit-ai-generation-context"
+                    rows={4}
+                    placeholder="e.g. Focus on checkout and login; ignore admin settings. Mention the new reporting widget."
+                    value={editDialog.clientReviewAiGenerationContext}
+                    onChange={(e) =>
+                      setEditDialog((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              clientReviewAiGenerationContext: e.target.value,
+                            }
+                          : prev,
+                      )
+                    }
+                    className="resize-y min-h-[88px] text-sm"
+                  />
+                  <p className="text-xs text-slate-500">
+                    Saved with the release and sent to the model when you click
+                    Regenerate. You can regenerate without saving first — current
+                    text in this box is used.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-client-review-summary">
+                    What to review (optional — edit manually or use AI)
+                  </Label>
+                  <Textarea
+                    id="edit-client-review-summary"
+                    rows={6}
+                    placeholder="Bullet list of what clients should verify. Leave empty until you save or regenerate with AI."
+                    value={editDialog.clientReviewAiSummary}
+                    onChange={(e) =>
+                      setEditDialog((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              clientReviewAiSummary: e.target.value,
+                            }
+                          : prev,
+                      )
+                    }
+                    className="resize-y min-h-[120px] font-mono text-sm"
+                  />
+                  <div className="flex items-start gap-3 rounded-lg border border-slate-100 bg-white/80 px-3 py-2">
+                    <Checkbox
+                      id="edit-show-client-review"
+                      checked={editDialog.showClientReviewSummary === true}
+                      onCheckedChange={(checked) =>
+                        setEditDialog((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                showClientReviewSummary: checked === true,
+                              }
+                            : prev,
+                        )
+                      }
+                      className="mt-0.5"
+                    />
+                    <Label
+                      htmlFor="edit-show-client-review"
+                      className="cursor-pointer text-sm leading-snug text-slate-700"
+                    >
+                      Show “What to review” on the client link when text is
+                      present
+                    </Label>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={aiSummaryRegenerating || editSaving}
+                      onClick={handleRegenerateClientReviewSummary}
+                    >
+                      {aiSummaryRegenerating ? (
+                        <>
+                          <Spinner className="size-4" /> Generating…
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="size-4" />
+                          Regenerate AI “what to review”
+                        </>
+                      )}
+                    </Button>
+                    {editDialog.clientReviewAiSummaryAt ? (
+                      <span className="text-xs text-slate-500">
+                        Last AI run:{" "}
+                        {new Date(
+                          editDialog.clientReviewAiSummaryAt,
+                        ).toLocaleString(undefined, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })}
+                      </span>
+                    ) : null}
+                  </div>
+                  {editDialog.clientReviewAiSummaryError ? (
+                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
+                      AI summary error: {editDialog.clientReviewAiSummaryError}
+                    </p>
+                  ) : null}
                 </div>
               </div>
               <DialogFooter className="gap-2">

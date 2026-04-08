@@ -24,14 +24,17 @@ import {
   setReleaseStatusService as applyReleaseStatus,
 } from "./release.service.js";
 import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
-import { parseScmRepoPath } from "../utils/scmPath.js";
+import { parseScmRepoPath, repositoryPlatformFromUrl } from "../utils/scmPath.js";
 import {
+  addBitbucketRepositoryCollaborator,
   createBitbucketRepository,
   getBitbucketRepositoryMetadata,
   getDefaultBitbucketWorkspace,
 } from "./bitbucket.service.js";
 import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils.js";
+import { scheduleRegenerateClientReviewSummary } from "./releaseReviewSummary.service.js";
 import { normalizeOptionalEmailListString } from "../utils/emailList.utils.js";
+import { resolveNginxBinary, signalNginxReload } from "../utils/nginxBinary.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import { maskProjectSecrets } from "../utils/secretMasking.js";
 import {
@@ -89,10 +92,23 @@ function normalizeGitRepoPathValue(raw) {
   return `${host}/${parsed.owner}/${parsed.repo}`;
 }
 
-function buildGitRemoteUrl(gitRepoPath, token) {
-  const parsed = parseGitRepoPath(gitRepoPath);
+const REPO_PLATFORM_IMMUTABLE_MSG =
+  "Repository platform cannot be changed once set. Both source and development repositories must remain on the same platform.";
+
+const REPO_PLATFORM_PAIR_MISMATCH_MSG =
+  "Source repository (gitRepoPath) and development repository (developmentRepoUrl) must be on the same platform (GitHub or Bitbucket).";
+
+/**
+ * HTTPS remote with embedded token for non-interactive git fetch/push (GitHub or Bitbucket).
+ */
+function buildScmAuthenticatedRemoteUrl(gitRepoPath, token) {
+  const parsed = parseScmRepoPath(String(gitRepoPath || ""));
   if (!parsed || !token?.trim()) return null;
-  return `https://x-access-token:${token.trim()}@github.com/${parsed.owner}/${parsed.repo}.git`;
+  const t = token.trim();
+  if (parsed.provider === "github") {
+    return `https://x-access-token:${t}@github.com/${parsed.owner}/${parsed.repo}.git`;
+  }
+  return `https://x-token-auth:${t}@bitbucket.org/${parsed.owner}/${parsed.repo}.git`;
 }
 
 function listProjectVersionTags(rows) {
@@ -105,16 +121,46 @@ function listProjectVersionTags(rows) {
   );
 }
 
-function ensureTagExistsInRemote(remoteUrl, tag, cwd) {
+function remoteHasTag(remoteUrl, tag, cwd) {
   const output = execFileSync(
     "git",
     ["ls-remote", "--tags", remoteUrl, `refs/tags/${tag}`],
     { cwd, encoding: "utf8", timeout: 120000 },
   ).trim();
-  if (!output) {
+  return Boolean(output);
+}
+
+function tagExistsInBareMirror(bareGitDir, tag, cwd) {
+  try {
+    execFileSync(
+      "git",
+      ["--git-dir", bareGitDir, "show-ref", "--verify", "--quiet", `refs/tags/${tag}`],
+      { cwd, stdio: "ignore", timeout: 60000 },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureRequiredTagsOnSourceMirror(bareGitDir, tags, cwd) {
+  for (const tag of tags) {
+    if (!tagExistsInBareMirror(bareGitDir, tag, cwd)) {
+      throw new ApiError(
+        400,
+        `Repository migration failed: release tag "${tag}" is not on the current (source) repository. ` +
+          "Push that tag to the source repo, or remove/correct the project version that references it, then try again.",
+      );
+    }
+  }
+}
+
+function ensureTagExistsOnDestination(remoteUrl, tag, cwd) {
+  if (!remoteHasTag(remoteUrl, tag, cwd)) {
     throw new ApiError(
       400,
-      `Repository migration failed: required tag "${tag}" is missing on destination repository.`,
+      `Repository migration failed: required tag "${tag}" is missing on destination repository after push. ` +
+        "Confirm the token can push tags and that the tag is not blocked by an existing conflicting ref.",
     );
   }
 }
@@ -122,19 +168,19 @@ function ensureTagExistsInRemote(remoteUrl, tag, cwd) {
 function migrateProjectRepositoryRefs({
   oldGitRepoPath,
   newGitRepoPath,
-  githubToken,
+  accessToken,
   requiredTags,
   backendRoot,
   projectId,
 }) {
   if (!oldGitRepoPath || !newGitRepoPath || oldGitRepoPath === newGitRepoPath) return;
 
-  const oldRemoteUrl = buildGitRemoteUrl(oldGitRepoPath, githubToken);
-  const newRemoteUrl = buildGitRemoteUrl(newGitRepoPath, githubToken);
+  const oldRemoteUrl = buildScmAuthenticatedRemoteUrl(oldGitRepoPath, accessToken);
+  const newRemoteUrl = buildScmAuthenticatedRemoteUrl(newGitRepoPath, accessToken);
   if (!oldRemoteUrl || !newRemoteUrl) {
     throw new ApiError(
       400,
-      "Repository migration failed: git repo path and GitHub token are required.",
+      "Repository migration failed: git repo path and repository access token are required.",
     );
   }
 
@@ -158,6 +204,25 @@ function migrateProjectRepositoryRefs({
       console.warn(
         `[repo-migration] non-destructive push skipped some refs: ${e?.message || e}`,
       );
+      return false;
+    }
+  };
+  const tryPushSingleTag = (tag) => {
+    try {
+      execFileSync(
+        "git",
+        [
+          "--git-dir",
+          bareMirrorDir,
+          "push",
+          "new-origin",
+          `refs/tags/${tag}:refs/tags/${tag}`,
+        ],
+        { cwd: backendRoot, encoding: "utf8", timeout: 300000 },
+      );
+      return true;
+    } catch (e) {
+      console.warn(`[repo-migration] single-tag push failed for ${tag}: ${e?.message || e}`);
       return false;
     }
   };
@@ -190,14 +255,21 @@ function migrateProjectRepositoryRefs({
       ],
       { cwd: backendRoot, encoding: "utf8", timeout: 300000 },
     );
+    ensureRequiredTagsOnSourceMirror(bareMirrorDir, requiredTags, backendRoot);
     // Non-destructive migration: push available branches/tags without deleting or force-overwriting
     // existing destination refs.
     tryNonDestructivePush(["--git-dir", bareMirrorDir, "push", "new-origin", "--all"]);
     tryNonDestructivePush(["--git-dir", bareMirrorDir, "push", "new-origin", "--tags"]);
     for (const tag of requiredTags) {
-      ensureTagExistsInRemote(newRemoteUrl, tag, backendRoot);
+      if (!remoteHasTag(newRemoteUrl, tag, backendRoot) && tagExistsInBareMirror(bareMirrorDir, tag, backendRoot)) {
+        tryPushSingleTag(tag);
+      }
+    }
+    for (const tag of requiredTags) {
+      ensureTagExistsOnDestination(newRemoteUrl, tag, backendRoot);
     }
   } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw new ApiError(
       400,
       `Repository migration failed: ${error?.message || "unable to mirror refs"}`,
@@ -207,10 +279,10 @@ function migrateProjectRepositoryRefs({
   }
 }
 
-function refreshSharedGitCacheRemote(gitRepoPath, githubToken, backendRoot) {
+function refreshSharedGitCacheRemote(gitRepoPath, accessToken, backendRoot) {
   const gitDir = path.join(getProjectsDir(), ".git");
   if (!fsExtra.existsSync(gitDir)) return;
-  const remoteUrl = buildGitRemoteUrl(gitRepoPath, githubToken);
+  const remoteUrl = buildScmAuthenticatedRemoteUrl(gitRepoPath, accessToken);
   if (!remoteUrl) return;
   try {
     execFileSync("git", ["--git-dir", gitDir, "remote", "set-url", "origin", remoteUrl], {
@@ -509,14 +581,7 @@ export const allowPortThroughFirewall = async (port) => {
 };
 export const reloadNginx = async () => {
   try {
-    const { stdout } = await execAsync('which nginx');
-    const nginxBin = stdout.trim();
-    // Docker/backend-as-root: no sudo. Host Linux: sudo usually required.
-    try {
-      await execAsync(`${nginxBin} -s reload`);
-    } catch {
-      await execAsync(`sudo ${nginxBin} -s reload`);
-    }
+    await signalNginxReload();
     return true;
   } catch (error) {
     console.error(`[NGINX RELOAD ERROR]: ${error.message}`);
@@ -691,6 +756,27 @@ export const createProjectService = async ({ userId, body }) => {
     } else {
       await validateGithubConnection(effGithubUsername, effGithubToken);
     }
+
+    if (developmentRepoUrl == null || !String(developmentRepoUrl).trim()) {
+      throw new ApiError(400, "developmentRepoUrl is required (developer repository path).");
+    }
+    const devCanonical = normalizeGitRepoPathValue(developmentRepoUrl);
+    if (!devCanonical) {
+      throw new ApiError(
+        400,
+        "developmentRepoUrl must be a valid GitHub or Bitbucket repository path",
+      );
+    }
+
+    const requestedMainNorm = normalizeGitRepoPathValue(gitRepoPath);
+    if (requestedMainNorm) {
+      const reqPl = repositoryPlatformFromUrl(requestedMainNorm);
+      const devPlEarly = repositoryPlatformFromUrl(devCanonical);
+      if (reqPl && devPlEarly && reqPl !== devPlEarly) {
+        throw new ApiError(400, REPO_PLATFORM_PAIR_MISMATCH_MSG);
+      }
+    }
+
     // 2. Paths: projects and nginx-configs live under backend (backend/projects, backend/nginx-configs)
     const backendRoot = getBackendRoot();
     const baseSlug = projectRepoSlugFromDisplayName(nameTrimmed);
@@ -726,6 +812,8 @@ export const createProjectService = async ({ userId, body }) => {
     };
     let gitRepoUrl = null;
     let persistedGitRepoPath = null;
+    const defaultScmCollaborator =
+      process.env.GITHUB_DEFAULT_COLLABORATOR || "kalrav@york.ie";
     if (bitbucketConnectionId && effBitbucketToken) {
       try {
         const requestedGitRepoPath = normalizeGitRepoPathValue(gitRepoPath);
@@ -752,6 +840,21 @@ export const createProjectService = async ({ userId, body }) => {
           await createBitbucketRepository(ws, slug, effBitbucketToken);
           persistedGitRepoPath = `bitbucket.org/${ws}/${slug}`;
           gitRepoUrl = `https://bitbucket.org/${ws}/${slug}`;
+        }
+
+        const bbCollabParsed = parseScmRepoPath(persistedGitRepoPath);
+        if (bbCollabParsed?.provider === "bitbucket") {
+          const invitedBb = await addBitbucketRepositoryCollaborator(
+            bbCollabParsed.owner,
+            bbCollabParsed.repo,
+            defaultScmCollaborator,
+            effBitbucketToken,
+          );
+          if (!invitedBb) {
+            console.warn(
+              "[createProject] Bitbucket collaborator permission skipped or failed. Set collaborator to a valid username.",
+            );
+          }
         }
       } catch (e) {
         console.warn("[createProject] Bitbucket repo:", e.message);
@@ -787,19 +890,17 @@ export const createProjectService = async ({ userId, body }) => {
         }
 
         const collaboratorRepo = parseGitRepoPath(persistedGitRepoPath);
-        const defaultCollaborator =
-          process.env.GITHUB_DEFAULT_COLLABORATOR || "kalrav@york.ie";
         if (collaboratorRepo) {
           const invited = await addGithubCollaborator(
             collaboratorRepo.owner,
             collaboratorRepo.repo,
-            defaultCollaborator,
+            defaultScmCollaborator,
             githubCreds.githubToken,
             "push",
           );
           if (!invited) {
             console.warn(
-              "[createProject] Collaborator invite skipped or failed. Set GITHUB_DEFAULT_COLLABORATOR to a valid GitHub username.",
+              "[createProject] Collaborator invite skipped or failed. Set GITHUB_DEFAULT_COLLABORATOR to a valid username.",
             );
           }
         }
@@ -812,20 +913,58 @@ export const createProjectService = async ({ userId, body }) => {
       }
     }
 
-    let persistedDeveloperRepoUrl = null;
-    const requestedDeveloperRepo = normalizeGitRepoPathValue(developmentRepoUrl);
-    if (requestedDeveloperRepo) {
-      if (!parseScmRepoPath(requestedDeveloperRepo)) {
-        throw new ApiError(400, "developmentRepoUrl must be a valid GitHub or Bitbucket repository path");
-      }
-      const mainNorm = normalizeGitRepoPathValue(persistedGitRepoPath);
-      if (mainNorm && requestedDeveloperRepo === mainNorm) {
-        throw new ApiError(
-          400,
-          "developmentRepoUrl must differ from the platform Git repository (gitRepoPath).",
+    const mainNorm = normalizeGitRepoPathValue(persistedGitRepoPath);
+    if (mainNorm && devCanonical === mainNorm) {
+      throw new ApiError(
+        400,
+        "developmentRepoUrl must differ from the platform Git repository (gitRepoPath).",
+      );
+    }
+    const persistedSrcPl = repositoryPlatformFromUrl(persistedGitRepoPath || "");
+    const persistedDevPl = repositoryPlatformFromUrl(devCanonical);
+    if (!persistedSrcPl || !persistedDevPl || persistedSrcPl !== persistedDevPl) {
+      throw new ApiError(400, REPO_PLATFORM_PAIR_MISMATCH_MSG);
+    }
+    const persistedDeveloperRepoUrl = devCanonical;
+
+    const devParsedForInvite = parseScmRepoPath(devCanonical);
+    if (devParsedForInvite?.provider === "github" && effGithubToken) {
+      try {
+        const invitedDevGh = await addGithubCollaborator(
+          devParsedForInvite.owner,
+          devParsedForInvite.repo,
+          defaultScmCollaborator,
+          effGithubToken,
+          "push",
         );
+        if (!invitedDevGh) {
+          console.warn(
+            "[createProject] Developer repo GitHub collaborator invite skipped or failed. Set GITHUB_DEFAULT_COLLABORATOR to a valid username.",
+          );
+        }
+      } catch (e) {
+        console.warn("[createProject] Developer repo GitHub collaborator:", e.message);
       }
-      persistedDeveloperRepoUrl = requestedDeveloperRepo;
+    } else if (devParsedForInvite?.provider === "bitbucket" && effBitbucketToken) {
+      try {
+        const invitedDevBb = await addBitbucketRepositoryCollaborator(
+          devParsedForInvite.owner,
+          devParsedForInvite.repo,
+          defaultScmCollaborator,
+          effBitbucketToken,
+        );
+        if (!invitedDevBb) {
+          console.warn(
+            "[createProject] Developer repo Bitbucket permission skipped or failed. Set GITHUB_DEFAULT_COLLABORATOR to a valid username.",
+          );
+        }
+      } catch (e) {
+        console.warn("[createProject] Developer repo Bitbucket collaborator:", e.message);
+      }
+    } else if (devParsedForInvite) {
+      console.warn(
+        `[createProject] No token available to grant default collaborator on developer repo (${devParsedForInvite.provider}); grant access manually or connect that host.`,
+      );
     }
 
     // 4. Directory Prep
@@ -913,14 +1052,7 @@ export const createProjectService = async ({ userId, body }) => {
 export const getNginxPaths = async () => {
   const isLinux = os.platform() === 'linux';
 
-  // Find the real binary path (e.g., /usr/local/bin/nginx or /usr/sbin/nginx)
-  let binary;
-  try {
-    const { stdout } = await execAsync('which nginx');
-    binary = stdout.trim();
-  } catch {
-    binary = isLinux ? '/usr/sbin/nginx' : '/usr/local/bin/nginx';
-  }
+  const binary = await resolveNginxBinary();
 
   // Determine the enabled directory (Linux: system; else: under backend for local dev)
   const enabledDir = isLinux
@@ -1114,6 +1246,9 @@ export const getProjectByIdService = async (
       status: true,
       lockedBy: true,
       clientReleaseNote: true,
+      clientReviewAiSummary: true,
+      clientReviewAiSummaryAt: true,
+      showClientReviewSummary: true,
       versions: {
         orderBy: { id: "desc" },
         select: {
@@ -1130,7 +1265,7 @@ export const getProjectByIdService = async (
 
   // Slug / public: only id + name on Project; full row when fetching by project id.
   if (isSlugMode) {
-    return prisma.project.findUnique({
+    const raw = await prisma.project.findUnique({
       where,
       select: {
         id: true,
@@ -1139,6 +1274,23 @@ export const getProjectByIdService = async (
         releases: releasesQuery,
       },
     });
+    if (!raw) return null;
+    return {
+      ...raw,
+      releases: raw.releases.map((r) => {
+        const show = r.showClientReviewSummary !== false;
+        return {
+          id: r.id,
+          name: r.name,
+          status: r.status,
+          lockedBy: r.lockedBy,
+          clientReleaseNote: r.clientReleaseNote,
+          clientReviewAiSummary: show ? r.clientReviewAiSummary : null,
+          clientReviewAiSummaryAt: show ? r.clientReviewAiSummaryAt : null,
+          versions: r.versions,
+        };
+      }),
+    };
   }
 
   await assertProjectReadAccess(Number(projectId), user);
@@ -1474,6 +1626,10 @@ export async function activateProjectVersionService({
     });
   });
 
+  if (version.releaseId != null) {
+    scheduleRegenerateClientReviewSummary(version.releaseId);
+  }
+
   return {
     message: "Version activated; projects folder updated from tag",
     version: deployed.version,
@@ -1655,6 +1811,24 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     throw new ApiError(400, "No updatable fields provided");
   }
 
+  const existingGitForLock =
+    normalizeGitRepoPathValue(existingProject.gitRepoPath) ||
+    String(existingProject.gitRepoPath || "").trim();
+  const lockedPlatform = repositoryPlatformFromUrl(existingGitForLock);
+
+  if (data.gitRepoPath !== undefined) {
+    const nextRepoPl = repositoryPlatformFromUrl(data.gitRepoPath);
+    if (lockedPlatform && nextRepoPl && nextRepoPl !== lockedPlatform) {
+      throw new ApiError(400, REPO_PLATFORM_IMMUTABLE_MSG);
+    }
+  }
+  if (data.developmentRepoUrl !== undefined && data.developmentRepoUrl !== null) {
+    const nextDevPl = repositoryPlatformFromUrl(data.developmentRepoUrl);
+    if (lockedPlatform && nextDevPl && nextDevPl !== lockedPlatform) {
+      throw new ApiError(400, REPO_PLATFORM_IMMUTABLE_MSG);
+    }
+  }
+
   if (data.githubConnectionId !== undefined && data.githubConnectionId != null) {
     const row = await prisma.userOAuthConnection.findFirst({
       where: { id: data.githubConnectionId, provider: "github" },
@@ -1693,6 +1867,22 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
   }
 
   const merged = { ...existingProject, ...data };
+
+  const mergedMainForPair =
+    normalizeGitRepoPathValue(merged.gitRepoPath) ||
+    String(merged.gitRepoPath || "").trim();
+  const mergedDevTrim =
+    merged.developmentRepoUrl != null ? String(merged.developmentRepoUrl).trim() : "";
+  const mergedDevForPair = mergedDevTrim
+    ? normalizeGitRepoPathValue(merged.developmentRepoUrl) || mergedDevTrim
+    : "";
+  if (mergedMainForPair && mergedDevForPair) {
+    const mp = repositoryPlatformFromUrl(mergedMainForPair);
+    const dp = repositoryPlatformFromUrl(mergedDevForPair);
+    if (mp && dp && mp !== dp) {
+      throw new ApiError(400, REPO_PLATFORM_PAIR_MISMATCH_MSG);
+    }
+  }
 
   if (merged.githubConnectionId && merged.bitbucketConnectionId) {
     throw new ApiError(
@@ -1837,18 +2027,19 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     nextNormalizedGitRepoPath &&
     oldGitRepoPath !== nextNormalizedGitRepoPath;
 
-  const oldGithubParsed = parseGitRepoPath(oldGitRepoPath);
-  const newGithubParsed = parseGitRepoPath(nextNormalizedGitRepoPath);
+  const oldScmParsed = parseScmRepoPath(oldGitRepoPath);
+  const newScmParsed = parseScmRepoPath(nextNormalizedGitRepoPath);
   const migrationSupported =
-    Boolean(oldGithubParsed) &&
-    Boolean(newGithubParsed) &&
+    Boolean(oldScmParsed) &&
+    Boolean(newScmParsed) &&
+    oldScmParsed.provider === newScmParsed.provider &&
     gitRepoChanged;
 
   let migrationLockHeld = false;
   if (gitRepoChanged && !migrationSupported) {
     throw new ApiError(
       400,
-      "Changing gitRepoPath between hosts or for Bitbucket is not supported yet. Use GitHub→GitHub path changes only, or contact support.",
+      "Repository migration requires valid previous and new paths on the same code host (GitHub or Bitbucket). Cross-host moves are not supported.",
     );
   }
   if (migrationSupported) {
@@ -1869,7 +2060,7 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
       migrateProjectRepositoryRefs({
         oldGitRepoPath,
         newGitRepoPath: nextNormalizedGitRepoPath,
-        githubToken: effectiveGitToken,
+        accessToken: effectiveGitToken,
         requiredTags,
         backendRoot: getBackendRoot(),
         projectId: Number(projectId),

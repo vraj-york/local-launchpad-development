@@ -858,3 +858,29 @@ export const fetchReleaseChangelog = async (releaseId) => {
     throw error.response?.data || { error: "Failed to load release history" };
   }
 };
+
+/** POST — regenerate AI “what to review” summary for client link (requires server OPENAI_API_KEY). */
+export const regenerateReleaseReviewSummary = async (
+  releaseId,
+  opts = {},
+) => {
+  try {
+    const body = Object.prototype.hasOwnProperty.call(
+      opts,
+      "clientReviewAiGenerationContext",
+    )
+      ? { clientReviewAiGenerationContext: opts.clientReviewAiGenerationContext }
+      : {};
+    const response = await api.post(
+      `/api/releases/${releaseId}/regenerate-review-summary`,
+      body,
+    );
+    return response.data;
+  } catch (error) {
+    throw (
+      error.response?.data || {
+        error: "Failed to regenerate review summary",
+      }
+    );
+  }
+};
