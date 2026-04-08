@@ -2,7 +2,7 @@ import fetch from "node-fetch";
 import path from "path";
 import fs from "fs-extra";
 import { execFileSync } from "child_process";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import {
   ensureBranchFrom,
   updateRef,
@@ -30,7 +30,6 @@ import { resolveScmCredentialsFromProject } from "./integrationCredential.servic
 import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 
 const CURSOR_BASE_URL = "https://api.cursor.com";
-const prisma = new PrismaClient();
 const POLL_INTERVAL_MS = 5000;
 const ENV_GITHUB_USERNAME = process.env.GITHUB_USERNAME;
 /**

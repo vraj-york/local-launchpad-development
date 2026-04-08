@@ -1,12 +1,10 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
 import {
   ensureFreshGithubConnection,
   ensureFreshJiraConnection,
   ensureFreshBitbucketConnection,
 } from "./oauthConnection.service.js";
-
-const prisma = new PrismaClient();
 
 /**
  * Unified SCM token for GitHub or Bitbucket (OAuth or legacy PAT/app password).

@@ -78,8 +78,8 @@ export const ClientLink = () => {
   const [previewMeta, setPreviewMeta] = useState(null);
   /** Bumped after chat merge/revert + project reload so iframe URL changes when build URL is unchanged (cache bust). */
   const [previewRefreshNonce, setPreviewRefreshNonce] = useState(0);
-  const [releaseNoteOpen, setReleaseNoteOpen] = useState(false);
-  const [reviewGuideOpen, setReviewGuideOpen] = useState(false);
+  /** Combined release notes + what to review (client view only). */
+  const [releaseDetailsOpen, setReleaseDetailsOpen] = useState(false);
   const [previewStageWidth, setPreviewStageWidth] = useState(0);
   const [responsivePreset, setResponsivePreset] = useState(
     /** @type {'desktop' | 'tablet' | 'mobile' | 'custom'} */ ("desktop"),
@@ -224,8 +224,14 @@ export const ClientLink = () => {
   }, [releases, activeRelease, previewMeta]);
 
   const clientNote = displayRelease?.clientReleaseNote?.trim() || "";
-  const aiReviewSummary = displayRelease?.clientReviewAiSummary?.trim() || "";
-  const aiReviewSummaryAt = displayRelease?.clientReviewAiSummaryAt;
+  const showReviewChecklist =
+    displayRelease?.showClientReviewSummary !== false;
+  const aiReviewSummary =
+    showReviewChecklist &&
+    (displayRelease?.clientReviewAiSummary?.trim() || "");
+  const aiReviewSummaryAt = showReviewChecklist
+    ? displayRelease?.clientReviewAiSummaryAt
+    : null;
 
   const activeReleaseLocked =
     String(activeRelease?.status ?? "").toLowerCase() === "locked";
@@ -597,29 +603,25 @@ export const ClientLink = () => {
                 </Tooltip>
               </div>
             ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 shrink-0 gap-1.5 border-slate-300 bg-white/80 px-2.5 hover:bg-white sm:px-3"
-              onClick={() => setReleaseNoteOpen(true)}
-            >
-              <FileText className="size-4 shrink-0" />
-              <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
-                Release note
-              </span>
-            </Button>
-            {aiReviewSummary ? (
+            {(clientNote || aiReviewSummary) ? (
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-8 shrink-0 gap-1.5 border-violet-200/90 bg-violet-50/80 px-2.5 text-violet-900 hover:bg-violet-100/90 sm:px-3"
-                onClick={() => setReviewGuideOpen(true)}
+                className="h-8 shrink-0 gap-1.5 border-slate-300 bg-white/80 px-2.5 hover:bg-white sm:px-3"
+                onClick={() => setReleaseDetailsOpen(true)}
               >
-                <Sparkles className="size-4 shrink-0" />
+                <span className="flex shrink-0 items-center gap-0.5">
+                  <FileText className="size-4" aria-hidden />
+                  {aiReviewSummary ? (
+                    <Sparkles
+                      className="size-3.5 text-violet-600"
+                      aria-hidden
+                    />
+                  ) : null}
+                </span>
                 <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
-                  What to review
+                  Release details
                 </span>
               </Button>
             ) : null}
@@ -948,51 +950,47 @@ export const ClientLink = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={releaseNoteOpen} onOpenChange={setReleaseNoteOpen}>
+      <Dialog open={releaseDetailsOpen} onOpenChange={setReleaseDetailsOpen}>
         <DialogContent className="max-h-[85vh] sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Release note</DialogTitle>
+            <DialogTitle>Release details</DialogTitle>
             <DialogDescription>
               {displayRelease?.name
-                ? `Release ${displayRelease.name}`
-                : "Current release"}
+                ? `Release ${displayRelease.name} — notes and review checklist`
+                : "Notes and review checklist for this release"}
             </DialogDescription>
           </DialogHeader>
-          <div className="max-h-[55vh] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="max-h-[55vh] space-y-4 overflow-y-auto pr-1">
             {clientNote ? (
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-                {clientNote}
-              </p>
-            ) : (
-              <p className="text-sm text-slate-500">
-                No release note available for this release.
-              </p>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={reviewGuideOpen} onOpenChange={setReviewGuideOpen}>
-        <DialogContent className="max-h-[85vh] sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>What to review</DialogTitle>
-            <DialogDescription>
-              {displayRelease?.name
-                ? `AI-assisted checklist for release ${displayRelease.name}`
-                : "AI-assisted review checklist"}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[55vh] overflow-y-auto rounded-lg border border-violet-100 bg-violet-50/40 p-4">
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
-              {aiReviewSummary}
-            </p>
-            {aiReviewSummaryAt ? (
-              <p className="mt-3 border-t border-violet-200/60 pt-2 text-xs text-slate-500">
-                Generated{" "}
-                {new Date(aiReviewSummaryAt).toLocaleString(undefined, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                })}
-              </p>
+              <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <FileText className="size-4 shrink-0 text-slate-600" />
+                  Release notes
+                </h3>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                  {clientNote}
+                </p>
+              </section>
+            ) : null}
+            {aiReviewSummary ? (
+              <section className="rounded-lg border border-violet-200/80 bg-violet-50/50 p-4">
+                <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-violet-950">
+                  <Sparkles className="size-4 shrink-0 text-violet-600" />
+                  What to review
+                </h3>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
+                  {aiReviewSummary}
+                </p>
+                {aiReviewSummaryAt ? (
+                  <p className="mt-3 border-t border-violet-200/60 pt-2 text-xs text-slate-500">
+                    Checklist updated{" "}
+                    {new Date(aiReviewSummaryAt).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </p>
+                ) : null}
+              </section>
             ) : null}
           </div>
         </DialogContent>

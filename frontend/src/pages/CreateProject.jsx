@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   createProject,
   fetchManagers,
@@ -36,6 +36,10 @@ import { PageHeader } from "@/components/PageHeader";
 import ProjectGitJiraOAuthCard from "@/components/project/ProjectGitJiraOAuthCard";
 // import RoadMapManagement from "@/components/RoadMapManagement";
 import { toast } from "sonner";
+
+const PM_CREATE_BODY_OAUTH_DRAFT = "pm_create_body_oauth_draft";
+const OAUTH_DRAFT_MAX_AGE_MS = 15 * 60 * 1000;
+const CREATE_PROJECT_OAUTH_RETURN = "/projects/new";
 
 const CreateProject = () => {
   const { user } = useAuth();
@@ -101,6 +105,77 @@ const CreateProject = () => {
   useEffect(() => {
     loadIntegrations();
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(PM_CREATE_BODY_OAUTH_DRAFT);
+      if (!raw) return;
+      const d = JSON.parse(raw);
+      if (
+        typeof d?.savedAt !== "number" ||
+        Date.now() - d.savedAt > OAUTH_DRAFT_MAX_AGE_MS
+      ) {
+        sessionStorage.removeItem(PM_CREATE_BODY_OAUTH_DRAFT);
+        return;
+      }
+      sessionStorage.removeItem(PM_CREATE_BODY_OAUTH_DRAFT);
+      if (d.selectedHubProjectId != null && d.selectedHubProjectId !== "") {
+        setSelectedHubProjectId(d.selectedHubProjectId);
+      }
+      if (typeof d.projectDescription === "string") {
+        setProjectDescription(d.projectDescription);
+      }
+      if (d.selectedManager != null && d.selectedManager !== "") {
+        setSelectedManager(d.selectedManager);
+      }
+      if (Array.isArray(d.assignedUserEmailTags)) {
+        setAssignedUserEmailTags(d.assignedUserEmailTags);
+      }
+      if (Array.isArray(d.stakeholderEmailTags)) {
+        setStakeholderEmailTags(d.stakeholderEmailTags);
+      }
+      if (typeof d.startFromScratch === "boolean") {
+        setStartFromScratch(d.startFromScratch);
+      }
+      if (typeof d.scratchPrompt === "string") {
+        setScratchPrompt(d.scratchPrompt);
+      }
+    } catch {
+      try {
+        sessionStorage.removeItem(PM_CREATE_BODY_OAUTH_DRAFT);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
+  const persistCreateBodyDraftForOAuth = useCallback(() => {
+    try {
+      sessionStorage.setItem(
+        PM_CREATE_BODY_OAUTH_DRAFT,
+        JSON.stringify({
+          savedAt: Date.now(),
+          selectedHubProjectId,
+          projectDescription,
+          selectedManager,
+          assignedUserEmailTags,
+          stakeholderEmailTags,
+          startFromScratch,
+          scratchPrompt,
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [
+    selectedHubProjectId,
+    projectDescription,
+    selectedManager,
+    assignedUserEmailTags,
+    stakeholderEmailTags,
+    startFromScratch,
+    scratchPrompt,
+  ]);
 
   useEffect(() => {
     const onVis = () => {
@@ -559,6 +634,8 @@ const CreateProject = () => {
           integrationsPayload={integrationsStatus}
           integrationsLoading={integrationsLoading}
           validationErrors={validationErrors}
+          oauthReturnTo={CREATE_PROJECT_OAUTH_RETURN}
+          onBeforeOAuthRedirect={persistCreateBodyDraftForOAuth}
         />
 
         {/* Roadmap Configuration */}

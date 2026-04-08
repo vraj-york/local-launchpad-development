@@ -1,5 +1,6 @@
 import express from "express";
-import { PrismaClient, ReleaseStatus } from "@prisma/client";
+import { ReleaseStatus } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import {
   createAgentForProjectRelease,
@@ -13,8 +14,6 @@ import { assertProjectAccess } from "../services/project.service.js";
 import ApiError from "../utils/apiError.js";
 
 const router = express.Router();
-const prisma = new PrismaClient();
-
 function requireCursorKey(req, res, next) {
   if (!process.env.CURSOR_API_KEY?.trim()) {
     return res.status(503).json({ error: "Cursor API key not configured" });

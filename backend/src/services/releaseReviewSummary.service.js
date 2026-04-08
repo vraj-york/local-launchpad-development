@@ -1,7 +1,5 @@
-import { PrismaClient } from "@prisma/client";
 import fetch from "node-fetch";
-
-const prisma = new PrismaClient();
+import { prisma } from "../lib/prisma.js";
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const DEBOUNCE_MS = 60_000;

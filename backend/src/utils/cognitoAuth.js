@@ -1,15 +1,13 @@
 import dns from "dns";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { SimpleJwksCache } from "aws-jwt-verify/jwk";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { IPv4Fetcher } from "./ipv4Fetcher.js";
 
 // dns.setDefaultResultOrder("ipv4");
 dns.setDefaultResultOrder("verbatim");
-const prisma = new PrismaClient();
-
 let cognitoIdVerifier = null;
 let cognitoAccessVerifier = null;
 let jwksCache = null;

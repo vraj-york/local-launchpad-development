@@ -1,6 +1,5 @@
-import { PrismaClient, ReleaseStatus } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { ReleaseStatus } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
 import { createRoadmapWithItems } from "./roadmap.service.js";
 import { fetchProjectJiraTickets } from "../utils/jiraIntegration.js";
@@ -1200,6 +1199,9 @@ export const getProjectByIdService = async (
       status: true,
       lockedBy: true,
       clientReleaseNote: true,
+      clientReviewAiSummary: true,
+      clientReviewAiSummaryAt: true,
+      showClientReviewSummary: true,
       versions: {
         orderBy: { id: "desc" },
         select: {
@@ -1216,7 +1218,7 @@ export const getProjectByIdService = async (
 
   // Slug / public: only id + name on Project; full row when fetching by project id.
   if (isSlugMode) {
-    return prisma.project.findUnique({
+    const project = await prisma.project.findUnique({
       where,
       select: {
         id: true,
@@ -1225,6 +1227,19 @@ export const getProjectByIdService = async (
         releases: releasesQuery,
       },
     });
+    if (!project?.releases?.length) return project;
+    return {
+      ...project,
+      releases: project.releases.map((r) =>
+        r.showClientReviewSummary === false
+          ? {
+              ...r,
+              clientReviewAiSummary: null,
+              clientReviewAiSummaryAt: null,
+            }
+          : r,
+      ),
+    };
   }
 
   await assertProjectReadAccess(Number(projectId), user);

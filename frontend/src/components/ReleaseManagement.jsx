@@ -79,9 +79,9 @@ const CHANGELOG_FIELD_LABELS = {
   isMvp: "MVP",
   lockedBy: "Locked by",
   clientReleaseNote: "Client release note",
-  clientReviewAiSummary: "What to review (client)",
-  showClientReviewSummary: "Show review checklist to client",
-  clientReviewAiGenerationContext: "AI generation context (internal)",
+  clientReviewAiSummary: "Review checklist (client link)",
+  showClientReviewSummary: "Show checklist on client link",
+  clientReviewAiGenerationContext: "AI-only instructions (not shown to clients)",
 };
 
 function actualShipDateChanged(prevDate, nextDate) {
@@ -435,9 +435,9 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
           editDialog.clientReviewAiGenerationContext ?? "",
       });
       if (data.ok) {
-        toast.success("Client review summary updated");
+        toast.success("Review checklist updated");
       } else {
-        toast.error(data.error || "Could not generate summary");
+        toast.error(data.error || "Could not generate checklist");
       }
       const rel = data.release;
       if (rel && editDialog && Number(rel.id) === Number(editDialog.id)) {
@@ -457,7 +457,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       }
       await loadReleases();
     } catch (err) {
-      toast.error(err.error || err.message || "Failed to regenerate summary");
+      toast.error(err.error || err.message || "Failed to generate checklist");
     } finally {
       setAiSummaryRegenerating(false);
     }
@@ -1790,6 +1790,10 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                   <Label htmlFor="edit-client-release-note">
                     Notes for clients (optional)
                   </Label>
+                  <p className="text-xs text-slate-500">
+                    Shown in <span className="font-medium">Release note</span> on
+                    the client link — scope, caveats, what not to test.
+                  </p>
                   <Textarea
                     id="edit-client-release-note"
                     rows={3}
@@ -1805,42 +1809,23 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                     className="resize-y min-h-[72px]"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-ai-generation-context">
-                    Notes for AI when generating checklist (optional, not shown to
-                    clients)
-                  </Label>
-                  <Textarea
-                    id="edit-ai-generation-context"
-                    rows={4}
-                    placeholder="e.g. Focus on checkout and login; ignore admin settings. Mention the new reporting widget."
-                    value={editDialog.clientReviewAiGenerationContext}
-                    onChange={(e) =>
-                      setEditDialog((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              clientReviewAiGenerationContext: e.target.value,
-                            }
-                          : prev,
-                      )
-                    }
-                    className="resize-y min-h-[88px] text-sm"
-                  />
-                  <p className="text-xs text-slate-500">
-                    Saved with the release and sent to the model when you click
-                    Regenerate. You can regenerate without saving first — current
-                    text in this box is used.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-client-review-summary">
-                    What to review (optional — edit manually or use AI)
-                  </Label>
+
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="edit-client-review-summary">
+                      Review checklist (optional)
+                    </Label>
+                    <p className="text-xs text-slate-600">
+                      Same content as <span className="font-medium">What to review</span>{" "}
+                      on the client link when you turn on the option below. Write it
+                      yourself or use <span className="font-medium">Generate with AI</span>{" "}
+                      from this release (roadmap, versions, and release details).
+                    </p>
+                  </div>
                   <Textarea
                     id="edit-client-review-summary"
                     rows={6}
-                    placeholder="Bullet list of what clients should verify. Leave empty until you save or regenerate with AI."
+                    placeholder="Bullet list of what clients should verify — or click Generate with AI."
                     value={editDialog.clientReviewAiSummary}
                     onChange={(e) =>
                       setEditDialog((prev) =>
@@ -1852,9 +1837,9 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                           : prev,
                       )
                     }
-                    className="resize-y min-h-[120px] font-mono text-sm"
+                    className="resize-y min-h-[120px] border-white/80 bg-white font-mono text-sm"
                   />
-                  <div className="flex items-start gap-3 rounded-lg border border-slate-100 bg-white/80 px-3 py-2">
+                  <div className="flex items-start gap-3 rounded-lg border border-slate-100 bg-white px-3 py-2">
                     <Checkbox
                       id="edit-show-client-review"
                       checked={editDialog.showClientReviewSummary === true}
@@ -1874,8 +1859,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                       htmlFor="edit-show-client-review"
                       className="cursor-pointer text-sm leading-snug text-slate-700"
                     >
-                      Show “What to review” on the client link when text is
-                      present
+                      Show this checklist on the client link
                     </Label>
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1894,13 +1878,13 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                       ) : (
                         <>
                           <Sparkles className="size-4" />
-                          Regenerate AI “what to review”
+                          Generate with AI
                         </>
                       )}
                     </Button>
                     {editDialog.clientReviewAiSummaryAt ? (
                       <span className="text-xs text-slate-500">
-                        Last AI run:{" "}
+                        Last generated:{" "}
                         {new Date(
                           editDialog.clientReviewAiSummaryAt,
                         ).toLocaleString(undefined, {
@@ -1910,6 +1894,44 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                       </span>
                     ) : null}
                   </div>
+
+                  <Collapsible
+                    key={`edit-ai-ctx-${editDialog.id}`}
+                    defaultOpen={Boolean(
+                      editDialog.clientReviewAiGenerationContext?.trim(),
+                    )}
+                    className="rounded-lg border border-dashed border-slate-200 bg-white/90"
+                  >
+                    <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      <ChevronDown className="size-4 shrink-0 opacity-70 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                      Advanced — extra instructions for AI only (not shown to
+                      clients)
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-2 px-3 pb-3 pt-0">
+                      <Textarea
+                        id="edit-ai-generation-context"
+                        rows={4}
+                        placeholder="e.g. Emphasize checkout and login; skip admin settings."
+                        value={editDialog.clientReviewAiGenerationContext}
+                        onChange={(e) =>
+                          setEditDialog((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  clientReviewAiGenerationContext:
+                                    e.target.value,
+                                }
+                              : prev,
+                          )
+                        }
+                        className="resize-y min-h-[88px] text-sm"
+                      />
+                      <p className="text-xs text-slate-500">
+                        Used only when you click Generate with AI. Current text in
+                        this box is sent even if you have not saved the release yet.
+                      </p>
+                    </CollapsibleContent>
+                  </Collapsible>
                 </div>
               </div>
               <DialogFooter className="gap-2">

@@ -7,9 +7,8 @@ import express from "express";
 import path from "path";
 import fs from "fs-extra";
 import { getBackendRoot } from "./utils/instanceRoot.js";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "./lib/prisma.js";
 
-const prisma = new PrismaClient();
 const HOST = "0.0.0.0"; // so nginx container and host can reach
 const activeServers = new Map(); // port -> server
 

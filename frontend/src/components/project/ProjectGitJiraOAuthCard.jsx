@@ -3,6 +3,7 @@ import React, {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
   forwardRef,
 } from "react";
@@ -61,6 +62,9 @@ const REPO_PLATFORM_PAIR_MISMATCH_MSG =
 const REPO_PLATFORM_IMMUTABLE_MSG =
   "Repository platform cannot be changed once set. Both source and development repositories must remain on the same platform.";
 
+const PM_CREATE_GITJIRA_OAUTH_DRAFT = "pm_create_gitjira_oauth_draft";
+const OAUTH_DRAFT_MAX_AGE_MS = 15 * 60 * 1000;
+
 /**
  * Shared GitHub or Bitbucket + Jira OAuth UI for create project and edit project (creator/admin).
  * @typedef {{
@@ -78,10 +82,13 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     validationErrors,
     syncKey,
     editProject,
+    oauthReturnTo,
+    onBeforeOAuthRedirect,
   },
   ref,
 ) {
   const isEdit = variant === "edit";
+  const oauthDraftRestoredRef = useRef(false);
 
   const [scmHost, setScmHost] = useState("github");
   const [selectedGithubConnectionId, setSelectedGithubConnectionId] = useState("");
@@ -207,6 +214,98 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       return ji[0] ? String(ji[0].id) : "";
     });
   }, [integrationsPayload, isEdit, editProject]);
+
+  useEffect(() => {
+    if (isEdit || oauthDraftRestoredRef.current || !integrationsPayload) return;
+    try {
+      const raw = sessionStorage.getItem(PM_CREATE_GITJIRA_OAUTH_DRAFT);
+      if (!raw) return;
+      const d = JSON.parse(raw);
+      if (
+        typeof d?.savedAt !== "number" ||
+        Date.now() - d.savedAt > OAUTH_DRAFT_MAX_AGE_MS
+      ) {
+        sessionStorage.removeItem(PM_CREATE_GITJIRA_OAUTH_DRAFT);
+        return;
+      }
+      oauthDraftRestoredRef.current = true;
+      sessionStorage.removeItem(PM_CREATE_GITJIRA_OAUTH_DRAFT);
+      const gh = integrationsPayload.github?.connections ?? [];
+      const bb = integrationsPayload.bitbucket?.connections ?? [];
+      const ji = integrationsPayload.jira?.connections ?? [];
+      if (d.scmHost === "github" || d.scmHost === "bitbucket") setScmHost(d.scmHost);
+      if (d.repoMode === "auto" || d.repoMode === "pick" || d.repoMode === "manual") {
+        setRepoMode(d.repoMode);
+      }
+      if (typeof d.pickedRepoPath === "string") setPickedRepoPath(d.pickedRepoPath);
+      if (typeof d.gitRepoPathManual === "string") setGitRepoPathManual(d.gitRepoPathManual);
+      if (typeof d.jiraProjectKey === "string") setJiraProjectKey(d.jiraProjectKey);
+      if (typeof d.developmentRepoUrlInput === "string") {
+        setDevelopmentRepoUrlInput(d.developmentRepoUrlInput);
+      }
+      if (typeof d.repoSearch === "string") setRepoSearch(d.repoSearch);
+      if (typeof d.jiraBaseUrlResolved === "string") setJiraBaseUrlResolved(d.jiraBaseUrlResolved);
+      if (typeof d.selectedGithubConnectionId === "string" && d.selectedGithubConnectionId) {
+        if (gh.some((c) => String(c.id) === d.selectedGithubConnectionId)) {
+          setSelectedGithubConnectionId(d.selectedGithubConnectionId);
+        }
+      }
+      if (typeof d.selectedBitbucketConnectionId === "string" && d.selectedBitbucketConnectionId) {
+        if (bb.some((c) => String(c.id) === d.selectedBitbucketConnectionId)) {
+          setSelectedBitbucketConnectionId(d.selectedBitbucketConnectionId);
+        }
+      }
+      if (typeof d.selectedJiraConnectionId === "string" && d.selectedJiraConnectionId) {
+        if (ji.some((c) => String(c.id) === d.selectedJiraConnectionId)) {
+          setSelectedJiraConnectionId(d.selectedJiraConnectionId);
+        }
+      }
+    } catch {
+      try {
+        sessionStorage.removeItem(PM_CREATE_GITJIRA_OAUTH_DRAFT);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [integrationsPayload, isEdit]);
+
+  const persistCreateGitJiraDraftForOAuth = useCallback(() => {
+    if (isEdit) return;
+    try {
+      sessionStorage.setItem(
+        PM_CREATE_GITJIRA_OAUTH_DRAFT,
+        JSON.stringify({
+          savedAt: Date.now(),
+          scmHost,
+          selectedGithubConnectionId,
+          selectedBitbucketConnectionId,
+          selectedJiraConnectionId,
+          repoMode,
+          pickedRepoPath,
+          gitRepoPathManual,
+          jiraProjectKey,
+          developmentRepoUrlInput,
+          jiraBaseUrlResolved,
+          repoSearch,
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [
+    isEdit,
+    scmHost,
+    selectedGithubConnectionId,
+    selectedBitbucketConnectionId,
+    selectedJiraConnectionId,
+    repoMode,
+    pickedRepoPath,
+    gitRepoPathManual,
+    jiraProjectKey,
+    developmentRepoUrlInput,
+    jiraBaseUrlResolved,
+    repoSearch,
+  ]);
 
   const repoListOpts = useMemo(() => {
     const o = {};
@@ -727,9 +826,13 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                   onClick={async () => {
                     setOauthBusy("gh");
                     try {
+                      oauthDraftRestoredRef.current = false;
+                      onBeforeOAuthRedirect?.();
+                      persistCreateGitJiraDraftForOAuth();
+                      const opts = oauthReturnTo ? { returnTo: oauthReturnTo } : {};
                       const url = isEdit
-                        ? await getGithubOAuthAuthorizeUrl(selectedGithubConnectionId)
-                        : await getGithubOAuthAuthorizeUrl();
+                        ? await getGithubOAuthAuthorizeUrl(selectedGithubConnectionId, opts)
+                        : await getGithubOAuthAuthorizeUrl(undefined, opts);
                       window.location.href = url;
                     } catch (e) {
                       toast.error(e.message || "Could not start GitHub OAuth");
@@ -769,9 +872,16 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                   onClick={async () => {
                     setOauthBusy("bb");
                     try {
+                      oauthDraftRestoredRef.current = false;
+                      onBeforeOAuthRedirect?.();
+                      persistCreateGitJiraDraftForOAuth();
+                      const opts = oauthReturnTo ? { returnTo: oauthReturnTo } : {};
                       const url = isEdit
-                        ? await getBitbucketOAuthAuthorizeUrl(selectedBitbucketConnectionId)
-                        : await getBitbucketOAuthAuthorizeUrl();
+                        ? await getBitbucketOAuthAuthorizeUrl(
+                            selectedBitbucketConnectionId,
+                            opts,
+                          )
+                        : await getBitbucketOAuthAuthorizeUrl(undefined, opts);
                       window.location.href = url;
                     } catch (e) {
                       toast.error(e.message || "Could not start Bitbucket OAuth");
@@ -817,9 +927,13 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                   onClick={async () => {
                     setOauthBusy("ji");
                     try {
+                      oauthDraftRestoredRef.current = false;
+                      onBeforeOAuthRedirect?.();
+                      persistCreateGitJiraDraftForOAuth();
+                      const opts = oauthReturnTo ? { returnTo: oauthReturnTo } : {};
                       const url = isEdit
-                        ? await getJiraOAuthAuthorizeUrl(selectedJiraConnectionId)
-                        : await getJiraOAuthAuthorizeUrl();
+                        ? await getJiraOAuthAuthorizeUrl(selectedJiraConnectionId, opts)
+                        : await getJiraOAuthAuthorizeUrl(undefined, opts);
                       window.location.href = url;
                     } catch (e) {
                       toast.error(e.message || "Could not start Jira OAuth");

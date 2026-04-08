@@ -262,11 +262,15 @@ export const fetchIntegrationsStatus = async () => {
   return data;
 };
 
-export const getGithubOAuthAuthorizeUrl = async (reconnectConnectionId) => {
+export const getGithubOAuthAuthorizeUrl = async (
+  reconnectConnectionId,
+  { returnTo } = {},
+) => {
   const params = {};
   if (reconnectConnectionId != null && reconnectConnectionId !== "") {
     params.reconnectId = reconnectConnectionId;
   }
+  if (returnTo) params.returnTo = returnTo;
   const { data } = await api.get("/api/integrations/github/start", {
     params,
     headers: { Accept: "application/json" },
@@ -275,11 +279,15 @@ export const getGithubOAuthAuthorizeUrl = async (reconnectConnectionId) => {
   return data.url;
 };
 
-export const getJiraOAuthAuthorizeUrl = async (reconnectConnectionId) => {
+export const getJiraOAuthAuthorizeUrl = async (
+  reconnectConnectionId,
+  { returnTo } = {},
+) => {
   const params = {};
   if (reconnectConnectionId != null && reconnectConnectionId !== "") {
     params.reconnectId = reconnectConnectionId;
   }
+  if (returnTo) params.returnTo = returnTo;
   const { data } = await api.get("/api/integrations/jira/start", {
     params,
     headers: { Accept: "application/json" },
@@ -288,11 +296,15 @@ export const getJiraOAuthAuthorizeUrl = async (reconnectConnectionId) => {
   return data.url;
 };
 
-export const getBitbucketOAuthAuthorizeUrl = async (reconnectConnectionId) => {
+export const getBitbucketOAuthAuthorizeUrl = async (
+  reconnectConnectionId,
+  { returnTo } = {},
+) => {
   const params = {};
   if (reconnectConnectionId != null && reconnectConnectionId !== "") {
     params.reconnectId = reconnectConnectionId;
   }
+  if (returnTo) params.returnTo = returnTo;
   const { data } = await api.get("/api/integrations/bitbucket/start", {
     params,
     headers: { Accept: "application/json" },
