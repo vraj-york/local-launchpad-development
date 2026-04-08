@@ -1,14 +1,12 @@
 import path from "path";
 import fs from "fs-extra";
 import { execa } from "execa";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import { parseGitRepoPath } from "./github.service.js";
 import { parseScmRepoPath } from "../utils/scmPath.js";
 import { resolveGithubCredentialsFromProject } from "./integrationCredential.service.js";
-
-const prisma = new PrismaClient();
 
 function normalizeGithubRepoPath(raw) {
   if (raw == null) return null;

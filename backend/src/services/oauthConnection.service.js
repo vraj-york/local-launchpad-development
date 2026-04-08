@@ -1,10 +1,8 @@
-import { PrismaClient } from "@prisma/client";
 import axios from "axios";
 import jwt from "jsonwebtoken";
 import { encryptToken, decryptToken } from "../utils/tokenVault.js";
 import ApiError from "../utils/apiError.js";
-
-const prisma = new PrismaClient();
+import { prisma } from "../lib/prisma.js";
 
 const EXPIRY_SKEW_MS = 60_000;
 
@@ -12,7 +10,34 @@ function stateSecret() {
   return process.env.OAUTH_STATE_SECRET || process.env.JWT_SECRET;
 }
 
-export function signOAuthState(userId, provider, reconnectConnectionId = null) {
+/**
+ * Internal SPA path only (prevents open redirects). Optional query string allowed.
+ * @param {unknown} raw
+ * @returns {string|null}
+ */
+export function sanitizeOAuthReturnPath(raw) {
+  if (raw == null || raw === false) return null;
+  const s = String(raw).trim();
+  if (!s.startsWith("/") || s.startsWith("//")) return null;
+  if (/[\r\n\0]/.test(s)) return null;
+  if (s.includes("://") || s.includes("\\") || s.includes("@")) return null;
+  if (s.length > 512) return null;
+  const q = s.indexOf("?");
+  if (q === -1) return s;
+  const path = s.slice(0, q);
+  const query = s.slice(q + 1);
+  if (!path.startsWith("/") || path.startsWith("//")) return null;
+  if (query.length > 256) return null;
+  if (query && !/^[a-zA-Z0-9_=&.,%-]+$/.test(query)) return null;
+  return s;
+}
+
+export function signOAuthState(
+  userId,
+  provider,
+  reconnectConnectionId = null,
+  returnPath = null,
+) {
   const secret = stateSecret();
   if (!secret) throw new Error("JWT_SECRET or OAUTH_STATE_SECRET required for OAuth");
   const payload = {
@@ -24,6 +49,8 @@ export function signOAuthState(userId, provider, reconnectConnectionId = null) {
     const n = Number(reconnectConnectionId);
     if (Number.isInteger(n) && n > 0) payload.rcid = n;
   }
+  const safeReturn = sanitizeOAuthReturnPath(returnPath);
+  if (safeReturn) payload.rp = safeReturn;
   return jwt.sign(payload, secret, { expiresIn: "15m" });
 }
 
@@ -38,6 +65,7 @@ export function verifyOAuthState(token) {
     provider: String(payload.p),
     reconnectConnectionId:
       rcid != null && rcid !== "" && !Number.isNaN(Number(rcid)) ? Number(rcid) : null,
+    returnPath: sanitizeOAuthReturnPath(payload.rp),
   };
 }
 

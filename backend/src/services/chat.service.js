@@ -1,5 +1,7 @@
 import crypto from "crypto";
-import { PrismaClient, ReleaseStatus } from "@prisma/client";
+import { ReleaseStatus } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
+import validator from "validator";
 import ApiError from "../utils/apiError.js";
 import { assertPublicClientStakeholderEmail } from "../utils/publicClientStakeholder.utils.js";
 import {
@@ -35,7 +37,6 @@ import {
 import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
 import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 
-const prisma = new PrismaClient();
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
 
 /** Appended to Cursor prompt only (not stored in ChatHistory). Max 5MB base64 payload. */

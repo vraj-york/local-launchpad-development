@@ -224,8 +224,14 @@ export const ClientLink = () => {
   }, [releases, activeRelease, previewMeta]);
 
   const clientNote = displayRelease?.clientReleaseNote?.trim() || "";
-  const aiReviewSummary = displayRelease?.clientReviewAiSummary?.trim() || "";
-  const aiReviewSummaryAt = displayRelease?.clientReviewAiSummaryAt;
+  const showReviewChecklist =
+    displayRelease?.showClientReviewSummary !== false;
+  const aiReviewSummary =
+    showReviewChecklist &&
+    (displayRelease?.clientReviewAiSummary?.trim() || "");
+  const aiReviewSummaryAt = showReviewChecklist
+    ? displayRelease?.clientReviewAiSummaryAt
+    : null;
 
   const activeReleaseLocked =
     String(activeRelease?.status ?? "").toLowerCase() === "locked";

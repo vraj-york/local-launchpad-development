@@ -1,4 +1,5 @@
-import { PrismaClient, ReleaseStatus } from "@prisma/client";
+import { ReleaseStatus } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
 import path from "path";
 import fs from "fs-extra";
@@ -28,8 +29,6 @@ import { scheduleRegenerateClientReviewSummary } from "./releaseReviewSummary.se
 import { signalNginxReload } from "../utils/nginxBinary.js";
 
 const execAsync = promisify(exec);
-const prisma = new PrismaClient();
-
 async function resolveUserEmail(user) {
   const direct = typeof user?.email === "string" ? user.email.trim().toLowerCase() : "";
   if (direct) return direct;

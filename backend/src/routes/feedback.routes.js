@@ -3,7 +3,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import {
   createJiraTicketWithConfig,
   addAttachmentToJiraIssue,
@@ -14,8 +14,6 @@ import {
 } from "../services/integrationCredential.service.js";
 import { assertPublicClientStakeholderEmail } from "../utils/publicClientStakeholder.utils.js";
 import ApiError from "../utils/apiError.js";
-
-const prisma = new PrismaClient();
 
 const router = express.Router();
 

@@ -7,6 +7,7 @@ import {
 import {
   signOAuthState,
   verifyOAuthState,
+  sanitizeOAuthReturnPath,
   completeGithubOAuth,
   completeBitbucketOAuth,
   completeJiraOAuth,
@@ -30,14 +31,32 @@ const router = express.Router();
 
 const FRONTEND = () => getPublicFrontendBaseUrl();
 
-function redirectWithError(res, provider, message) {
+function redirectWithError(res, provider, message, returnPath = null) {
   const q = new URLSearchParams({ provider, error: message.slice(0, 200) });
+  if (returnPath) q.set("return_to", returnPath);
   res.redirect(302, `${FRONTEND()}/integrations/callback?${q.toString()}`);
 }
 
-function redirectOk(res, provider) {
+function redirectOk(res, provider, returnPath = null) {
   const q = new URLSearchParams({ provider, ok: "1" });
+  if (returnPath) q.set("return_to", returnPath);
   res.redirect(302, `${FRONTEND()}/integrations/callback?${q.toString()}`);
+}
+
+function returnPathFromStateToken(state) {
+  if (!state) return null;
+  try {
+    const decoded = verifyOAuthState(state);
+    return decoded.returnPath || null;
+  } catch {
+    return null;
+  }
+}
+
+function parseReturnToQuery(query) {
+  const raw = query?.returnTo ?? query?.return_to;
+  if (raw == null || raw === "") return null;
+  return sanitizeOAuthReturnPath(raw);
 }
 
 function parseReconnectId(query) {
@@ -84,7 +103,8 @@ router.get("/github/start", authenticateToken, (req, res) => {
     return;
   }
   const reconnectId = parseReconnectId(req.query);
-  const state = signOAuthState(req.user.id, "github", reconnectId);
+  const returnPath = parseReturnToQuery(req.query);
+  const state = signOAuthState(req.user.id, "github", reconnectId, returnPath);
   const scope = process.env.GITHUB_OAUTH_SCOPES || "repo read:user";
   const params = new URLSearchParams({
     client_id: clientId,
@@ -109,24 +129,26 @@ router.get("/github/callback", async (req, res) => {
   const code = typeof req.query.code === "string" ? req.query.code : "";
   const state = typeof req.query.state === "string" ? req.query.state : "";
   const err = typeof req.query.error === "string" ? req.query.error : "";
+  const rpErr = returnPathFromStateToken(state);
   if (err) {
-    redirectWithError(res, "github", err);
+    redirectWithError(res, "github", err, rpErr);
     return;
   }
   if (!code || !state) {
-    redirectWithError(res, "github", "missing_code_or_state");
+    redirectWithError(res, "github", "missing_code_or_state", rpErr);
     return;
   }
   try {
     const decoded = verifyOAuthState(state);
     if (decoded.provider !== "github") {
-      redirectWithError(res, "github", "invalid_state");
+      redirectWithError(res, "github", "invalid_state", decoded.returnPath || null);
       return;
     }
     await completeGithubOAuth(code, state);
-    redirectOk(res, "github");
+    redirectOk(res, "github", decoded.returnPath || null);
   } catch (e) {
-    redirectWithError(res, "github", e.message || "oauth_failed");
+    const rp = returnPathFromStateToken(state);
+    redirectWithError(res, "github", e.message || "oauth_failed", rp);
   }
 });
 
@@ -168,7 +190,8 @@ router.get("/bitbucket/start", authenticateToken, (req, res) => {
     return;
   }
   const reconnectId = parseReconnectId(req.query);
-  const state = signOAuthState(req.user.id, "bitbucket", reconnectId);
+  const returnPath = parseReturnToQuery(req.query);
+  const state = signOAuthState(req.user.id, "bitbucket", reconnectId, returnPath);
   const scope = process.env.BITBUCKET_OAUTH_SCOPES || "account repository";
   const params = new URLSearchParams({
     client_id: clientId,
@@ -189,24 +212,26 @@ router.get("/bitbucket/callback", async (req, res) => {
   const code = typeof req.query.code === "string" ? req.query.code : "";
   const state = typeof req.query.state === "string" ? req.query.state : "";
   const err = typeof req.query.error === "string" ? req.query.error : "";
+  const rpErr = returnPathFromStateToken(state);
   if (err) {
-    redirectWithError(res, "bitbucket", err);
+    redirectWithError(res, "bitbucket", err, rpErr);
     return;
   }
   if (!code || !state) {
-    redirectWithError(res, "bitbucket", "missing_code_or_state");
+    redirectWithError(res, "bitbucket", "missing_code_or_state", rpErr);
     return;
   }
   try {
     const decoded = verifyOAuthState(state);
     if (decoded.provider !== "bitbucket") {
-      redirectWithError(res, "bitbucket", "invalid_state");
+      redirectWithError(res, "bitbucket", "invalid_state", decoded.returnPath || null);
       return;
     }
     await completeBitbucketOAuth(code, state);
-    redirectOk(res, "bitbucket");
+    redirectOk(res, "bitbucket", decoded.returnPath || null);
   } catch (e) {
-    redirectWithError(res, "bitbucket", e.message || "oauth_failed");
+    const rp = returnPathFromStateToken(state);
+    redirectWithError(res, "bitbucket", e.message || "oauth_failed", rp);
   }
 });
 
@@ -247,7 +272,8 @@ router.get("/jira/start", authenticateToken, (req, res) => {
     return;
   }
   const reconnectId = parseReconnectId(req.query);
-  const state = signOAuthState(req.user.id, "jira", reconnectId);
+  const returnPath = parseReturnToQuery(req.query);
+  const state = signOAuthState(req.user.id, "jira", reconnectId, returnPath);
   const scope =
     process.env.ATLASSIAN_OAUTH_SCOPES ||
     "read:jira-user read:jira-work write:jira-work offline_access";
@@ -273,24 +299,26 @@ router.get("/jira/callback", async (req, res) => {
   const code = typeof req.query.code === "string" ? req.query.code : "";
   const state = typeof req.query.state === "string" ? req.query.state : "";
   const err = typeof req.query.error === "string" ? req.query.error : "";
+  const rpErr = returnPathFromStateToken(state);
   if (err) {
-    redirectWithError(res, "jira", err);
+    redirectWithError(res, "jira", err, rpErr);
     return;
   }
   if (!code || !state) {
-    redirectWithError(res, "jira", "missing_code_or_state");
+    redirectWithError(res, "jira", "missing_code_or_state", rpErr);
     return;
   }
   try {
     const decoded = verifyOAuthState(state);
     if (decoded.provider !== "jira") {
-      redirectWithError(res, "jira", "invalid_state");
+      redirectWithError(res, "jira", "invalid_state", decoded.returnPath || null);
       return;
     }
     await completeJiraOAuth(code, state);
-    redirectOk(res, "jira");
+    redirectOk(res, "jira", decoded.returnPath || null);
   } catch (e) {
-    redirectWithError(res, "jira", e.message || "oauth_failed");
+    const rp = returnPathFromStateToken(state);
+    redirectWithError(res, "jira", e.message || "oauth_failed", rp);
   }
 });
 

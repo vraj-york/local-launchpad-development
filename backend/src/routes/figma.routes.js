@@ -1,6 +1,6 @@
 import express from "express";
 import jwt from "jsonwebtoken";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 import crypto from "crypto";
 import {
   getCognitoVerifier,
@@ -9,8 +9,6 @@ import {
 } from "../utils/cognitoAuth.js";
 
 const router = express.Router();
-const prisma = new PrismaClient();
-
 // In-memory store for Figma plugin OAuth flow (same as Server Figma to React v2)
 const figmaPendingByWriteKey = new Map();
 const figmaReadKeyToWriteKey = new Map();
