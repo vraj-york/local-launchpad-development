@@ -710,17 +710,12 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       setUploadProgress(100);
 
       const revisionLabel = formatProjectVersionLabel(result?.version);
-      setUploadStatus(
-        `Upload successful! Revision: ${revisionLabel}`,
-      );
-      setUploadFile(null);
-      setSelectedRelease("");
-      setSelectedRoadmapItemIds([]);
-      if (uploadFileInputRef.current) uploadFileInputRef.current.value = "";
       await loadReleases();
       toast.success(
-        `Project uploaded successfully! Revision: ${revisionLabel}`,
+        `ZIP uploaded successfully. Revision: ${revisionLabel}`,
       );
+      setShowUploadForm(false);
+      resetUploadForm();
     } catch (err) {
       const errorMessage = err.error || err.message || "Upload failed";
       setUploadStatus(`Upload failed: ${errorMessage}`);

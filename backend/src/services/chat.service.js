@@ -1,8 +1,7 @@
 import crypto from "crypto";
 import { PrismaClient, ReleaseStatus } from "@prisma/client";
-import validator from "validator";
 import ApiError from "../utils/apiError.js";
-import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
+import { assertPublicClientStakeholderEmail } from "../utils/publicClientStakeholder.utils.js";
 import {
   createAgentForProjectRelease,
   getCursorAgentById,
@@ -282,31 +281,6 @@ async function assertReleaseBelongs(releaseId, projectId) {
 function assertReleaseNotLocked(release) {
   if (release.status === ReleaseStatus.locked) {
     throw new ApiError(400, "Release is locked");
-  }
-}
-
-/** Same rules as public release lock: stakeholders must be configured; email must be in the list. */
-function assertPublicClientStakeholderEmail(stakeholderCsv, clientEmailRaw) {
-  const email =
-    typeof clientEmailRaw === "string" ? clientEmailRaw.trim().toLowerCase() : "";
-  if (!email) {
-    throw new ApiError(400, "Client email is required.");
-  }
-  if (!validator.isEmail(email)) {
-    throw new ApiError(400, "Invalid email address.");
-  }
-  const stakeholderSet = parseStoredEmailListToSet(stakeholderCsv);
-  if (stakeholderSet.size === 0) {
-    throw new ApiError(
-      400,
-      "Public release lock is not available until project stakeholders are configured.",
-    );
-  }
-  if (!stakeholderSet.has(email)) {
-    throw new ApiError(
-      403,
-      "This email is not authorized to use this chat feature.",
-    );
   }
 }
 
@@ -747,7 +721,9 @@ export async function clientLinkFollowup({
   replacementImage: replacementImageRaw = null,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -1581,7 +1557,9 @@ export async function clientLinkConfirmLaunchpadMerge({
   clientEmail,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -1609,7 +1587,9 @@ export async function clientLinkRevertMergedMessage({
   clientEmail,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -1801,7 +1781,9 @@ export async function clientLinkRestoreVersion({
   clientEmail,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
@@ -1910,7 +1892,9 @@ export async function clientLinkPreviewCommit({
   clientEmail,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 

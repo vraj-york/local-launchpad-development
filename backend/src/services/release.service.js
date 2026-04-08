@@ -20,6 +20,7 @@ import {
   createBitbucketRepository,
 } from "./bitbucket.service.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
+import { assertPublicClientStakeholderEmail } from "../utils/publicClientStakeholder.utils.js";
 import { promisify } from "util";
 import os from "os";
 import { execa } from "execa";
@@ -1859,22 +1860,11 @@ export const getReleaseInfoService = async (releaseId) => {
   };
 };
 
-const PUBLIC_LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 /**
  * Public lock a release (one-way). Clears isActive on all versions for this release only.
  * Unlock is not supported. Caller supplies `lockedBy` email.
  */
 export const publicLockReleaseService = async (releaseId, lockedBy) => {
-  const email =
-    typeof lockedBy === "string" ? lockedBy.trim().toLowerCase() : "";
-  if (!email) {
-    throw new ApiError(400, "lockedBy email is required.");
-  }
-  if (!PUBLIC_LOCK_EMAIL_RE.test(email)) {
-    throw new ApiError(400, "lockedBy must be a valid email address.");
-  }
-
   const release = await prisma.release.findUnique({
     where: { id: releaseId },
     include: {
@@ -1892,21 +1882,14 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
     throw new ApiError(404, "Release not found");
   }
 
-  const stakeholderSet = parseStoredEmailListToSet(
+  assertPublicClientStakeholderEmail(
     release.project?.stakeholderEmails,
+    lockedBy,
+    { context: "releaseLock" },
   );
-  if (stakeholderSet.size === 0) {
-    throw new ApiError(
-      403,
-      "Public release lock is not available until project stakeholders are configured.",
-    );
-  }
-  if (!stakeholderSet.has(email)) {
-    throw new ApiError(
-      403,
-      "This email is not authorized",
-    );
-  }
+
+  const email =
+    typeof lockedBy === "string" ? lockedBy.trim().toLowerCase() : "";
 
   if (release.status === ReleaseStatus.locked) {
     throw new ApiError(400, "Release is already locked");

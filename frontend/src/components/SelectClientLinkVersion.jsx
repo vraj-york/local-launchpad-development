@@ -45,44 +45,6 @@ export function SelectClientLinkVersion({
     .flatMap((r) => r.versions || [])
     .find((v) => v.isActive)?.id;
 
-  const handleValueChange = async (versionId) => {
-    if (!versionId || !projectId) return;
-    const versionObj = getVersionById(versionId);
-    const versionLabel = versionObj
-      ? formatProjectVersionLabel(versionObj.version)
-      : "version";
-
-    try {
-      setSwitching(true);
-      setSelectedValue(versionId);
-      const result = await switchProjectVersion(
-        projectId,
-        Number(versionId),
-        false,
-      );
-      toast.success(
-        (result?.version
-          ? formatProjectVersionLabel(result.version)
-          : versionLabel) + " preview ready",
-        {
-          position: "top-right",
-        },
-      );
-      const rel = getReleaseByVersionId(versionId);
-      onSwitched?.({
-        buildUrl: result?.buildUrl,
-        version: result?.version,
-        versionId: Number(versionId),
-        releaseId: rel?.id != null ? Number(rel.id) : null,
-      });
-    } catch (err) {
-      toast.error(err?.error ?? "Failed to switch version");
-      setSelectedValue(activeVersionId ? String(activeVersionId) : "");
-    } finally {
-      setSwitching(false);
-    }
-  };
-
   const getVersionLabel = (version) =>
     formatProjectVersionLabel(version.version);
 
@@ -109,6 +71,45 @@ export function SelectClientLinkVersion({
     if (rn && rev) return `${rn} - ${rev}`;
     if (rev) return rev;
     return getVersionLabel(version);
+  };
+
+  const handleValueChange = async (versionId) => {
+    if (!versionId || !projectId) return;
+    const versionObj = getVersionById(versionId);
+    const rel = getReleaseByVersionId(versionId);
+    const versionLabel = versionObj
+      ? formatProjectVersionLabel(versionObj.version)
+      : "version";
+    const previewToastLabel =
+      versionObj && rel
+        ? getFullVersionOptionLabel(rel, versionObj)
+        : versionObj
+          ? getVersionLabel(versionObj)
+          : versionLabel;
+
+    try {
+      setSwitching(true);
+      setSelectedValue(versionId);
+      const result = await switchProjectVersion(
+        projectId,
+        Number(versionId),
+        false,
+      );
+      toast.success(`${previewToastLabel} preview ready`, {
+        position: "bottom-right",
+      });
+      onSwitched?.({
+        buildUrl: result?.buildUrl,
+        version: result?.version,
+        versionId: Number(versionId),
+        releaseId: rel?.id != null ? Number(rel.id) : null,
+      });
+    } catch (err) {
+      toast.error(err?.error ?? "Failed to switch version");
+      setSelectedValue(activeVersionId ? String(activeVersionId) : "");
+    } finally {
+      setSwitching(false);
+    }
   };
 
   const hasAnyVersions = releases.some(

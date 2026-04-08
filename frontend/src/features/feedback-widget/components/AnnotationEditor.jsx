@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Tldraw, exportToBlob } from "tldraw";
 import { ArrowUp, Bug, TrendingUp } from "lucide-react";
 import {
@@ -11,7 +11,12 @@ import {
 import "tldraw/tldraw.css";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  getClientLinkVerifiedEmail,
+  isPlausibleClientLinkEmail,
+} from "@/lib/clientLinkVerifiedEmail";
 
 const ISSUE_TYPE_OPTIONS = [
   {
@@ -30,12 +35,35 @@ const ISSUE_TYPE_OPTIONS = [
   },
 ];
 
-const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
+const AnnotationEditor = ({
+  screenshot,
+  metadata,
+  onSave,
+  requiresReporterEmail = false,
+}) => {
   const [editor, setEditor] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [description, setDescription] = useState("");
   const [issueType, setIssueType] = useState("Bug");
+  const [reporterEmail, setReporterEmail] = useState(() =>
+    getClientLinkVerifiedEmail(),
+  );
   const [error, setError] = useState("");
+
+  const canSubmitFeedback = useMemo(() => {
+    const emailNorm = reporterEmail.trim().toLowerCase();
+    if (!requiresReporterEmail) {
+      return !emailNorm || isPlausibleClientLinkEmail(emailNorm);
+    }
+    return Boolean(emailNorm && isPlausibleClientLinkEmail(emailNorm));
+  }, [reporterEmail, requiresReporterEmail]);
+
+  useEffect(() => {
+    const stored = getClientLinkVerifiedEmail();
+    if (stored) {
+      setReporterEmail((prev) => (prev.trim() ? prev : stored));
+    }
+  }, [screenshot]);
 
   useEffect(() => {
     if (!editor || !screenshot) {
@@ -105,7 +133,21 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
   }, [editor, screenshot]);
 
   const handleSave = async () => {
-    // Validate description
+    const emailNorm = reporterEmail.trim().toLowerCase();
+    if (requiresReporterEmail) {
+      if (!emailNorm) {
+        setError("Please enter your email address.");
+        return;
+      }
+      if (!isPlausibleClientLinkEmail(emailNorm)) {
+        setError("Please enter a valid email address.");
+        return;
+      }
+    } else if (emailNorm && !isPlausibleClientLinkEmail(emailNorm)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
     if (!description.trim()) {
       setError("Please provide a description");
       return;
@@ -116,10 +158,12 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
       return;
     }
 
+    const emailForSubmit = emailNorm;
+
     if (!editor) {
       const response = await fetch(screenshot);
       const blob = await response.blob();
-      onSave(blob, screenshot, description, issueType);
+      onSave(blob, screenshot, description, issueType, emailForSubmit);
       return;
     }
 
@@ -129,7 +173,7 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
       if (shapeIds.length === 0) {
         const response = await fetch(screenshot);
         const blob = await response.blob();
-        onSave(blob, screenshot, description, issueType);
+        onSave(blob, screenshot, description, issueType, emailForSubmit);
         return;
       }
 
@@ -146,14 +190,14 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
 
       const reader = new FileReader();
       reader.onloadend = () => {
-        onSave(blob, reader.result, description, issueType);
+        onSave(blob, reader.result, description, issueType, emailForSubmit);
       };
       reader.readAsDataURL(blob);
     } catch (error) {
       console.error("Failed to export annotation:", error);
       const response = await fetch(screenshot);
       const blob = await response.blob();
-      onSave(blob, screenshot, description, issueType);
+      onSave(blob, screenshot, description, issueType, emailForSubmit);
     }
   };
 
@@ -175,48 +219,23 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
   ];
 
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: "24px",
-        height: "100%",
-        minHeight: "600px",
-      }}
-    >
+    <div className="flex h-full min-h-[600px] gap-6">
       {/* Left side - tldraw editor */}
-      <div style={{ flex: "1 1 65%", position: "relative" }}>
+      <div className="relative min-w-0 flex-[1_1_65%]">
         {isLoading && (
-          <div
-            style={{
-              position: "absolute",
-              top: "50%",
-              left: "50%",
-              transform: "translate(-50%, -50%)",
-              zIndex: 1000,
-              background: "white",
-              padding: "20px",
-              borderRadius: "8px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-            }}
-          >
-            <div className="feedback-widget-spinner" />
-            <p
-              style={{ marginTop: "10px", fontSize: "14px", color: "#6b7280" }}
-            >
+          <div className="absolute left-1/2 top-1/2 z-[1000] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-5 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+            <div
+              className="mx-auto mb-5 h-12 w-12 shrink-0 animate-[spin_0.8s_linear_infinite] rounded-full border-4 border-gray-100 border-t-[#00b48a]"
+              aria-hidden
+            />
+            <p className="mt-2.5 font-sans text-sm text-gray-500">
               Loading screenshot...
             </p>
           </div>
         )}
 
         <div
-          style={{
-            width: "100%",
-            height: "100%",
-            border: "2px solid #e5e7eb",
-            borderRadius: "8px",
-            overflow: "hidden",
-            background: "#f9fafb",
-          }}
+          className="h-full w-full overflow-hidden rounded-lg border-2 border-gray-200 bg-gray-50 [&_.tldraw]:rounded-lg [&_.tldraw_[data-testid='tools.note']]:!hidden [&_.tldraw_[data-testid='tools.eraser']]:!hidden [&_.tldraw_button[data-testid*='page']]:!hidden [&_.tldraw_.tlui-page-menu]:!hidden [&_.tldraw_.tlui-navigation-panel]:!hidden [&_.tldraw_[data-testid='tools.frame']]:!hidden"
         >
           <Tldraw onMount={setEditor} autoFocus components={components} />
         </div>
@@ -262,6 +281,30 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
           </Select>
         </div>
 
+        <div className="space-y-2">
+          <Label htmlFor="feedback-reporter-email">
+            Your email{" "}
+            {requiresReporterEmail ? (
+              <span className="text-destructive">*</span>
+            ) : (
+              <span className="text-muted-foreground font-normal">(optional)</span>
+            )}
+          </Label>
+          <Input
+            id="feedback-reporter-email"
+            type="email"
+            name="email"
+            autoComplete="email"
+            placeholder="you@company.com"
+            value={reporterEmail}
+            onChange={(e) => {
+              setReporterEmail(e.target.value);
+              setError("");
+            }}
+            className="w-full"
+          />
+        </div>
+
         <div className="flex flex-col space-y-2">
           <Label htmlFor="feedback-description">
             Description <span className="text-destructive">*</span>
@@ -285,7 +328,19 @@ const AnnotationEditor = ({ screenshot, metadata, onSave }) => {
           </div>
         </div>
 
-        <Button type="button" onClick={handleSave} className="w-fit">
+        <Button
+          type="button"
+          onClick={handleSave}
+          disabled={!canSubmitFeedback}
+          title={
+            !canSubmitFeedback
+              ? requiresReporterEmail
+                ? "Add a valid email address to submit."
+                : "Enter a valid email address or clear the field."
+              : undefined
+          }
+          className="w-fit"
+        >
           Submit Feedback
         </Button>
       </div>
