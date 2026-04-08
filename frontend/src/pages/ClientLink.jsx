@@ -48,10 +48,9 @@ import {
 } from "../components/ClientLinkPreviewPicker";
 import {
   getClientLinkVerifiedEmail,
+  isPlausibleClientLinkEmail,
   setClientLinkVerifiedEmail,
 } from "@/lib/clientLinkVerifiedEmail";
-
-const LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const PREVIEW_MOBILE_W = 390;
 const PREVIEW_TABLET_W = 820;
@@ -203,8 +202,7 @@ export const ClientLink = () => {
   }, [lockConfirmOpen]);
 
   const lockEmailValid = React.useMemo(() => {
-    const e = lockEmail.trim().toLowerCase();
-    return LOCK_EMAIL_RE.test(e);
+    return isPlausibleClientLinkEmail(lockEmail);
   }, [lockEmail]);
 
   const liveActiveVersionId = React.useMemo(() => {
@@ -248,7 +246,7 @@ export const ClientLink = () => {
   const handleLockConfirm = useCallback(async () => {
     if (!selectedReleaseId) return;
     const email = lockEmail.trim().toLowerCase();
-    if (!LOCK_EMAIL_RE.test(email)) {
+    if (!isPlausibleClientLinkEmail(email)) {
       toast.error("Please enter a valid email address.");
       return;
     }
@@ -743,11 +741,7 @@ export const ClientLink = () => {
                   ) : (
                     <>
                       All latest releases are currently locked, so there is no
-                      active build to show. Remove{" "}
-                      <span className="font-mono text-slate-800">c=false</span>{" "}
-                      from the URL (or use{" "}
-                      <span className="font-mono text-slate-800">c=true</span>)
-                      to open the full client view and pick a version.
+                      active build to show.
                     </>
                   )
                 ) : (
@@ -810,11 +804,22 @@ export const ClientLink = () => {
           <EmbeddedFeedbackWidget
             ref={feedbackWidgetRef}
             projectId={String(publicProject.id)}
+            getClientEmail={() => getClientLinkVerifiedEmail()}
             captureTarget="#feedback-capture-wrapper"
             anchorToPreview
             hideDefaultTrigger
             onCapturingChange={setFeedbackCapturing}
-            onSuccess={() => toast.success("Feedback submitted successfully")}
+            onSuccess={(res) => {
+              if (
+                res &&
+                typeof res === "object" &&
+                res.jiraError != null &&
+                String(res.jiraError).trim() !== ""
+              ) {
+                return;
+              }
+              toast.success("Feedback submitted successfully");
+            }}
             onError={(err) =>
               toast.error(err?.message ?? "Failed to submit feedback")
             }

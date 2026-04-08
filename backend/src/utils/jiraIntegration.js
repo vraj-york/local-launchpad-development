@@ -383,9 +383,10 @@ function parseListLine(line) {
  * Converts newlines to paragraphs and lines starting with -, •, *, or "1." to bullet lists.
  * @param {string} description - Main description text (may contain newlines and bullet points)
  * @param {Object|null} metadata - Optional metadata object (e.g. browser, pageUrl, screenResolution)
+ * @param {string|null|undefined} reporterEmail - Issue creator email (LaunchPad client link)
  * @returns {Array} ADF content array
  */
-function buildDescriptionContent(description, metadata) {
+function buildDescriptionContent(description, metadata, reporterEmail) {
     const content = [];
     const raw = typeof description === 'string' ? description : '';
     const lines = raw.split(/\r?\n/).map((l) => l.trimEnd());
@@ -422,6 +423,25 @@ function buildDescriptionContent(description, metadata) {
 
     if (content.length === 0) {
         content.push({ type: 'paragraph', content: [{ type: 'text', text: ' ' }] });
+    }
+
+    const reporter =
+        typeof reporterEmail === 'string' ? reporterEmail.trim() : '';
+    if (reporter) {
+        content.push({
+            type: 'paragraph',
+            content: [
+                {
+                    type: 'text',
+                    text: 'Issue reporter (LaunchPad)',
+                    marks: [{ type: 'strong' }],
+                },
+            ],
+        });
+        content.push({
+            type: 'paragraph',
+            content: [{ type: 'text', text: reporter }],
+        });
     }
 
     if (metadata && typeof metadata === 'object' && Object.keys(metadata).length > 0) {
@@ -469,7 +489,7 @@ function toSingleLineSummary(s) {
 /**
  * Create a single Jira ticket using project-specific config (e.g. from DB).
  * Used by feedback flow: one ticket per submission with description and optional metadata.
- * @param {Object} ticketData - { title, description, metadata? }
+ * @param {Object} ticketData - { title, description, metadata?, reporterEmail? }
  * @param {Object} config - { baseUrl, projectKey, apiToken, email, issueType? }
  * @returns {Promise<{ success: boolean, ticketKey?: string, ticketUrl?: string, error?: string }>}
  */
@@ -521,7 +541,11 @@ export async function createJiraTicketWithConfig(ticketData, config) {
     }
     const authHeaders = jiraIssueAuthHeaders(config);
     const url = `${jiraRestApiRoot(config)}/rest/api/3/issue`;
-    const descriptionContent = buildDescriptionContent(ticketData.description, ticketData.metadata || null);
+    const descriptionContent = buildDescriptionContent(
+        ticketData.description,
+        ticketData.metadata || null,
+        ticketData.reporterEmail,
+    );
     const summary = toSingleLineSummary(ticketData.title).slice(0, 255);
     const payload = {
         fields: {

@@ -324,8 +324,8 @@ async function captureIframeViewport(iframe) {
 export const captureFullPage = async () => {
   console.log(`${LOG} captureFullPage — Step 1/4: start`);
 
-  const widgetButton = document.querySelector('.feedback-widget-button');
-  const widgetOverlay = document.querySelector('.feedback-widget-overlay');
+  const widgetButton = document.querySelector('[data-feedback-widget-button]');
+  const widgetOverlay = document.querySelector('[data-feedback-widget-overlay]');
   console.log(`${LOG} captureFullPage — Step 1/4: hiding widget UI`, {
     hasButton: !!widgetButton,
     hasOverlay: !!widgetOverlay,
@@ -369,8 +369,8 @@ export const captureFullPage = async () => {
 export const captureViewport = async () => {
   console.log(`${LOG} captureViewport — Step 1/4: start`);
 
-  const widgetButton = document.querySelector('.feedback-widget-button');
-  const widgetOverlay = document.querySelector('.feedback-widget-overlay');
+  const widgetButton = document.querySelector('[data-feedback-widget-button]');
+  const widgetOverlay = document.querySelector('[data-feedback-widget-overlay]');
   console.log(`${LOG} captureViewport — Step 1/4: hiding widget UI`, {
     hasButton: !!widgetButton,
     hasOverlay: !!widgetOverlay,
@@ -424,8 +424,8 @@ export const captureTargetArea = async (target) => {
     return captureViewport();
   }
 
-  const widgetButton = document.querySelector(".feedback-widget-button");
-  const widgetOverlay = document.querySelector(".feedback-widget-overlay");
+  const widgetButton = document.querySelector("[data-feedback-widget-button]");
+  const widgetOverlay = document.querySelector("[data-feedback-widget-overlay]");
 
   try {
     console.log(`${LOG} captureTargetArea — Step 2/7: hiding widget UI`, {

@@ -28,6 +28,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import {
   getClientLinkVerifiedEmail,
+  isPlausibleClientLinkEmail,
   setClientLinkVerifiedEmail,
 } from "@/lib/clientLinkVerifiedEmail";
 import {
@@ -67,8 +68,6 @@ const SYSTEM_SUCCESS_BUBBLE_CLASS =
   "mr-6 rounded-lg rounded-tl-xs border border-emerald-500/35 bg-emerald-500/5 px-3 py-2 text-sm text-foreground shadow-xs";
 const SYSTEM_ERROR_BUBBLE_CLASS =
   "mr-6 rounded-lg rounded-tl-xs border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-foreground shadow-xs";
-
-const LOCK_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const CHAT_ACCESS_DENIED_USER_MESSAGE =
   "Your email is not allowed to use this chat feature.";
@@ -469,7 +468,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     [verifyBump, isOpen],
   );
   const identityLooksValid =
-    Boolean(identityEmail) && LOCK_EMAIL_RE.test(identityEmail);
+    Boolean(identityEmail) && isPlausibleClientLinkEmail(identityEmail);
   const showMainChatUi = identityLooksValid;
 
   const canViewChat =
@@ -537,7 +536,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   useEffect(() => {
     if (!isOpen) return;
     const s = getClientLinkVerifiedEmail();
-    setPanelEmailInput(s && LOCK_EMAIL_RE.test(s) ? s : "");
+    setPanelEmailInput(s && isPlausibleClientLinkEmail(s) ? s : "");
     setGateInlineError("");
   }, [isOpen]);
 
@@ -548,7 +547,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   useEffect(() => {
     if (!isOpen || !showMainChatUi || composerEmailEditorOpen) return;
     const s = getClientLinkVerifiedEmail();
-    setComposerEmailDraft(s && LOCK_EMAIL_RE.test(s) ? s : "");
+    setComposerEmailDraft(s && isPlausibleClientLinkEmail(s) ? s : "");
     setComposerEmailError("");
   }, [isOpen, showMainChatUi, verifyBump, composerEmailEditorOpen]);
 
@@ -557,7 +556,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       const next = !open;
       if (next) {
         const s = getClientLinkVerifiedEmail();
-        setComposerEmailDraft(s && LOCK_EMAIL_RE.test(s) ? s : "");
+        setComposerEmailDraft(s && isPlausibleClientLinkEmail(s) ? s : "");
         setComposerEmailError("");
       }
       return next;
@@ -566,7 +565,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
 
   const handleContinueEmail = useCallback(() => {
     const email = panelEmailInput.trim().toLowerCase();
-    if (!LOCK_EMAIL_RE.test(email)) {
+    if (!isPlausibleClientLinkEmail(email)) {
       setGateInlineError("Please enter a valid email address.");
       return;
     }
@@ -613,7 +612,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
 
   const handleSaveComposerEmail = useCallback(() => {
     const email = composerEmailDraft.trim().toLowerCase();
-    if (!LOCK_EMAIL_RE.test(email)) {
+    if (!isPlausibleClientLinkEmail(email)) {
       setComposerEmailError("Please enter a valid email address.");
       return;
     }
@@ -1115,7 +1114,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                     className="w-full bg-linear-to-r from-violet-600 to-indigo-600 font-semibold text-white shadow-md hover:from-violet-700 hover:to-indigo-700"
                     onClick={handleContinueEmail}
                     disabled={
-                      !LOCK_EMAIL_RE.test(panelEmailInput.trim().toLowerCase())
+                      !isPlausibleClientLinkEmail(
+                        panelEmailInput.trim().toLowerCase(),
+                      )
                     }
                   >
                     Continue
@@ -1348,7 +1349,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                                 chatSending ||
                                 chatPolling ||
                                 chatHistoryLoading ||
-                                !LOCK_EMAIL_RE.test(
+                                !isPlausibleClientLinkEmail(
                                   composerEmailDraft.trim().toLowerCase(),
                                 )
                               }

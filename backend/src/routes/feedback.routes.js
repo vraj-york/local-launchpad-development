@@ -12,6 +12,8 @@ import {
   resolveJiraCredentialsFromProject,
   jiraIntegrationConfigFromResolved,
 } from "../services/integrationCredential.service.js";
+import { assertPublicClientStakeholderEmail } from "../utils/publicClientStakeholder.utils.js";
+import ApiError from "../utils/apiError.js";
 
 const prisma = new PrismaClient();
 
@@ -38,6 +40,7 @@ const upload = multer({
  *   - description: string (required)
  *   - metadata: JSON string (optional)
  *   - projectId: string (optional)
+ *   - clientEmail: string (required when projectId is set — must be a configured stakeholder)
  * Does not store screenshots on disk; optionally attaches to Jira when project has Jira config.
  */
 router.post(
@@ -64,6 +67,12 @@ router.post(
 
       const description = req.body.description || "";
       const projectId = req.body.projectId || null;
+      const clientEmail =
+        typeof req.body.clientEmail === "string"
+          ? req.body.clientEmail
+          : typeof req.body.email === "string"
+            ? req.body.email
+            : "";
       // Issue type from widget: "Bug" (default) or "Improvements" -> Jira "Story"
       const rawIssueType = (req.body.issueType || "Bug").trim();
       const jiraIssueType =
@@ -88,6 +97,7 @@ router.post(
           const project = await prisma.project.findUnique({
             where: { id: Number(projectId) },
             select: {
+              stakeholderEmails: true,
               jiraBaseUrl: true,
               jiraProjectKey: true,
               jiraApiToken: true,
@@ -99,6 +109,11 @@ router.post(
           if (!project) {
             /* skip Jira */
           } else {
+            assertPublicClientStakeholderEmail(
+              project.stakeholderEmails,
+              clientEmail,
+              { context: "issueReporter" },
+            );
             const hasJiraConfig =
               project?.jiraBaseUrl &&
               project?.jiraProjectKey &&
@@ -129,11 +144,16 @@ router.post(
               const summaryTitle = rawTitle.startsWith("[LaunchPad]")
                 ? rawTitle
                 : `[LaunchPad] ${rawTitle}`;
+              const reporterEmailForJira =
+                typeof clientEmail === "string"
+                  ? clientEmail.trim().toLowerCase()
+                  : "";
               const ticketResult = await createJiraTicketWithConfig(
                 {
                   title: summaryTitle,
                   description,
                   metadata,
+                  reporterEmail: reporterEmailForJira,
                 },
                 jiraCfg,
               );
@@ -163,6 +183,9 @@ router.post(
             }
           }
         } catch (jiraErr) {
+          if (jiraErr instanceof ApiError) {
+            throw jiraErr;
+          }
           console.error(
             "[feedback] Jira flow error:",
             jiraErr.message,
@@ -180,6 +203,12 @@ router.post(
         ...(jiraError && { jiraError }),
       });
     } catch (err) {
+      if (err instanceof ApiError) {
+        return res.status(err.statusCode).json({
+          success: false,
+          message: err.message,
+        });
+      }
       console.error("[feedback] Save error:", err.message, err.stack);
       return res.status(500).json({
         success: false,
