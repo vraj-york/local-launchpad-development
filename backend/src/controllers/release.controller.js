@@ -11,6 +11,7 @@ import {
     publicLockReleaseService,
     uploadReleaseVersionService,
 } from "../services/release.service.js";
+import { regenerateClientReviewSummaryNow } from "../services/releaseReviewSummary.service.js";
 
 export const releaseController = {
     /**
@@ -132,6 +133,32 @@ export const releaseController = {
         const releaseId = parseInt(req.params.id, 10);
         const entries = await getReleaseChangelogService(releaseId, req.user);
         res.json(entries);
+    }),
+
+    /**
+     * Regenerate OpenAI client review summary (forces refresh; requires OPENAI_API_KEY).
+     */
+    regenerateReviewSummary: asyncHandler(async (req, res) => {
+        const releaseId = parseInt(req.params.id, 10);
+        await getReleaseByIdService(releaseId, req.user);
+        let generationContextOverride;
+        if (
+            req.body != null &&
+            Object.prototype.hasOwnProperty.call(
+                req.body,
+                "clientReviewAiGenerationContext",
+            )
+        ) {
+            const raw = req.body.clientReviewAiGenerationContext;
+            generationContextOverride =
+                typeof raw === "string" ? raw.trim() || null : null;
+        }
+        const result = await regenerateClientReviewSummaryNow(releaseId, {
+            force: true,
+            generationContextOverride,
+        });
+        const release = await getReleaseByIdService(releaseId, req.user);
+        res.json({ ...result, release });
     }),
 
 };

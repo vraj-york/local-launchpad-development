@@ -119,6 +119,22 @@ export const updateReleaseValidation = [
     .optional({ nullable: true })
     .isString()
     .withMessage("clientReleaseNote must be a string"),
+  body("clientReviewAiSummary")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 32000 })
+    .withMessage("clientReviewAiSummary must be a string at most 32000 characters"),
+  body("showClientReviewSummary")
+    .optional()
+    .isBoolean()
+    .withMessage("showClientReviewSummary must be a boolean"),
+  body("clientReviewAiGenerationContext")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 16000 })
+    .withMessage(
+      "clientReviewAiGenerationContext must be a string at most 16000 characters",
+    ),
 ];
 
 export const setReleaseStatusValidation = [
@@ -160,4 +176,18 @@ export const releaseChangelogParamValidation = [
   param("id")
     .isInt({ min: 1 })
     .withMessage("Invalid release id"),
+];
+
+/** Optional body for POST .../regenerate-review-summary */
+export const regenerateReviewSummaryValidation = [
+  param("id")
+    .isInt({ min: 1 })
+    .withMessage("Invalid release id"),
+  body("clientReviewAiGenerationContext")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 16000 })
+    .withMessage(
+      "clientReviewAiGenerationContext must be a string at most 16000 characters",
+    ),
 ];

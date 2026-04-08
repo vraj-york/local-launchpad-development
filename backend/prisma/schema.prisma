@@ -164,6 +164,13 @@ model Release {
   lockedBy    String?
   /// Optional notes for stakeholders on the client link (e.g. what not to test, scope).
   clientReleaseNote    String?
+  /// “What to review” checklist for client link (AI-generated and/or edited manually).
+  clientReviewAiSummary     String?   @db.Text
+  clientReviewAiSummaryAt   DateTime?
+  /// When false, client link hides the review summary even if text is set.
+  showClientReviewSummary   Boolean   @default(true)
+  /// Optional team notes for the AI only when generating “what to review” (not shown on client link).
+  clientReviewAiGenerationContext String? @db.Text
 
   createdBy   Int
   createdAt   DateTime @default(now())

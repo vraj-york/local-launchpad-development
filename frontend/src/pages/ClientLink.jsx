@@ -36,6 +36,7 @@ import {
   Laptop,
   Lock,
   Smartphone,
+  Sparkles,
   Tablet,
 } from "lucide-react";
 import { ClientLinkChatPanel } from "../components/ClientLinkChatPanel";
@@ -79,6 +80,7 @@ export const ClientLink = () => {
   /** Bumped after chat merge/revert + project reload so iframe URL changes when build URL is unchanged (cache bust). */
   const [previewRefreshNonce, setPreviewRefreshNonce] = useState(0);
   const [releaseNoteOpen, setReleaseNoteOpen] = useState(false);
+  const [reviewGuideOpen, setReviewGuideOpen] = useState(false);
   const [previewStageWidth, setPreviewStageWidth] = useState(0);
   const [responsivePreset, setResponsivePreset] = useState(
     /** @type {'desktop' | 'tablet' | 'mobile' | 'custom'} */ ("desktop"),
@@ -213,6 +215,8 @@ export const ClientLink = () => {
   }, [releases, activeRelease, previewMeta]);
 
   const clientNote = displayRelease?.clientReleaseNote?.trim() || "";
+  const aiReviewSummary = displayRelease?.clientReviewAiSummary?.trim() || "";
+  const aiReviewSummaryAt = displayRelease?.clientReviewAiSummaryAt;
 
   const activeReleaseLocked =
     String(activeRelease?.status ?? "").toLowerCase() === "locked";
@@ -596,6 +600,20 @@ export const ClientLink = () => {
                 Release note
               </span>
             </Button>
+            {aiReviewSummary ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0 gap-1.5 border-violet-200/90 bg-violet-50/80 px-2.5 text-violet-900 hover:bg-violet-100/90 sm:px-3"
+                onClick={() => setReviewGuideOpen(true)}
+              >
+                <Sparkles className="size-4 shrink-0" />
+                <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
+                  What to review
+                </span>
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -934,6 +952,32 @@ export const ClientLink = () => {
                 No release note available for this release.
               </p>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={reviewGuideOpen} onOpenChange={setReviewGuideOpen}>
+        <DialogContent className="max-h-[85vh] sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>What to review</DialogTitle>
+            <DialogDescription>
+              {displayRelease?.name
+                ? `AI-assisted checklist for release ${displayRelease.name}`
+                : "AI-assisted review checklist"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[55vh] overflow-y-auto rounded-lg border border-violet-100 bg-violet-50/40 p-4">
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
+              {aiReviewSummary}
+            </p>
+            {aiReviewSummaryAt ? (
+              <p className="mt-3 border-t border-violet-200/60 pt-2 text-xs text-slate-500">
+                Generated{" "}
+                {new Date(aiReviewSummaryAt).toLocaleString(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}
+              </p>
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

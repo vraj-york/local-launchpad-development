@@ -2,6 +2,7 @@
 # Usage: docker compose up -d
 #
 # Nginx runs inside the backend container only (port 80). Frontend is served with `serve` (no nginx).
+# Backend image sets NGINX_BIN=/usr/sbin/nginx for Node-driven `nginx -s reload`; override via .env if needed.
 # Database: set DATABASE_URL in repo root .env
 # Migrations: backend entrypoint runs `prisma migrate deploy` when DATABASE_URL is set (fails startup on error).
 # - Supabase / external only: docker compose up -d  (db service is NOT started)
@@ -12,6 +13,7 @@
 # - GitHub/Jira/Bitbucket OAuth: GITHUB_OAUTH_*, ATLASSIAN_OAUTH_*, BITBUCKET_OAUTH_*,
 #   OAUTH_TOKEN_ENCRYPTION_KEY, optional OAUTH_STATE_SECRET
 # - Hub: VITE_HUB_API_URL, optional VITE_HUB_OAUTH_REDIRECT_URL, optional VITE_HUB_PROFILE_PIC_API_KEY (frontend build args)
+# - OpenAI: OPENAI_API_KEY (optional) for client-link release “what to review” summaries; OPENAI_MODEL optional
 # - CORS: FRONTEND_URL should match where users open the UI (e.g. http://localhost:3000)
 #
 # env_file: root .env is loaded into services; optional .env.local (gitignored) overrides when present
@@ -69,6 +71,7 @@ services:
       BASE_URL: ${BASE_URL:-http://localhost:5000}
       NGINX_BASE_DOMAIN: ${NGINX_BASE_DOMAIN:-localhost}
       SSL_DOMAIN: ${SSL_DOMAIN:-}
+      NGINX_BIN: ${NGINX_BIN:-/usr/sbin/nginx}
       # Nginx runs in same container as Node — configs use proxy_pass http://localhost:<port>
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       # --- Cognito (Hub / JWT — aws-jwt-verify) ---
@@ -77,7 +80,9 @@ services:
       AUTH_ALLOWED_DOMAIN: ${AUTH_ALLOWED_DOMAIN:-}
       # FRONTEND_URL: set only in root .env (env_file). Do not set here — a default like localhost breaks UAT OAuth redirects.
       # Backend falls back to VITE_FRONTEND_URL when FRONTEND_URL is omitted (see backend/src/utils/publicFrontendUrl.js getPublicFrontendBaseUrl).
-      # --- Optional integrations (release upload, Cursor, S3) ---
+      # --- Optional integrations (release upload, Cursor, OpenAI client-review summary, S3) ---
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
       CURSOR_API_KEY: ${CURSOR_API_KEY:-}
       # Optional: force Cursor agent source.ref (branch/tag); unset uses request ref or GitHub default_branch
       CURSOR_AGENT_SOURCE_REF: ${CURSOR_AGENT_SOURCE_REF:-}

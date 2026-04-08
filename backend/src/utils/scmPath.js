@@ -1,4 +1,20 @@
 /**
+ * Detect host from a URL or path using substring rules (github.com vs bitbucket.org).
+ * @param {string} raw
+ * @returns {'github'|'bitbucket'|null}
+ */
+export function repositoryPlatformFromUrl(raw) {
+  const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (!s) return null;
+  const hasGh = s.includes("github.com");
+  const hasBb = s.includes("bitbucket.org");
+  if (hasGh && hasBb) return null;
+  if (hasBb) return "bitbucket";
+  if (hasGh) return "github";
+  return null;
+}
+
+/**
  * Parse canonical gitRepoPath into provider + workspace/owner + repo slug.
  * Examples: github.com/acme/app, bitbucket.org/acme/app, https://github.com/acme/app.git
  * @param {string} raw

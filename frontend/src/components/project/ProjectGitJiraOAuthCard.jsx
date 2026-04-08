@@ -32,6 +32,35 @@ import { toast } from "sonner";
 const GH_REPO_PATH_RE =
   /^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i;
 
+const BB_REPO_PATH_RE =
+  /^(https?:\/\/)?bitbucket\.org\/[^/\s]+\/[^/\s]+(?:\.git)?$/i;
+
+function normalizeRepoPathForCompare(p) {
+  return String(p || "")
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\.git$/i, "")
+    .toLowerCase();
+}
+
+/** @returns {'github'|'bitbucket'|null} */
+function repositoryPlatformFromUrl(raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  if (!s) return null;
+  const hasGh = s.includes("github.com");
+  const hasBb = s.includes("bitbucket.org");
+  if (hasGh && hasBb) return null;
+  if (hasBb) return "bitbucket";
+  if (hasGh) return "github";
+  return null;
+}
+
+const REPO_PLATFORM_PAIR_MISMATCH_MSG =
+  "Source repository  and development repository  must be on the same platform (GitHub or Bitbucket).";
+
+const REPO_PLATFORM_IMMUTABLE_MSG =
+  "Repository platform cannot be changed once set. Both source and development repositories must remain on the same platform.";
+
 /**
  * Shared GitHub or Bitbucket + Jira OAuth UI for create project and edit project (creator/admin).
  * @typedef {{
@@ -357,9 +386,36 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
         }
       }
       const dev = developmentRepoUrlInput.trim();
-      if (dev && !GH_REPO_PATH_RE.test(dev)) {
-        errors.developmentRepoUrl =
-          "Enter a valid GitHub path (e.g. github.com/org/other-repo)";
+      const devPathRe = scmHost === "github" ? GH_REPO_PATH_RE : BB_REPO_PATH_RE;
+      const devExample =
+        scmHost === "github"
+          ? "github.com/org/other-repo"
+          : "bitbucket.org/workspace/other-repo";
+      if (!dev) {
+        errors.developmentRepoUrl = "Developer repository path is required";
+      } else if (!devPathRe.test(dev)) {
+        errors.developmentRepoUrl = `Enter a valid path (e.g. ${devExample})`;
+      }
+      if (
+        !errors.developmentRepoUrl &&
+        (repoMode === "manual" || repoMode === "pick")
+      ) {
+        const mainRaw =
+          repoMode === "manual" ? gitRepoPathManual.trim() : pickedRepoPath.trim();
+        if (
+          mainRaw &&
+          normalizeRepoPathForCompare(mainRaw) === normalizeRepoPathForCompare(dev)
+        ) {
+          errors.developmentRepoUrl =
+            "Must be a different repository than the platform repository";
+        }
+        if (!errors.developmentRepoUrl && mainRaw && dev) {
+          const mp = repositoryPlatformFromUrl(mainRaw);
+          const dp = repositoryPlatformFromUrl(dev);
+          if (mp && dp && mp !== dp) {
+            errors.developmentRepoUrl = REPO_PLATFORM_PAIR_MISMATCH_MSG;
+          }
+        }
       }
       return errors;
     },
@@ -419,9 +475,39 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
         }
       }
       const dev = developmentRepoUrlInput.trim();
-      if (dev && !GH_REPO_PATH_RE.test(dev)) {
-        errors.developmentRepoUrl =
-          "Enter a valid GitHub path (e.g. github.com/org/other-repo)";
+      const devPathRe = scmHost === "github" ? GH_REPO_PATH_RE : BB_REPO_PATH_RE;
+      const devExample =
+        scmHost === "github"
+          ? "github.com/org/other-repo"
+          : "bitbucket.org/workspace/other-repo";
+      if (dev && !devPathRe.test(dev)) {
+        errors.developmentRepoUrl = `Enter a valid path (e.g. ${devExample})`;
+      }
+      const lockedPl = repositoryPlatformFromUrl(currentPath);
+      const mainNext =
+        repoMode === "keep"
+          ? currentPath
+          : repoMode === "pick"
+            ? pickedRepoPath.trim()
+            : gitRepoPathManual.trim();
+      if (!errors.developmentRepoUrl && dev && lockedPl) {
+        const dp = repositoryPlatformFromUrl(dev);
+        if (dp && dp !== lockedPl) {
+          errors.developmentRepoUrl = REPO_PLATFORM_IMMUTABLE_MSG;
+        }
+      }
+      if (!errors.gitRepoPath && lockedPl && mainNext) {
+        const mp = repositoryPlatformFromUrl(mainNext);
+        if (mp && mp !== lockedPl) {
+          errors.gitRepoPath = REPO_PLATFORM_IMMUTABLE_MSG;
+        }
+      }
+      if (!errors.developmentRepoUrl && mainNext && dev) {
+        const mp = repositoryPlatformFromUrl(mainNext);
+        const dp = repositoryPlatformFromUrl(dev);
+        if (mp && dp && mp !== dp) {
+          errors.developmentRepoUrl = REPO_PLATFORM_PAIR_MISMATCH_MSG;
+        }
       }
       return errors;
     },
@@ -453,7 +539,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     const base = {
       jiraConnectionId: Number(selectedJiraConnectionId),
       gitRepoPath: gitRepoPathOut,
-      developmentRepoUrl: developmentRepoUrlInput.trim() || undefined,
+      developmentRepoUrl: developmentRepoUrlInput.trim(),
       jiraProjectKey: jiraProjectKey.trim(),
       jiraBaseUrl: jiraBaseUrlResolved || jiConn?.baseUrl || undefined,
     };
@@ -869,14 +955,10 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="developmentRepoUrl-shared">Developer repository (optional)</Label>
-          <p className="text-xs text-muted-foreground">
-            Customer repo that receives the platform repo as a git submodule at{" "}
-            <code className="text-xs">launchpad-frontend/</code>. On lock:{" "}
-            <code className="text-xs">git fetch</code> / <code className="text-xs">git checkout</code>{" "}
-            to the active version commit in that folder, then commit and push the parent repo
-            (default message: &quot;Update the Launchpad branch&quot;).
-          </p>
+          <Label htmlFor="developmentRepoUrl-shared">
+            Developer repository{isEdit ? " (optional)" : " (required)"}
+          </Label>
+          
           <Input
             id="developmentRepoUrl-shared"
             placeholder={

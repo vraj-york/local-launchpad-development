@@ -23,6 +23,8 @@ import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import { promisify } from "util";
 import os from "os";
 import { execa } from "execa";
+import { scheduleRegenerateClientReviewSummary } from "./releaseReviewSummary.service.js";
+import { signalNginxReload } from "../utils/nginxBinary.js";
 
 const execAsync = promisify(exec);
 const prisma = new PrismaClient();
@@ -820,6 +822,7 @@ export const setReleaseStatusService = async (releaseId, status, user, options =
       projectId: release.projectId,
       user,
     });
+    scheduleRegenerateClientReviewSummary(releaseId);
   }
 
   return prisma.release.findUnique({
@@ -894,8 +897,9 @@ export const lockReleaseService = async (releaseId, locked, user) => {
 };
 
 /**
- * Partial update: name, description, isMvp, releaseDate, actualReleaseDate, actualReleaseNotes, startDate, clientReleaseNote.
- * Locked releases may only update clientReleaseNote for the public client link.
+ * Partial update: name, description, isMvp, releaseDate, actualReleaseDate, actualReleaseNotes, startDate,
+ * clientReleaseNote, clientReviewAiSummary, showClientReviewSummary, clientReviewAiGenerationContext.
+ * Locked releases may only update client-link fields (release note, what-to-review text, AI context, visibility).
  * Requires non-empty reason when any non–client-facing field actually changes.
  */
 export const updateReleaseService = async (releaseId, data, user) => {
@@ -910,6 +914,9 @@ export const updateReleaseService = async (releaseId, data, user) => {
     startDate: startDateInput,
     reason: reasonRaw,
     clientReleaseNote: clientNoteInput,
+    clientReviewAiSummary: clientReviewAiSummaryInput,
+    showClientReviewSummary: showClientReviewSummaryInput,
+    clientReviewAiGenerationContext: clientReviewAiGenerationContextInput,
   } = data;
 
   const current = await prisma.release.findUnique({
@@ -926,6 +933,9 @@ export const updateReleaseService = async (releaseId, data, user) => {
       actualReleaseNotes: true,
       startDate: true,
       clientReleaseNote: true,
+      clientReviewAiSummary: true,
+      showClientReviewSummary: true,
+      clientReviewAiGenerationContext: true,
       project: { select: { assignedManagerId: true } },
     },
   });
@@ -935,6 +945,16 @@ export const updateReleaseService = async (releaseId, data, user) => {
   const locked = current.status === ReleaseStatus.locked;
 
   const wantsClientNote = clientNoteInput !== undefined;
+  const wantsClientReviewSummary = clientReviewAiSummaryInput !== undefined;
+  const wantsShowClientReviewSummary = showClientReviewSummaryInput !== undefined;
+  const wantsClientReviewAiGenerationContext =
+    clientReviewAiGenerationContextInput !== undefined;
+  const wantsClientLinkPatch =
+    wantsClientNote ||
+    wantsClientReviewSummary ||
+    wantsShowClientReviewSummary ||
+    wantsClientReviewAiGenerationContext;
+
   const wantsOther =
     name !== undefined ||
     description !== undefined ||
@@ -944,14 +964,14 @@ export const updateReleaseService = async (releaseId, data, user) => {
     actualReleaseNotesInput !== undefined ||
     startDateInput !== undefined;
 
-  if (!wantsClientNote && !wantsOther) {
+  if (!wantsClientLinkPatch && !wantsOther) {
     throw new ApiError(400, "No updatable fields provided");
   }
 
   if (locked && wantsOther) {
     throw new ApiError(
       400,
-      "Cannot update a locked release except the client release note (client URL).",
+      "Cannot update a locked release except client link fields (release note, what to review, AI context, visibility).",
     );
   }
 
@@ -967,6 +987,40 @@ export const updateReleaseService = async (releaseId, data, user) => {
     if (next !== prev) {
       updateData.clientReleaseNote = next;
       changes.clientReleaseNote = { from: prev, to: next };
+    }
+  }
+
+  if (wantsClientReviewSummary) {
+    const next =
+      clientReviewAiSummaryInput == null || clientReviewAiSummaryInput === ""
+        ? null
+        : String(clientReviewAiSummaryInput).trim() || null;
+    const prev = current.clientReviewAiSummary ?? null;
+    if (next !== prev) {
+      updateData.clientReviewAiSummary = next;
+      changes.clientReviewAiSummary = { from: prev, to: next };
+    }
+  }
+
+  if (wantsShowClientReviewSummary) {
+    const next = Boolean(showClientReviewSummaryInput);
+    const prev = Boolean(current.showClientReviewSummary);
+    if (next !== prev) {
+      updateData.showClientReviewSummary = next;
+      changes.showClientReviewSummary = { from: prev, to: next };
+    }
+  }
+
+  if (wantsClientReviewAiGenerationContext) {
+    const next =
+      clientReviewAiGenerationContextInput == null ||
+      clientReviewAiGenerationContextInput === ""
+        ? null
+        : String(clientReviewAiGenerationContextInput).trim() || null;
+    const prev = current.clientReviewAiGenerationContext ?? null;
+    if (next !== prev) {
+      updateData.clientReviewAiGenerationContext = next;
+      changes.clientReviewAiGenerationContext = { from: prev, to: next };
     }
   }
 
@@ -1081,9 +1135,15 @@ export const updateReleaseService = async (releaseId, data, user) => {
 
   const reasonTrim =
     typeof reasonRaw === "string" ? reasonRaw.trim() : "";
+  const clientLinkChangeKeys = new Set([
+    "clientReleaseNote",
+    "clientReviewAiSummary",
+    "showClientReviewSummary",
+    "clientReviewAiGenerationContext",
+  ]);
   const onlyClientChanges =
     Object.keys(changes).length > 0 &&
-    Object.keys(changes).every((k) => k === "clientReleaseNote");
+    Object.keys(changes).every((k) => clientLinkChangeKeys.has(k));
   if (!onlyClientChanges && !reasonTrim) {
     throw new ApiError(400, "reason is required when changing release fields.");
   }
@@ -1091,11 +1151,11 @@ export const updateReleaseService = async (releaseId, data, user) => {
   const logReason =
     reasonTrim ||
     (onlyClientChanges
-      ? "Updated client release note (client link)"
+      ? "Updated client link fields (release note / what to review / AI context)"
       : reasonTrim);
 
-  return prisma.$transaction(async (tx) => {
-    const row = await tx.release.update({
+  const row = await prisma.$transaction(async (tx) => {
+    const updated = await tx.release.update({
       where: { id: releaseId },
       data: updateData,
       include: {
@@ -1108,8 +1168,20 @@ export const updateReleaseService = async (releaseId, data, user) => {
       changedById: userId,
       changes,
     });
-    return row;
+    return updated;
   });
+
+  const shouldRegenAiSummary =
+    "clientReleaseNote" in changes ||
+    "clientReviewAiGenerationContext" in changes ||
+    "name" in changes ||
+    "description" in changes ||
+    "actualReleaseNotes" in changes;
+  if (shouldRegenAiSummary) {
+    scheduleRegenerateClientReviewSummary(releaseId);
+  }
+
+  return row;
 };
 
 /**
@@ -1499,13 +1571,7 @@ export const runBuildSequence = async (buildContextPath, opts = {}) => {
 
 export const reloadNginx = async () => {
   try {
-    const { stdout } = await execAsync('which nginx');
-    const nginxBin = stdout.trim();
-    try {
-      await execAsync(`${nginxBin} -s reload`);
-    } catch {
-      await execAsync(`sudo ${nginxBin} -s reload`);
-    }
+    await signalNginxReload();
     return true;
   } catch (error) {
     console.error(`[NGINX RELOAD ERROR]: ${error.message}`);
@@ -1736,6 +1802,8 @@ export const uploadReleaseVersionService = async (
         },
       });
     });
+
+    scheduleRegenerateClientReviewSummary(releaseId);
 
     return {
       message: "Upload successful",
