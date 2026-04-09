@@ -200,9 +200,6 @@ export const createProjectValidation = [
         }
         if (scratch) {
             const p = typeof b.prompt === "string" ? b.prompt.trim() : "";
-            if (!p) {
-                throw new Error("prompt is required when isScratch is true");
-            }
             if (p.length > 100000) {
                 throw new Error("prompt must be at most 100000 characters");
             }
@@ -381,4 +378,18 @@ export const updateRoadmapsArrayValidation = [
         .withMessage("At least one roadmap is required"),
 
     ...roadmapValidators("roadmaps.*"),
+];
+
+/** POST /api/projects/:projectId/scratch-agent — deferred scratch prompt */
+export const startScratchAgentValidation = [
+    param("projectId")
+        .isInt()
+        .withMessage("Invalid project id"),
+
+    body("prompt")
+        .trim()
+        .notEmpty()
+        .withMessage("prompt is required")
+        .isLength({ max: 100000 })
+        .withMessage("prompt must be at most 100000 characters"),
 ];

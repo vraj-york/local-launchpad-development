@@ -33,6 +33,71 @@ function gitExecInDir(args, cwd) {
   });
 }
 
+/** @returns {string | null} */
+function gitRevParseVerify(cwd, ref) {
+  try {
+    return execFileSync("git", ["rev-parse", "--verify", ref], {
+      cwd,
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Revert one commit; merge commits use -m 1 on retry (same behavior as previous single-commit revert).
+ * @returns {{ ok: true } | { ok: false, message: string }}
+ */
+function revertSingleCommitInDir(cwd, commitSha) {
+  try {
+    gitExecInDir([...GIT_REVERT_IDENTITY, "revert", commitSha, "--no-edit"], cwd);
+    return { ok: true };
+  } catch (e1) {
+    const t1 = gitStderrFromError(e1);
+    if (/merge commit/i.test(t1) && !/-m\s+/.test(t1)) {
+      try {
+        gitExecInDir([...GIT_REVERT_IDENTITY, "revert", "-m", "1", commitSha, "--no-edit"], cwd);
+        return { ok: true };
+      } catch (e2) {
+        return {
+          ok: false,
+          message: gitStderrFromError(e2) || "git revert failed for merge commit (-m 1).",
+        };
+      }
+    }
+    return {
+      ok: false,
+      message: t1 || "git revert failed (resolve conflicts locally if needed).",
+    };
+  }
+}
+
+/**
+ * Commits to revert (newest first): targetSha through HEAD inclusive on the first-parent line.
+ * Root target: descendants newest-first, then targetSha.
+ * Uses `--first-parent` so merges from upstream (e.g. main) do not pull in side-branch commits
+ * when falling back from `git revert <range>`; linear agent history is unchanged.
+ * @returns {{ ok: true, commits: string[] } | { ok: false, message: string }}
+ */
+function listCommitsToRevertNewestFirst(cwd, fullSha, hasParent) {
+  const rangeRef = hasParent ? `${fullSha}^..HEAD` : `${fullSha}..HEAD`;
+  let out = "";
+  try {
+    out = execFileSync("git", ["rev-list", "--first-parent", rangeRef], {
+      cwd,
+      encoding: "utf8",
+    }).trim();
+  } catch (e) {
+    return { ok: false, message: gitStderrFromError(e) || "git rev-list failed." };
+  }
+  const lines = out ? out.split("\n").map((s) => s.trim()).filter(Boolean) : [];
+  if (!hasParent) {
+    lines.push(fullSha);
+  }
+  return { ok: true, commits: lines };
+}
+
 /**
  * Parse gitRepoPath for GitHub only (e.g. github.com/owner/repo). Bitbucket paths return null.
  * @param {string} gitRepoPath
@@ -482,7 +547,8 @@ export async function createTagIdempotent(owner, repo, tagName, sha, token) {
 }
 
 /**
- * Clone `branchName`, run `git revert <commitSha>` on it, push to origin.
+ * Clone `branchName`, run `git revert` for `<commitSha>^..HEAD` (newest first), push to origin.
+ * Undoes the target commit and every later commit on the first-parent line to the branch tip.
  * Requires the `git` CLI on the server. Used for client-link “revert merged chat” on the agent branch.
  *
  * @param {string} owner
@@ -526,24 +592,58 @@ export async function revertCommitOnRemoteBranch(owner, repo, token, branchName,
     await fs.ensureDir(tmp);
     gitExecInDir(["clone", "--branch", branch, "--single-branch", cloneUrl, "."], tmp);
 
-    try {
-      gitExecInDir([...GIT_REVERT_IDENTITY, "revert", sha, "--no-edit"], tmp);
-    } catch (e1) {
-      const t1 = gitStderrFromError(e1);
-      if (/merge commit/i.test(t1) && !/-m\s+/.test(t1)) {
-        try {
-          gitExecInDir([...GIT_REVERT_IDENTITY, "revert", "-m", "1", sha, "--no-edit"], tmp);
-        } catch (e2) {
+    const fullSha = gitRevParseVerify(tmp, sha);
+    if (!fullSha) {
+      return { ok: false, message: "Could not resolve commit SHA in clone." };
+    }
+
+    const hasParent = Boolean(gitRevParseVerify(tmp, `${fullSha}^`));
+    const tipBefore = gitRevParseVerify(tmp, "HEAD");
+
+    if (hasParent) {
+      try {
+        gitExecInDir([...GIT_REVERT_IDENTITY, "revert", "--no-edit", `${fullSha}^..HEAD`], tmp);
+      } catch (eRange) {
+        if (tipBefore) {
+          try {
+            gitExecInDir(["reset", "--hard", tipBefore], tmp);
+          } catch (eReset) {
+            return {
+              ok: false,
+              message:
+                gitStderrFromError(eReset) ||
+                "Could not reset after failed range revert (resolve conflicts locally if needed).",
+            };
+          }
+        }
+        const listed = listCommitsToRevertNewestFirst(tmp, fullSha, true);
+        if (!listed.ok) {
+          return listed;
+        }
+        if (listed.commits.length === 0) {
           return {
             ok: false,
-            message: gitStderrFromError(e2) || "git revert failed for merge commit (-m 1).",
+            message:
+              gitStderrFromError(eRange) || "git revert range failed (empty commit list on fallback).",
           };
         }
-      } else {
-        return {
-          ok: false,
-          message: t1 || "git revert failed (resolve conflicts locally if needed).",
-        };
+        for (const c of listed.commits) {
+          const one = revertSingleCommitInDir(tmp, c);
+          if (!one.ok) {
+            return one;
+          }
+        }
+      }
+    } else {
+      const listed = listCommitsToRevertNewestFirst(tmp, fullSha, false);
+      if (!listed.ok) {
+        return listed;
+      }
+      for (const c of listed.commits) {
+        const one = revertSingleCommitInDir(tmp, c);
+        if (!one.ok) {
+          return one;
+        }
       }
     }
 

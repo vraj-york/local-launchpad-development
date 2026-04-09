@@ -84,11 +84,16 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     editProject,
     oauthReturnTo,
     onBeforeOAuthRedirect,
+    /** Create flow: one-time restore from localStorage draft */
+    initialCreateDraft = null,
+    /** Create flow: called when persisted fields change (for localStorage) */
+    onCreateFieldsChange,
   },
   ref,
 ) {
   const isEdit = variant === "edit";
   const oauthDraftRestoredRef = useRef(false);
+  const createDraftHydratedRef = useRef(false);
 
   const [scmHost, setScmHost] = useState("github");
   const [selectedGithubConnectionId, setSelectedGithubConnectionId] = useState("");
@@ -166,6 +171,14 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       return;
     }
     if (!isEdit) {
+      if (
+        initialCreateDraft &&
+        typeof initialCreateDraft === "object" &&
+        Object.keys(initialCreateDraft).length > 0
+      ) {
+        return;
+      }
+      createDraftHydratedRef.current = false;
       setScmHost("github");
       setRepoMode("auto");
       setPickedRepoPath("");
@@ -175,13 +188,13 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       setDevRepoPickNonce(0);
       setJiraProjectKey("");
     }
-  }, [syncKey, isEdit, editProject]);
+  }, [syncKey, isEdit, editProject, initialCreateDraft]);
 
   useEffect(() => {
     if (isEdit || !integrationsPayload) return;
     const gh = integrationsPayload.github?.connections ?? [];
     const bb = integrationsPayload.bitbucket?.connections ?? [];
-    if (!gh.length && bb.length) setScmHost("bitbucket");
+    if (!createDraftHydratedRef.current && !gh.length && bb.length) setScmHost("bitbucket");
   }, [integrationsPayload, isEdit]);
 
   useEffect(() => {
@@ -189,6 +202,55 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     const gh = integrationsPayload.github?.connections ?? [];
     const bb = integrationsPayload.bitbucket?.connections ?? [];
     const ji = integrationsPayload.jira?.connections ?? [];
+
+    const draftHasKeys =
+      initialCreateDraft &&
+      typeof initialCreateDraft === "object" &&
+      Object.keys(initialCreateDraft).length > 0;
+    if (!isEdit && draftHasKeys && !createDraftHydratedRef.current) {
+      createDraftHydratedRef.current = true;
+      const d = initialCreateDraft;
+      if (d.scmHost === "github" || d.scmHost === "bitbucket") setScmHost(d.scmHost);
+      if (d.repoMode === "auto" || d.repoMode === "pick" || d.repoMode === "manual")
+        setRepoMode(d.repoMode);
+      if (typeof d.pickedRepoPath === "string") setPickedRepoPath(d.pickedRepoPath);
+      if (typeof d.gitRepoPathManual === "string") setGitRepoPathManual(d.gitRepoPathManual);
+      if (typeof d.developmentRepoUrlInput === "string")
+        setDevelopmentRepoUrlInput(d.developmentRepoUrlInput);
+      if (typeof d.jiraProjectKey === "string") setJiraProjectKey(d.jiraProjectKey);
+      if (typeof d.jiraBaseUrlResolved === "string") setJiraBaseUrlResolved(d.jiraBaseUrlResolved);
+
+      const wantGh = d.selectedGithubConnectionId != null ? String(d.selectedGithubConnectionId) : "";
+      const wantBb = d.selectedBitbucketConnectionId != null ? String(d.selectedBitbucketConnectionId) : "";
+      const wantJi = d.selectedJiraConnectionId != null ? String(d.selectedJiraConnectionId) : "";
+      setSelectedGithubConnectionId(
+        wantGh && gh.some((c) => String(c.id) === wantGh)
+          ? wantGh
+          : gh[0]
+            ? String(gh[0].id)
+            : "",
+      );
+      setSelectedBitbucketConnectionId(
+        wantBb && bb.some((c) => String(c.id) === wantBb)
+          ? wantBb
+          : bb[0]
+            ? String(bb[0].id)
+            : "",
+      );
+      setSelectedJiraConnectionId(
+        wantJi && ji.some((c) => String(c.id) === wantJi)
+          ? wantJi
+          : ji[0]
+            ? String(ji[0].id)
+            : "",
+      );
+      return;
+    }
+
+    if (!isEdit && createDraftHydratedRef.current) {
+      return;
+    }
+
     setSelectedGithubConnectionId((prev) => {
       if (isEdit && editProject?.githubConnectionId != null) {
         const want = String(editProject.githubConnectionId);
@@ -213,7 +275,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       if (prev && ji.some((c) => String(c.id) === prev)) return prev;
       return ji[0] ? String(ji[0].id) : "";
     });
-  }, [integrationsPayload, isEdit, editProject]);
+  }, [integrationsPayload, isEdit, editProject, initialCreateDraft]);
 
   useEffect(() => {
     if (isEdit || oauthDraftRestoredRef.current || !integrationsPayload) return;
@@ -690,6 +752,38 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     repoMode !== "keep" &&
     editNextRepoPath &&
     editNextRepoPath !== String(editProject.gitRepoPath || "").trim();
+
+  const createDraftSnapshotForParent = useMemo(
+    () => ({
+      scmHost,
+      selectedGithubConnectionId,
+      selectedBitbucketConnectionId,
+      selectedJiraConnectionId,
+      repoMode,
+      pickedRepoPath,
+      gitRepoPathManual,
+      developmentRepoUrlInput,
+      jiraProjectKey,
+      jiraBaseUrlResolved,
+    }),
+    [
+      scmHost,
+      selectedGithubConnectionId,
+      selectedBitbucketConnectionId,
+      selectedJiraConnectionId,
+      repoMode,
+      pickedRepoPath,
+      gitRepoPathManual,
+      developmentRepoUrlInput,
+      jiraProjectKey,
+      jiraBaseUrlResolved,
+    ],
+  );
+
+  useEffect(() => {
+    if (isEdit || typeof onCreateFieldsChange !== "function") return;
+    onCreateFieldsChange(createDraftSnapshotForParent);
+  }, [isEdit, onCreateFieldsChange, createDraftSnapshotForParent]);
 
   useImperativeHandle(
     ref,

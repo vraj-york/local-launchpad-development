@@ -30,13 +30,56 @@ import { resolveScmCredentialsFromProject } from "./integrationCredential.servic
 import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 
 const CURSOR_BASE_URL = "https://api.cursor.com";
+//const prisma = new PrismaClient();
+
+/**
+ * @param {number} projectId
+ * @param {boolean} fromScratch
+ * @param {string | null} status — CREATING, FAILED, or null to clear
+ */
+async function setProjectScratchVersionStatus(projectId, fromScratch, status) {
+  if (!fromScratch) return;
+  try {
+    await prisma.project.update({
+      where: { id: projectId },
+      data: { scratchVersionStatus: status },
+    });
+  } catch (err) {
+    console.error("[cursor] scratchVersionStatus update failed", {
+      projectId,
+      error: err?.message || err,
+    });
+  }
+}
+
+/** After pipeline errors: mark FAILED only if we had set CREATING (avoids bogus FAILED on pre-pipeline throws). */
+async function markScratchVersionFailedIfCreating(projectId) {
+  try {
+    const row = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { fromScratch: true, scratchVersionStatus: true },
+    });
+    if (
+      !row?.fromScratch ||
+      row.scratchVersionStatus !== "CREATING"
+    ) {
+      return;
+    }
+    await setProjectScratchVersionStatus(projectId, true, "FAILED");
+  } catch (err) {
+    console.error("[cursor] markScratchVersionFailedIfCreating failed", {
+      projectId,
+      error: err?.message || err,
+    });
+  }
+}
 const POLL_INTERVAL_MS = 5000;
 const ENV_GITHUB_USERNAME = process.env.GITHUB_USERNAME;
 /**
  * Optional override for source.ref when creating Cursor agents.
- * If unset, ref is taken from GitHub API default_branch for the repo (recommended).
+ * If unset, ref defaults to `main` (caller `source.ref` still wins).
  */
-const CURSOR_AGENT_SOURCE_REF_ENV = process.env.CURSOR_AGENT_SOURCE_REF
+const CURSOR_AGENT_SOURCE_REF_ENV = process.env.CURSOR_AGENT_SOURCE_REF;
 
 /**
  * Run git with args in cwd; argv only (no shell) so token in URL is not interpreted.
@@ -358,7 +401,7 @@ export async function createAgentForProjectRelease({
         CURSOR_AGENT_SOURCE_REF_ENV.trim()
         ? CURSOR_AGENT_SOURCE_REF_ENV.trim()
         : null;
-    const refBranch = clientRef || envRef || meta.defaultBranch;
+    const refBranch = clientRef || envRef || "main";
     finalSource = {
       ...finalSource,
       ref: refBranch,
@@ -454,6 +497,7 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
     where: { id: conversion.projectId },
     select: {
       id: true,
+      fromScratch: true,
       githubToken: true,
       gitRepoPath: true,
       projectPath: true,
@@ -486,6 +530,13 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
   }
   const { owner, repo, provider } = parsed;
 
+  const fromScratchProject = Boolean(project?.fromScratch);
+  await setProjectScratchVersionStatus(
+    conversion.projectId,
+    fromScratchProject,
+    "CREATING",
+  );
+
   if (!skipShaDedupe) {
     const lpNow = await scmGetBranchSha(provider, owner, repo, "launchpad", token);
     if (
@@ -511,6 +562,11 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
           }
         }
       }
+      await setProjectScratchVersionStatus(
+        conversion.projectId,
+        fromScratchProject,
+        null,
+      );
       return {
         merged: true,
         skipped: true,
@@ -765,6 +821,12 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
     },
   });
 
+  await setProjectScratchVersionStatus(
+    conversion.projectId,
+    fromScratchProject,
+    null,
+  );
+
   return {
     merged: true,
     skipped: false,
@@ -850,10 +912,15 @@ export async function performMergeToLaunchpad(agentId, agentData, options = {}) 
 
   const prUrl = agentData.target?.prUrl || agentData.source?.prUrl;
 
-  return executeLaunchpadHeadDeploy(conversion, headSha, headBranch, {
-    skipShaDedupe: options.skipShaDedupe ?? false,
-    prUrl,
-  });
+  try {
+    return await executeLaunchpadHeadDeploy(conversion, headSha, headBranch, {
+      skipShaDedupe: options.skipShaDedupe ?? false,
+      prUrl,
+    });
+  } catch (err) {
+    await markScratchVersionFailedIfCreating(conversion.projectId);
+    throw err;
+  }
 }
 
 /**
@@ -893,11 +960,16 @@ export async function performMergeToLaunchpadAtCommit(
     throw new Error("Agent not found or not linked to a project");
   }
 
-  return executeLaunchpadHeadDeploy(conversion, sha, branch, {
-    skipShaDedupe: options.skipShaDedupe ?? false,
-    prUrl: options.prUrl ?? null,
-    reuseExistingReleaseTag: Boolean(options.reuseExistingReleaseTag),
-  });
+  try {
+    return await executeLaunchpadHeadDeploy(conversion, sha, branch, {
+      skipShaDedupe: options.skipShaDedupe ?? false,
+      prUrl: options.prUrl ?? null,
+      reuseExistingReleaseTag: Boolean(options.reuseExistingReleaseTag),
+    });
+  } catch (err) {
+    await markScratchVersionFailedIfCreating(conversion.projectId);
+    throw err;
+  }
 }
 
 /**
@@ -935,8 +1007,27 @@ export function startAgentPolling(agentId) {
           releaseId: true,
           deferLaunchpadMerge: true,
           skipLaunchpadAutomation: true,
+          project: { select: { fromScratch: true } },
         },
       });
+
+      if (
+        agentStatus &&
+        convRow?.projectId &&
+        convRow.project?.fromScratch
+      ) {
+        try {
+          await prisma.project.update({
+            where: { id: convRow.projectId },
+            data: { scratchAgentStatus: agentStatus },
+          });
+        } catch (scratchStatusErr) {
+          console.error("[cursor] poll: scratchAgentStatus update failed", {
+            agentId: id,
+            error: scratchStatusErr?.message || scratchStatusErr,
+          });
+        }
+      }
 
       const pollRowUpdate = { status: agentStatus || undefined };
       if (branchNameFromAgent) {

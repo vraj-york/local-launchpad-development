@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useLayoutEffect,
+  useCallback,
+} from "react";
 import {
   createProject,
   fetchManagers,
@@ -40,6 +47,12 @@ import { toast } from "sonner";
 const PM_CREATE_BODY_OAUTH_DRAFT = "pm_create_body_oauth_draft";
 const OAUTH_DRAFT_MAX_AGE_MS = 15 * 60 * 1000;
 const CREATE_PROJECT_OAUTH_RETURN = "/projects/new";
+const CREATE_PROJECT_DRAFT_STORAGE_PREFIX = "createProjectDraft_v1";
+const CREATE_PROJECT_DRAFT_VERSION = 1;
+
+function createProjectDraftStorageKey(userId) {
+  return `${CREATE_PROJECT_DRAFT_STORAGE_PREFIX}:${userId}`;
+}
 
 const CreateProject = () => {
   const { user } = useAuth();
@@ -69,6 +82,143 @@ const CreateProject = () => {
   const [managersLoading, setManagersLoading] = useState(false);
   const [hubProjectsLoading, setHubProjectsLoading] = useState(true);
   const [hubProjectsError, setHubProjectsError] = useState("");
+
+  const [createDraftBootstrapDone, setCreateDraftBootstrapDone] =
+    useState(false);
+  const [restoredOauthDraft, setRestoredOauthDraft] = useState(null);
+  const [oauthDraftSnapshot, setOauthDraftSnapshot] = useState(() => ({}));
+  const createDraftSaveTimerRef = useRef(null);
+
+  const clearStoredCreateProjectDraft = useCallback(() => {
+    if (!user?.id) return;
+    try {
+      localStorage.removeItem(createProjectDraftStorageKey(user.id));
+    } catch {
+      /* ignore */
+    }
+  }, [user?.id]);
+
+  useLayoutEffect(() => {
+    if (!user?.id) {
+      setCreateDraftBootstrapDone(false);
+      return;
+    }
+    const key = createProjectDraftStorageKey(user.id);
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) {
+        setOauthDraftSnapshot({});
+        setRestoredOauthDraft(null);
+        setCreateDraftBootstrapDone(true);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || parsed.version !== CREATE_PROJECT_DRAFT_VERSION) {
+        try {
+          localStorage.removeItem(key);
+        } catch {
+          /* ignore */
+        }
+        setOauthDraftSnapshot({});
+        setRestoredOauthDraft(null);
+        setCreateDraftBootstrapDone(true);
+        return;
+      }
+
+      if (parsed.selectedHubProjectId != null && parsed.selectedHubProjectId !== "")
+        setSelectedHubProjectId(String(parsed.selectedHubProjectId));
+      if (typeof parsed.projectDescription === "string")
+        setProjectDescription(parsed.projectDescription);
+      if (
+        user?.role === "admin" &&
+        parsed.selectedManager != null &&
+        parsed.selectedManager !== ""
+      )
+        setSelectedManager(String(parsed.selectedManager));
+      if (Array.isArray(parsed.assignedUserEmailTags))
+        setAssignedUserEmailTags(parsed.assignedUserEmailTags);
+      if (Array.isArray(parsed.stakeholderEmailTags))
+        setStakeholderEmailTags(parsed.stakeholderEmailTags);
+      if (typeof parsed.startFromScratch === "boolean")
+        setStartFromScratch(parsed.startFromScratch);
+      if (typeof parsed.scratchPrompt === "string")
+        setScratchPrompt(parsed.scratchPrompt);
+
+      const oauth =
+        parsed.oauth && typeof parsed.oauth === "object" ? parsed.oauth : {};
+      setOauthDraftSnapshot(oauth);
+      setRestoredOauthDraft(
+        oauth && Object.keys(oauth).length > 0 ? oauth : null,
+      );
+    } catch {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        /* ignore */
+      }
+      setOauthDraftSnapshot({});
+      setRestoredOauthDraft(null);
+    }
+    setCreateDraftBootstrapDone(true);
+  }, [user?.id, user?.role]);
+
+  const handleOauthCreateFieldsChange = useCallback((snapshot) => {
+    setOauthDraftSnapshot(snapshot);
+  }, []);
+
+  useEffect(() => {
+    if (!createDraftBootstrapDone || !user?.id) return;
+
+    if (createDraftSaveTimerRef.current)
+      clearTimeout(createDraftSaveTimerRef.current);
+    createDraftSaveTimerRef.current = setTimeout(() => {
+      createDraftSaveTimerRef.current = null;
+      const payload = {
+        version: CREATE_PROJECT_DRAFT_VERSION,
+        selectedHubProjectId:
+          selectedHubProjectId !== "" && selectedHubProjectId != null
+            ? String(selectedHubProjectId)
+            : "",
+        projectDescription,
+        selectedManager:
+          user?.role === "admin" && selectedManager !== ""
+            ? String(selectedManager)
+            : "",
+        assignedUserEmailTags,
+        stakeholderEmailTags,
+        startFromScratch,
+        scratchPrompt,
+        oauth: oauthDraftSnapshot ?? {},
+      };
+      try {
+        localStorage.setItem(
+          createProjectDraftStorageKey(user.id),
+          JSON.stringify(payload),
+        );
+      } catch (e) {
+        console.warn("Could not persist create-project draft", e);
+      }
+    }, 300);
+
+    return () => {
+      if (createDraftSaveTimerRef.current) {
+        clearTimeout(createDraftSaveTimerRef.current);
+        createDraftSaveTimerRef.current = null;
+      }
+    };
+  }, [
+    createDraftBootstrapDone,
+    user?.id,
+    user?.role,
+    oauthDraftSnapshot,
+    selectedHubProjectId,
+    projectDescription,
+    selectedManager,
+    assignedUserEmailTags,
+    stakeholderEmailTags,
+    startFromScratch,
+    scratchPrompt,
+  ]);
 
   // Load managers if admin
   useEffect(() => {
@@ -219,7 +369,7 @@ const CreateProject = () => {
       errors.hubProject = "Please select a project from hub";
     } else {
       const selected = externalHubProjects.find(
-        (p) => p.id === selectedHubProjectId,
+        (p) => String(p.id) === String(selectedHubProjectId),
       );
       const projectName = selected?.title ?? "";
       const trimmed = projectName.trim();
@@ -247,14 +397,6 @@ const CreateProject = () => {
       "Stakeholders",
     );
     if (stakeholderErr) errors.stakeholderEmails = stakeholderErr;
-
-    if (startFromScratch) {
-      const p = typeof scratchPrompt === "string" ? scratchPrompt.trim() : "";
-      if (!p) {
-        errors.scratchPrompt =
-          "Initial agent prompt is required when starting from scratch";
-      }
-    }
 
     // Roadmap is optional; validate only when user has added roadmaps
     // if (roadmaps.length > 0) {
@@ -323,7 +465,7 @@ const CreateProject = () => {
       //     : [];
 
       const selectedExternal = externalHubProjects.find(
-        (p) => p.id === selectedHubProjectId,
+        (p) => String(p.id) === String(selectedHubProjectId),
       );
       const projectName = selectedExternal?.title ?? "";
 
@@ -346,14 +488,22 @@ const CreateProject = () => {
       }
       if (startFromScratch) {
         projectData.isScratch = true;
-        projectData.prompt = scratchPrompt.trim();
+        const sp =
+          typeof scratchPrompt === "string" ? scratchPrompt.trim() : "";
+        if (sp) {
+          projectData.prompt = sp;
+        }
       }
       const response = await createProject(projectData);
+      clearStoredCreateProjectDraft();
       if (response?.scratchAgentStarted) {
         toast.success("Project created");
         navigate(`/projects/details/${response.id}`, {
           state: { scratchAgentRunning: true },
         });
+      } else if (response?.fromScratch && !response?.scratchAgentStarted) {
+        toast.success("Project created — add your prompt on the project page");
+        navigate(`/projects/details/${response.id}`);
       } else {
         toast.success("Project created successfully");
         navigate("/dashboard");
@@ -369,7 +519,9 @@ const CreateProject = () => {
 
   const selectedHubProject = useMemo(
     () =>
-      externalHubProjects.find((p) => p.id === selectedHubProjectId) ?? null,
+      externalHubProjects.find(
+        (p) => String(p.id) === String(selectedHubProjectId),
+      ) ?? null,
     [externalHubProjects, selectedHubProjectId],
   );
   const assignedHubSuggestions = useMemo(
@@ -419,8 +571,12 @@ const CreateProject = () => {
                     Form hub — link an external project to this workspace.
                   </p> */}
                   <Select
-                    value={selectedHubProjectId || undefined}
-                    onValueChange={setSelectedHubProjectId}
+                    value={
+                      selectedHubProjectId !== "" && selectedHubProjectId != null
+                        ? String(selectedHubProjectId)
+                        : undefined
+                    }
+                    onValueChange={(v) => setSelectedHubProjectId(String(v))}
                     disabled={hubProjectsLoading}
                   >
                     <SelectTrigger
@@ -441,7 +597,7 @@ const CreateProject = () => {
                     </SelectTrigger>
                     <SelectContent>
                       {externalHubProjects.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
+                        <SelectItem key={p.id} value={String(p.id)}>
                           {p.title}
                         </SelectItem>
                       ))}
@@ -467,8 +623,8 @@ const CreateProject = () => {
                   <div className="space-y-2">
                     <Label htmlFor="manager">Assigned Manager</Label>
                     <Select
-                      value={selectedManager}
-                      onValueChange={setSelectedManager}
+                      value={selectedManager || undefined}
+                      onValueChange={(v) => setSelectedManager(String(v))}
                       disabled={managersLoading}
                     >
                       <SelectTrigger
@@ -545,17 +701,17 @@ const CreateProject = () => {
                       </Label>
                     </div>
                     <p className="max-w-prose text-xs text-muted-foreground">
-                      Create a base release and run the first Cursor agent on
-                      your connected repo with the prompt below. Requires
-                      Cursor API configuration on the server.
+                      You can run the first Cursor agent now with a prompt below,
+                      or create the project and add the prompt later on the
+                      project page. Requires Cursor API configuration on the
+                      server when you start the agent.
                     </p>
                   </div>
                 </div>
                 {startFromScratch && (
                   <div className="space-y-2 border-t border-primary/15 pt-3">
                     <Label htmlFor="scratch-prompt">
-                      Initial agent prompt{" "}
-                      <span className="text-destructive">*</span>
+                      Initial agent prompt (optional)
                     </Label>
                     <Textarea
                       id="scratch-prompt"
@@ -636,6 +792,8 @@ const CreateProject = () => {
           validationErrors={validationErrors}
           oauthReturnTo={CREATE_PROJECT_OAUTH_RETURN}
           onBeforeOAuthRedirect={persistCreateBodyDraftForOAuth}
+          initialCreateDraft={restoredOauthDraft}
+          onCreateFieldsChange={handleOauthCreateFieldsChange}
         />
 
         {/* Roadmap Configuration */}
@@ -658,6 +816,7 @@ const CreateProject = () => {
         <Button
           type="submit"
           disabled={
+            !createDraftBootstrapDone ||
             loading ||
             hubProjectsLoading ||
             integrationsLoading ||

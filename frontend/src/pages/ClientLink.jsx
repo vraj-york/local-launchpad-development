@@ -157,6 +157,16 @@ export const ClientLink = () => {
     );
   }, [releases, effectiveChatReleaseId]);
 
+  /** Oldest release id — scratch prompt applies only to this release’s chat (first version / base release). */
+  const firstProjectReleaseId = React.useMemo(() => {
+    if (!Array.isArray(releases) || releases.length === 0) return null;
+    const ids = releases
+      .map((r) => Number(r?.id))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    if (ids.length === 0) return null;
+    return Math.min(...ids);
+  }, [releases]);
+
   const effectiveReleaseLocked =
     String(effectiveReleaseForChat?.status ?? "").toLowerCase() === "locked";
 
@@ -869,6 +879,8 @@ export const ClientLink = () => {
           >
             <ClientLinkChatPanel
               projectSlug={projectSlug}
+              scratchPrompt={publicProject?.scratchPrompt ?? null}
+              firstReleaseId={firstProjectReleaseId}
               effectiveChatReleaseId={effectiveChatReleaseId}
               isLocked={effectiveReleaseLocked}
               isOpen={chatOpen}
