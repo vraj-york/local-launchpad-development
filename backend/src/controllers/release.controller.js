@@ -93,19 +93,7 @@ export const releaseController = {
             return res.status(400).json({ error: "No file uploaded" });
         }
 
-        let roadmapItemIds = [];
-        if (req.body.roadmapItemIds) {
-            // Handle comma-separated string from FormData
-            const rawIds = typeof req.body.roadmapItemIds === 'string'
-                ? req.body.roadmapItemIds.split(',')
-                : (Array.isArray(req.body.roadmapItemIds) ? req.body.roadmapItemIds : []);
-
-            roadmapItemIds = rawIds
-                .map(id => parseInt(id, 10))
-                .filter(id => !isNaN(id));
-        }
-
-        const result = await uploadReleaseVersionService(releaseId, req.file, roadmapItemIds, req.user);
+        const result = await uploadReleaseVersionService(releaseId, req.file, req.user);
 
         res.json(result);
     }),

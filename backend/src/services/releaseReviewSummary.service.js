@@ -18,14 +18,12 @@ function getOpenAiModel() {
  * @param {string} ctx.projectName
  * @param {object} ctx.release
  * @param {string|null} [ctx.generationContext] — team instructions for the AI (DB or unsaved override)
- * @param {Array<{ title: string, description: string | null, type: string, status: string }>} ctx.roadmapItems
  * @param {Array<{ version: string, gitTag: string, isActive: boolean }>} ctx.versions
  */
 function buildUserPrompt({
   projectName,
   release,
   generationContext,
-  roadmapItems,
   versions,
 }) {
   const lines = [];
@@ -59,15 +57,6 @@ function buildUserPrompt({
     }
   } else {
     lines.push("No versions uploaded yet for this release.");
-  }
-  if (roadmapItems.length) {
-    lines.push("Roadmap items linked to this release:");
-    for (const r of roadmapItems) {
-      const desc = r.description?.trim() ? ` — ${r.description.trim()}` : "";
-      lines.push(`  - [${r.type}/${r.status}] ${r.title}${desc}`);
-    }
-  } else {
-    lines.push("No roadmap items linked to this release.");
   }
   return lines.join("\n");
 }
@@ -176,12 +165,6 @@ export async function regenerateClientReviewSummaryNow(releaseId, options = {}) 
     return { ok: false, error: "Release not found" };
   }
 
-  const roadmapItems = await prisma.roadmapItem.findMany({
-    where: { releaseId: id },
-    select: { title: true, description: true, type: true, status: true },
-    orderBy: { id: "asc" },
-  });
-
   const generationContext =
     generationContextOverride !== undefined
       ? generationContextOverride
@@ -191,7 +174,6 @@ export async function regenerateClientReviewSummaryNow(releaseId, options = {}) 
     projectName: release.project?.name || "Project",
     release,
     generationContext,
-    roadmapItems,
     versions: release.versions || [],
   });
 

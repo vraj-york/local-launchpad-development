@@ -13,8 +13,6 @@ import {
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
 
-import { validateRoadmapTimelines, validateRoadmapItemsTimeline } from "../validators/roadmap.validator.js";
-
 export const projectController = {
     list: asyncHandler(async (req, res) => {
         const projects = await listProjectsService(req.user);
@@ -41,20 +39,6 @@ export const projectController = {
     }),
 
     create: asyncHandler(async (req, res) => {
-        //const { roadmaps } = req.body;
-        // if (!Array.isArray(roadmaps) || roadmaps.length === 0) {
-        //     throw new ApiError(400, "roadmap is required");
-        // }
-        /**
-        //  * roadmap-level validations
-        //  * (basic required/enums already handled by middleware)
-        //  */
-        // const validatedRoadmaps = validateRoadmapTimelines(roadmaps);
-
-        // validatedRoadmaps.forEach((roadmap) => {
-        //     validateRoadmapItemsTimeline(roadmap);
-        // });
-
         const project = await createProjectService({
             userId: req.user.id,
             body: req.body,

@@ -1,7 +1,6 @@
 import { ReleaseStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
-import { createRoadmapWithItems } from "./roadmap.service.js";
 import { fetchProjectJiraTickets } from "../utils/jiraIntegration.js";
 import config from "../config/index.js";
 import { getBackendRoot, getProjectsDir, getNginxConfigsDir, getNginxBaseDomain, getNginxUpstreamHost, getProjectLiveAbsolutePath } from "../utils/instanceRoot.js";
@@ -90,10 +89,18 @@ function normalizeGitRepoPathValue(raw) {
   return `${host}/${parsed.owner}/${parsed.repo}`;
 }
 
-function buildGitRemoteUrl(gitRepoPath, token) {
-  const parsed = parseGitRepoPath(gitRepoPath);
-  if (!parsed || !token?.trim()) return null;
-  return `https://x-access-token:${token.trim()}@github.com/${parsed.owner}/${parsed.repo}.git`;
+/** Authenticated clone/push URL for GitHub or Bitbucket canonical paths. */
+function buildScmRemoteUrl(repoPath, token) {
+  const parsed = parseScmRepoPath(String(repoPath || ""));
+  const t = token?.trim();
+  if (!parsed || !t) return null;
+  if (parsed.provider === "github") {
+    return `https://x-access-token:${t}@github.com/${parsed.owner}/${parsed.repo}.git`;
+  }
+  if (parsed.provider === "bitbucket") {
+    return `https://x-token-auth:${t}@bitbucket.org/${parsed.owner}/${parsed.repo}.git`;
+  }
+  return null;
 }
 
 function listProjectVersionTags(rows) {
@@ -130,12 +137,21 @@ function migrateProjectRepositoryRefs({
 }) {
   if (!oldGitRepoPath || !newGitRepoPath || oldGitRepoPath === newGitRepoPath) return;
 
-  const oldRemoteUrl = buildGitRemoteUrl(oldGitRepoPath, githubToken);
-  const newRemoteUrl = buildGitRemoteUrl(newGitRepoPath, githubToken);
+  const oldParsed = parseScmRepoPath(String(oldGitRepoPath));
+  const newParsed = parseScmRepoPath(String(newGitRepoPath));
+  if (!oldParsed || !newParsed || oldParsed.provider !== newParsed.provider) {
+    throw new ApiError(
+      400,
+      "Repository migration failed: source and destination must be on the same code host (GitHub or Bitbucket).",
+    );
+  }
+
+  const oldRemoteUrl = buildScmRemoteUrl(oldGitRepoPath, githubToken);
+  const newRemoteUrl = buildScmRemoteUrl(newGitRepoPath, githubToken);
   if (!oldRemoteUrl || !newRemoteUrl) {
     throw new ApiError(
       400,
-      "Repository migration failed: git repo path and GitHub token are required.",
+      "Repository migration failed: valid repository path and host token are required.",
     );
   }
 
@@ -211,7 +227,7 @@ function migrateProjectRepositoryRefs({
 function refreshSharedGitCacheRemote(gitRepoPath, githubToken, backendRoot) {
   const gitDir = path.join(getProjectsDir(), ".git");
   if (!fsExtra.existsSync(gitDir)) return;
-  const remoteUrl = buildGitRemoteUrl(gitRepoPath, githubToken);
+  const remoteUrl = buildScmRemoteUrl(gitRepoPath, githubToken);
   if (!remoteUrl) return;
   try {
     execFileSync("git", ["--git-dir", gitDir, "remote", "set-url", "origin", remoteUrl], {
@@ -1154,7 +1170,7 @@ export const deleteProjectService = async (projectId, user) => {
     ]);
 
     /* ----------------------------------------
-     * 3. DATABASE: project delete cascades releases, roadmaps, versions
+     * 3. DATABASE: project delete cascades releases, versions
      * -------------------------------------- */
     await prisma.project.delete({ where: { id } });
 
@@ -1199,36 +1215,6 @@ export async function listProjectsService(user) {
           versions: {
             orderBy: { createdAt: "desc" },
             take: 1,
-          },
-        },
-      },
-
-      /**
-       * Roadmaps with items
-       */
-      roadmaps: {
-        orderBy: { timelineStart: "asc" },
-        select: {
-          id: true,
-          title: true,
-          description: true,
-          status: true,
-          tshirtSize: true,
-          timelineStart: true,
-          timelineEnd: true,
-
-          items: {
-            orderBy: { startDate: "asc" },
-            select: {
-              id: true,
-              title: true,
-              description: true,
-              type: true,
-              status: true,
-              priority: true,
-              startDate: true,
-              endDate: true,
-            },
           },
         },
       },
@@ -1376,7 +1362,6 @@ export async function deployVersionArtifactsToProjectFolder({
       buildUrl: true,
       version: true,
       gitTag: true,
-      zipFilePath: true,
     },
   });
 
@@ -1384,13 +1369,11 @@ export async function deployVersionArtifactsToProjectFolder({
     throw new ApiError(404, "Version not found");
   }
 
-  const tag =
-    (version.gitTag && version.gitTag.trim()) ||
-    (version.zipFilePath && version.zipFilePath.trim());
+  const tag = version.gitTag && version.gitTag.trim();
   if (!tag) {
     throw new ApiError(
       400,
-      "Version has no gitTag (or legacy zipFilePath); cannot checkout. Re-upload or merge from Cursor first.",
+      "Version has no gitTag; cannot checkout. Re-upload or merge from Cursor first.",
     );
   }
 
@@ -1633,7 +1616,6 @@ export async function activateProjectVersionService({
       buildUrl: true,
       version: true,
       gitTag: true,
-      zipFilePath: true,
       releaseId: true,
     },
   });
@@ -2028,6 +2010,52 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
         "developmentRepoUrl must differ from the platform Git repository (gitRepoPath).",
       );
     }
+    let devScmToken = null;
+    try {
+      const scm = await resolveScmCredentialsFromProject(merged);
+      devScmToken = scm.token?.trim() || null;
+      const parsedDev = parseScmRepoPath(devNorm);
+      if (!parsedDev || parsedDev.provider !== scm.provider) {
+        throw new ApiError(
+          400,
+          "developmentRepoUrl must match your connected code host (GitHub vs Bitbucket).",
+        );
+      }
+      if (!devScmToken) {
+        throw new ApiError(400, "A repository token is required to validate developmentRepoUrl changes");
+      }
+      if (scm.provider === "github") {
+        const metadata = await getRepositoryMetadata(
+          parsedDev.owner,
+          parsedDev.repo,
+          devScmToken,
+        );
+        if (!metadata.ok) {
+          throw new ApiError(
+            400,
+            `Cannot access developer repository: ${metadata.message || "validation failed"}`,
+          );
+        }
+      } else {
+        const metadata = await getBitbucketRepositoryMetadata(
+          parsedDev.owner,
+          parsedDev.repo,
+          devScmToken,
+        );
+        if (!metadata.ok) {
+          throw new ApiError(
+            400,
+            `Cannot access developer repository: ${metadata.message || "validation failed"}`,
+          );
+        }
+      }
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      throw new ApiError(
+        400,
+        e?.message || "Repository credentials are required to validate developmentRepoUrl changes",
+      );
+    }
   }
 
   const gitRepoChanged =
@@ -2036,21 +2064,68 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     nextNormalizedGitRepoPath &&
     oldGitRepoPath !== nextNormalizedGitRepoPath;
 
-  const oldGithubParsed = parseGitRepoPath(oldGitRepoPath);
-  const newGithubParsed = parseGitRepoPath(nextNormalizedGitRepoPath);
+  const oldMainParsed = parseScmRepoPath(oldGitRepoPath || "");
+  const newMainParsed = parseScmRepoPath(nextNormalizedGitRepoPath || "");
   const migrationSupported =
-    Boolean(oldGithubParsed) &&
-    Boolean(newGithubParsed) &&
+    Boolean(oldMainParsed) &&
+    Boolean(newMainParsed) &&
+    oldMainParsed.provider === newMainParsed.provider &&
     gitRepoChanged;
 
-  let migrationLockHeld = false;
+  const oldDevNorm = normalizeGitRepoPathValue(existingProject.developmentRepoUrl);
+  const nextDevNorm =
+    data.developmentRepoUrl !== undefined
+      ? data.developmentRepoUrl === null
+        ? null
+        : normalizeGitRepoPathValue(data.developmentRepoUrl)
+      : oldDevNorm;
+  const devRepoMigrationNeeded =
+    data.developmentRepoUrl !== undefined &&
+    Boolean(oldDevNorm) &&
+    Boolean(nextDevNorm) &&
+    oldDevNorm !== nextDevNorm;
+  const oldDevParsed = oldDevNorm ? parseScmRepoPath(oldDevNorm) : null;
+  const newDevParsed = nextDevNorm ? parseScmRepoPath(nextDevNorm) : null;
+  const devMigrationSupported =
+    devRepoMigrationNeeded &&
+    Boolean(oldDevParsed) &&
+    Boolean(newDevParsed) &&
+    oldDevParsed.provider === newDevParsed.provider;
+
   if (gitRepoChanged && !migrationSupported) {
     throw new ApiError(
       400,
-      "Changing gitRepoPath between hosts or for Bitbucket is not supported yet. Use GitHub→GitHub path changes only, or contact support.",
+      "Changing gitRepoPath between different code hosts is not supported. Use GitHub→GitHub or Bitbucket→Bitbucket only.",
     );
   }
-  if (migrationSupported) {
+  if (devRepoMigrationNeeded && !devMigrationSupported) {
+    throw new ApiError(
+      400,
+      "Changing developmentRepoUrl between different code hosts is not supported. Use GitHub→GitHub or Bitbucket→Bitbucket only.",
+    );
+  }
+
+  let effectiveDevMigrationToken = null;
+  if (devMigrationSupported) {
+    try {
+      const scm = await resolveScmCredentialsFromProject(merged);
+      effectiveDevMigrationToken = scm.token?.trim() || null;
+    } catch (e) {
+      throw new ApiError(
+        400,
+        e?.message || "Repository credentials are required to migrate developmentRepoUrl",
+      );
+    }
+    if (!effectiveDevMigrationToken) {
+      throw new ApiError(400, "A repository token is required to migrate developmentRepoUrl");
+    }
+  }
+
+  const needsRepoMigrationLock =
+    migrationSupported || devMigrationSupported;
+
+  let migrationLockHeld = false;
+  if (needsRepoMigrationLock) {
     const lock = await prisma.project.updateMany({
       where: { id: Number(projectId), isUploading: false },
       data: { isUploading: true },
@@ -2060,24 +2135,36 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     }
     migrationLockHeld = true;
     try {
-      const versions = await prisma.projectVersion.findMany({
-        where: { projectId: Number(projectId) },
-        select: { gitTag: true },
-      });
-      const requiredTags = listProjectVersionTags(versions);
-      migrateProjectRepositoryRefs({
-        oldGitRepoPath,
-        newGitRepoPath: nextNormalizedGitRepoPath,
-        githubToken: effectiveGitToken,
-        requiredTags,
-        backendRoot: getBackendRoot(),
-        projectId: Number(projectId),
-      });
-      refreshSharedGitCacheRemote(
-        nextNormalizedGitRepoPath,
-        effectiveGitToken,
-        getBackendRoot(),
-      );
+      if (migrationSupported) {
+        const versions = await prisma.projectVersion.findMany({
+          where: { projectId: Number(projectId) },
+          select: { gitTag: true },
+        });
+        const requiredTags = listProjectVersionTags(versions);
+        migrateProjectRepositoryRefs({
+          oldGitRepoPath,
+          newGitRepoPath: nextNormalizedGitRepoPath,
+          githubToken: effectiveGitToken,
+          requiredTags,
+          backendRoot: getBackendRoot(),
+          projectId: Number(projectId),
+        });
+        refreshSharedGitCacheRemote(
+          nextNormalizedGitRepoPath,
+          effectiveGitToken,
+          getBackendRoot(),
+        );
+      }
+      if (devMigrationSupported) {
+        migrateProjectRepositoryRefs({
+          oldGitRepoPath: oldDevNorm,
+          newGitRepoPath: nextDevNorm,
+          githubToken: effectiveDevMigrationToken,
+          requiredTags: [],
+          backendRoot: getBackendRoot(),
+          projectId: Number(projectId),
+        });
+      }
     } catch (e) {
       throw e;
     } finally {
@@ -2246,14 +2333,12 @@ export const switchProjectVersion = async (
     if (byId) {
       const versionRow = await prisma.projectVersion.findFirst({
         where: { id: idNum, projectId: Number(projectId) },
-        select: { gitTag: true, zipFilePath: true, version: true },
+        select: { gitTag: true, version: true },
       });
       if (!versionRow) {
         throw new ApiError(404, "Version not found");
       }
-      tag =
-        (versionRow.gitTag && versionRow.gitTag.trim()) ||
-        (versionRow.zipFilePath && versionRow.zipFilePath.trim());
+      tag = versionRow.gitTag && versionRow.gitTag.trim();
       if (!tag) {
         throw new ApiError(400, "Version has no git tag");
       }

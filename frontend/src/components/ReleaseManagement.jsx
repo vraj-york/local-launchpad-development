@@ -5,7 +5,6 @@ import {
   createRelease,
   updateReleaseStatus,
   uploadToRelease,
-  getRoadmapItemsByProjectId,
   patchRelease,
   fetchReleaseChangelog,
   regenerateReleaseReviewSummary,
@@ -295,10 +294,6 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
   const [isDragActive, setIsDragActive] = useState(false);
   const uploadFileInputRef = useRef(null);
 
-  const [roadmaps, setRoadmaps] = useState([]);
-  const [roadmapsLoading, setRoadmapsLoading] = useState(false);
-  const [roadmapError, setRoadmapError] = useState("");
-  const [selectedRoadmapItemIds, setSelectedRoadmapItemIds] = useState([]);
   const [statusUpdatingId, setStatusUpdatingId] = useState(null);
   const [statusConfirm, setStatusConfirm] = useState(null);
   const [statusConfirmSubmitting, setStatusConfirmSubmitting] = useState(false);
@@ -353,7 +348,6 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
   useEffect(() => {
     if (projectId) {
       loadReleases();
-      loadRoadmaps();
     }
   }, [projectId]);
 
@@ -373,20 +367,6 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       setError(err.message || "Failed to load releases");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadRoadmaps = async () => {
-    try {
-      setRoadmapsLoading(true);
-      setRoadmapError("");
-      const data = await getRoadmapItemsByProjectId(projectId);
-      setRoadmaps(data || []);
-    } catch (err) {
-      setRoadmapError(err.error || err.message || "Failed to load roadmaps");
-      setRoadmaps([]);
-    } finally {
-      setRoadmapsLoading(false);
     }
   };
 
@@ -674,14 +654,6 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     if (!selectedRelease || !fileToUpload) return;
 
     try {
-      const selectedRoadmapIds = Array.from(
-        new Set(
-          selectedRoadmapItemIds
-            .map((itemId) => getRoadmapIdForItem(itemId))
-            .filter(Boolean),
-        ),
-      );
-
       setUploading(true);
       setUploadStatus("Uploading and building project...");
       setUploadProgress(0);
@@ -698,11 +670,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
         });
       }, 500);
 
-      const result = await uploadToRelease(
-        selectedRelease,
-        fileToUpload,
-        selectedRoadmapItemIds,
-      );
+      const result = await uploadToRelease(selectedRelease, fileToUpload);
 
       console.log("upload release result", result);
 
@@ -725,45 +693,12 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     }
   };
 
-  const getRoadmapIdForItem = (itemId) => {
-    for (const roadmap of roadmaps) {
-      if (roadmap.items?.some((item) => item.id.toString() === itemId)) {
-        return roadmap.id;
-      }
-    }
-    return null;
-  };
-
   const resetUploadForm = () => {
     setSelectedRelease("");
     setUploadFile(null);
-    setSelectedRoadmapItemIds([]);
     setUploadStatus("");
     setUploadProgress(0);
     if (uploadFileInputRef.current) uploadFileInputRef.current.value = "";
-  };
-
-  const selectedItems = selectedRoadmapItemIds
-    .map((itemId) => {
-      for (const roadmap of roadmaps) {
-        const item = roadmap.items?.find(
-          (roadmapItem) => roadmapItem.id === itemId,
-        );
-        if (item) {
-          return {
-            id: itemId,
-            title: item.title,
-            roadmapTitle: roadmap.title,
-          };
-        }
-      }
-      return null;
-    })
-    .filter(Boolean);
-
-  const removeSelectedItem = (itemId, event) => {
-    event.stopPropagation();
-    setSelectedRoadmapItemIds((prev) => prev.filter((id) => id !== itemId));
   };
 
   /** Another release is already Active — must lock it before this one can become Active (frontend guard). */
@@ -1983,89 +1918,6 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleUpload} className="space-y-6">
-              {/* <div className="space-y-2"> */}
-              {/* <Label>Roadmap Items (Optional)</Label>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full justify-between gap-2 p-2 hover:bg-transparent"
-                      disabled={roadmapsLoading || roadmaps.length === 0}
-                    >
-                      {roadmapsLoading ? (
-                        "Loading roadmaps..."
-                      ) : roadmaps.length === 0 ? (
-                        "No roadmaps found"
-                      ) : selectedItems.length > 0 ? (
-                        <span className="flex flex-wrap gap-2">
-                          {selectedItems.map((item) => (
-                            <span
-                              key={item.id}
-                              className="inline-flex items-center gap-1 rounded-sm bg-secondary px-2 py-1 text-sm"
-                            >
-                              <span className="font-medium">{item.title}</span>
-                            </span>
-                          ))}
-                        </span>
-                      ) : (
-                        "None selected (optional)"
-                      )}
-                      <ChevronDown className="h-4 w-4 text-slate-500" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-80">
-                    <DropdownMenuLabel>Roadmaps</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {roadmaps.map((roadmap) => (
-                      <div key={roadmap.id}>
-                        <DropdownMenuLabel className="text-primary">
-                          {roadmap.title}
-                        </DropdownMenuLabel>
-                        {roadmap.items?.length ? (
-                          roadmap.items.map((item) => {
-                            const itemId = item.id;
-                            const isChecked =
-                              selectedRoadmapItemIds.includes(itemId);
-                            return (
-                              <DropdownMenuCheckboxItem
-                                key={item.id}
-                                checked={isChecked}
-                                onSelect={(event) => event.preventDefault()}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setSelectedRoadmapItemIds((prev) => [
-                                      ...prev,
-                                      itemId,
-                                    ]);
-                                  } else {
-                                    setSelectedRoadmapItemIds((prev) =>
-                                      prev.filter((id) => id !== itemId),
-                                    );
-                                  }
-                                }}
-                              >
-                                <span className="text-sm">{item.title}</span>
-                              </DropdownMenuCheckboxItem>
-                            );
-                          })
-                        ) : (
-                          <div className="px-2 py-1.5 text-sm text-slate-500">
-                            No items found for this roadmap.
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                {roadmapError && (
-                  <p className="text-xs text-red-600">{roadmapError}</p>
-                )} */}
-              {/* <p className="text-xs text-muted-foreground">
-                  Optionally link this version to one or more roadmap items.
-                </p> */}
-              {/* </div> */}
-
               <div className="space-y-2">
                 <Label htmlFor="file-input">ZIP File</Label>
                 <input

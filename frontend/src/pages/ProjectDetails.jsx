@@ -1,12 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
-// import {
-//   Tabs,
-//   TabsList,
-//   TabsTrigger,
-//   TabsContent,
-// } from "../components/ui/tabs";
 import {
   ArrowLeft,
   ExternalLink,
@@ -20,18 +14,15 @@ import EditProjectDialog from "@/components/EditProjectDialog";
 import {
   fetchProjectById,
   startProjectScratchAgent,
-  //   deleteRoadmap,
-  //   deleteRoadmapItem,
-  //   updateRoadmapByProjectId,
-  //   getRoadmapItemsByProjectId,
 } from "@/api";
-// import RoadMapManagement from '@/components/RoadMapManagement';
 import ReleaseManagement from "@/components/ReleaseManagement";
 import { PageHeader } from "@/components/PageHeader";
 import config from "@/config";
 import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+
+const SCRATCH_AGENT_STATUS_POLL_MS = 4000;
 
 function normalizeAgentStatus(status) {
   if (status == null || status === "") return "";
@@ -65,7 +56,6 @@ function isScratchAgentInProgress(status) {
   return true;
 }
 
-const SCRATCH_AGENT_STATUS_POLL_MS = 4000;
 
 const ProjectDetails = () => {
   const { projectId } = useParams();
@@ -75,9 +65,6 @@ const ProjectDetails = () => {
   // State
   const [project, setProject] = useState(location.state?.project || null);
   const [loading, setLoading] = useState(!location.state?.project);
-  // const [roadmap, setRoadmap] = useState(null);
-  // const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState("releases");
   const [editProjectOpen, setEditProjectOpen] = useState(false);
   const [scratchAgentBannerOpen, setScratchAgentBannerOpen] = useState(
     () => Boolean(location.state?.scratchAgentRunning),
@@ -92,16 +79,6 @@ const ProjectDetails = () => {
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location.pathname, location.state?.scratchAgentRunning, navigate]);
-
-  // Helper to refresh project data
-  // const refreshProject = async () => {
-  //     try {
-  //         const data = await getRoadmapItemsByProjectId(projectId);
-  //         setRoadmap(data);
-  //     } catch (error) {
-  //         console.error("Failed to refresh project:", error);
-  //     }
-  // };
 
   // Fetch project details if not passed in state or to get fresh data
   useEffect(() => {
@@ -269,22 +246,6 @@ const ProjectDetails = () => {
       setScratchAgentSubmitting(false);
     }
   };
-
-  // useEffect(() => {
-  //     const loadRoadmap = async () => {
-  //         try {
-  //             if (!project) setLoading(true); // Only show loading if we don't have project data yet
-  //             const data = await getRoadmapItemsByProjectId(projectId);
-  //             setRoadmap(data);
-  //         } catch (error) {
-  //             console.error("Failed to load project:", error);
-  //         } finally {
-  //             setLoading(false);
-  //         }
-  //     };
-
-  //     loadRoadmap();
-  // }, [projectId]);
 
   const projectName = project?.name || "Project";
   const projectDescription = project?.description || "This is Testing Project";
@@ -538,87 +499,6 @@ const ProjectDetails = () => {
         project={project}
         onSaved={refreshProject}
       />
-
-      {/* Tabs Section */}
-      {/* <Tabs
-        defaultValue="releases"
-        value={activeTab}
-        onValueChange={setActiveTab}
-        className="w-full"
-      >
-        <TabsList className="bg-slate-100 p-1 rounded-lg w-full md:w-auto h-auto grid grid-cols-2 md:inline-flex md:gap-1">
-          <TabsTrigger
-            value="releases"
-            className="data-[state=active]:bg-white data-[state=active]:text-emerald-600 data-[state=active]:shadow-sm transition-all"
-          >
-            Releases
-          </TabsTrigger>
-          <TabsTrigger
-            value="roadmap"
-            className="data-[state=active]:bg-white data-[state=active]:text-emerald-600 data-[state=active]:shadow-sm transition-all"
-          >
-            Roadmap
-          </TabsTrigger>
-        </TabsList>
-
-        <div className="mt-6">
-          <TabsContent
-            value="releases"
-            className="m-0 focus-visible:outline-none"
-          ></TabsContent>
-
-          <TabsContent
-            value="roadmap"
-            className="m-0 focus-visible:outline-none"
-          >
-            <RoadMapManagement
-              // value={project?.roadmaps || []}
-              value={roadmap}
-              onChange={(newRoadmaps) => setRoadmap(newRoadmaps)}
-              isEmbedded={true}
-              onRoadmapUpdate={async (roadmap) => {
-                // We use updateProject endpoint which expects { roadmap: ... }
-                try {
-                  const updatedProject = await updateRoadmapByProjectId(
-                    project.id,
-                    { roadmap },
-                  );
-                  toast.success("Roadmap updated successfully");
-                } catch (error) {
-                  toast.error(error.error || "Failed to update roadmap");
-                }
-
-                refreshProject();
-                return null;
-              }}
-              onRoadmapDelete={async (roadmapId) => {
-                try {
-                  await deleteRoadmap(roadmapId);
-                  // Update local state immediately to remove from UI
-                  // setRoadmap(roadmap.filter(r => r.id !== roadmapId));
-                  toast.success("Roadmap deleted successfully");
-                  refreshProject();
-                } catch (error) {
-                  console.error("Failed to delete roadmap:", error);
-                  toast.error(error.error || "Failed to delete roadmap");
-                }
-              }}
-              onItemDelete={async (roadmapId, itemId) => {
-                try {
-                  await deleteRoadmapItem(roadmapId, itemId);
-                  toast.success("Roadmap item deleted");
-                  refreshProject();
-                } catch (error) {
-                  console.error("Failed to delete item:", error);
-                  if (error.status !== 404) {
-                    toast.error(error.error || "Failed to delete item");
-                  }
-                }
-              }}
-            />
-          </TabsContent>
-        </div>
-      </Tabs> */}
 
       <ReleaseManagement
         projectId={projectId}

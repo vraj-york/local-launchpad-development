@@ -117,7 +117,6 @@ model Project {
   jiraConnection    UserOAuthConnection? @relation("ProjectJiraConnection", fields: [jiraConnectionId], references: [id], onDelete: SetNull)
   versions          ProjectVersion[]
   releases          Release[]
-  roadmaps          Roadmap[]
   figmaConversions  FigmaConversion[]
   chatHistory ChatHistory[]
 
@@ -128,7 +127,6 @@ model ProjectVersion {
   projectId   Int
   releaseId   Int?     // Link to release (optional for backward compatibility)
   version     String   // e.g., "1.0.0", "1.1.0", "2.0.0"
-  zipFilePath String?   // Legacy column; kept to avoid data loss. App uses gitTag only—write same value as gitTag when creating.
   gitTag      String   // Git tag / ref for checkout & activate (primary)
   buildUrl    String
   isActive    Boolean  @default(false) // Only one version can be active per project
@@ -265,85 +263,4 @@ enum Role {
   admin
   manager
 
-}
-model Roadmap {
-  id            Int       @id @default(autoincrement())
-  projectId     Int
-
-  title         String
-  description   String?
-  status        RoadmapStatus @default(DRAFT)
-  tshirtSize    TshirtSize    @default(M)
-
-  timelineStart DateTime
-  timelineEnd   DateTime
-
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  items         RoadmapItem[]
-}
-
-model RoadmapItem {
-  id          Int       @id @default(autoincrement())
-  roadmapId   Int
-  releaseId   Int?      // 🔥 optional
-
-
-  title       String
-  description String?
-  type        RoadmapItemType     @default(FEATURE)
-  status      RoadmapItemStatus   @default(PLANNED)
-  priority    RoadmapItemPriority @default(MEDIUM)
-
-  startDate   DateTime
-  endDate     DateTime
-
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  roadmap     Roadmap   @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
-}
-
-enum RoadmapStatus {
-  DRAFT
-  ACTIVE
-  COMPLETED
-  ARCHIVED
-}
-
-enum TshirtSize {
-  XS
-  S
-  M
-  L
-  XL
-}
-
-enum RoadmapItemType {
-  FEATURE
-  EPIC
-  INITIATIVE
-  TECH_DEBT
-  BUG
-  IMPROVEMENT
-  
-}
-
-enum RoadmapItemStatus {
-  PLANNED
-  IN_PROGRESS
-  DONE
-  BLOCKED
-  DRAFT
-  ACTIVE
-  COMPLETED
-}
-
-enum RoadmapItemPriority {
-  LOW
-  MEDIUM
-  HIGH
-  CRITICAL
 }

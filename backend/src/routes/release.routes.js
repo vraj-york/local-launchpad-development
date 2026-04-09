@@ -96,9 +96,6 @@ router.get("/project/:projectId", authenticateToken, releaseController.list);
  *                 type: string
  *               description:
  *                 type: string
- *               roadmapItemId:
- *                 type: integer
- *                 description: Optional ID of a roadmap item to link
  *     responses:
  *       201:
  *         description: Release created successfully
@@ -107,7 +104,7 @@ router.get("/project/:projectId", authenticateToken, releaseController.list);
  *       403:
  *         description: Forbidden
  *       404:
- *         description: Project or Roadmap Item not found
+ *         description: Project not found
  */
 router.post(
     "/",

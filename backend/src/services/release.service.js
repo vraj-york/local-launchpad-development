@@ -506,7 +506,6 @@ export const createReleaseService = async (data, user) => {
     projectId,
     name,
     description,
-    roadmapItemId,
     isMvp,
     releaseDate: releaseDateInput,
     actualReleaseDate: actualReleaseDateInput,
@@ -538,21 +537,6 @@ export const createReleaseService = async (data, user) => {
   });
   if (existingRelease) {
     throw new ApiError(400, "Release name already exists for this project. Choose a unique name.");
-  }
-
-  // Verify roadmap item if provided
-  if (roadmapItemId) {
-    const roadmapItem = await prisma.roadmapItem.findUnique({
-      where: { id: roadmapItemId },
-      include: { roadmap: true },
-    });
-    if (!roadmapItem) {
-      throw new ApiError(404, "Roadmap item not found");
-    }
-    // Ensure roadmap item belongs to the same project
-    if (roadmapItem.roadmap.projectId !== projectId) {
-      throw new ApiError(400, "Roadmap item does not belong to this project");
-    }
   }
 
   const shipDate =
@@ -598,14 +582,6 @@ export const createReleaseService = async (data, user) => {
         },
       },
     });
-
-    // Link roadmap item if provided
-    if (roadmapItemId) {
-      await tx.roadmapItem.update({
-        where: { id: roadmapItemId },
-        data: { releaseId: release.id },
-      });
-    }
 
     return release;
   });
@@ -1579,12 +1555,7 @@ export const reloadNginx = async () => {
     if (os.platform() !== 'darwin') throw error;
   }
 };
-export const uploadReleaseVersionService = async (
-  releaseId,
-  file,
-  roadmapItemIds,
-  user,
-) => {
+export const uploadReleaseVersionService = async (releaseId, file, user) => {
   const { id: userId } = user;
 
   const release = await prisma.release.findUnique({
@@ -1797,7 +1768,6 @@ export const uploadReleaseVersionService = async (
           buildUrl,
           isActive: makeVersionActive,
           gitTag: tag,
-          zipFilePath: tag, // legacy column; same value so DB row stays consistent
           uploadedBy: userId,
         },
       });

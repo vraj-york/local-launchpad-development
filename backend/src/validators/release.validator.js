@@ -19,10 +19,6 @@ export const createReleaseValidation = [
       return typeof value === "string";
     })
     .withMessage("description must be a string"),
-  body("roadmapItemId")
-    .optional({ nullable: true })
-    .isInt({ min: 1 })
-    .withMessage("roadmapItemId must be a positive integer"),
   body("isMvp")
     .optional()
     .isBoolean()
