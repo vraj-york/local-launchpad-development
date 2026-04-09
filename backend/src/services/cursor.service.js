@@ -30,7 +30,7 @@ import { resolveScmCredentialsFromProject } from "./integrationCredential.servic
 import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 
 const CURSOR_BASE_URL = "https://api.cursor.com";
-const prisma = new PrismaClient();
+//const prisma = new PrismaClient();
 
 /**
  * @param {number} projectId
