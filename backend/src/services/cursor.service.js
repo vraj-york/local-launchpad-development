@@ -204,6 +204,24 @@ export function isCursorAgentSuccessTerminal(status) {
   );
 }
 
+/** Cursor terminal states where the agent is no longer doing work (new client-link sends may proceed). */
+export function isCursorAgentFailureTerminal(status) {
+  if (status == null || status === "") return false;
+  const u = String(status).trim().toUpperCase().replace(/\s+/g, "_");
+  if (u.includes("FAIL")) return true;
+  return (
+    u === "FAILED" ||
+    u === "FAILURE" ||
+    u === "ERROR" ||
+    u === "CANCELLED" ||
+    u === "CANCELED" ||
+    u === "STOPPED" ||
+    u === "ABORTED" ||
+    u === "TIMEOUT" ||
+    u === "TIMED_OUT"
+  );
+}
+
 /**
  * Resolve https URL for Cursor agents (GitHub or Bitbucket). Uses gitRepoPath when parseable;
  * otherwise derives owner/repo from bitbucketUsername or githubUsername / GITHUB_USERNAME + slug from name.
@@ -442,8 +460,9 @@ export async function createAgentForProjectRelease({
     where: { projectId, releaseId },
   });
   const attemptNumber = count + 1;
+  let figmaConversionId = null;
   try {
-    await prisma.figmaConversion.create({
+    const created = await prisma.figmaConversion.create({
       data: {
         projectId,
         releaseId,
@@ -457,11 +476,12 @@ export async function createAgentForProjectRelease({
         skipLaunchpadAutomation: Boolean(skipLaunchpadAutomation),
       },
     });
+    figmaConversionId = created?.id ?? null;
   } catch (dbErr) {
     console.error("[cursor] FigmaConversion insert failed:", dbErr);
   }
   startAgentPolling(data.id);
-  return { ok: true, status, data };
+  return { ok: true, status, data, figmaConversionId };
 }
 
 /**
@@ -1033,6 +1053,10 @@ export function startAgentPolling(agentId) {
         where: { agentId: id },
         data: pollRowUpdate,
       });
+
+      if (isCursorAgentFailureTerminal(agentStatus)) {
+        return;
+      }
 
       if (isCursorAgentSuccessTerminal(agentStatus)) {
         if (convRow?.skipLaunchpadAutomation) {
