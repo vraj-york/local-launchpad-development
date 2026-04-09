@@ -1,23 +1,39 @@
 import { createProxyMiddleware } from "http-proxy-middleware";
 
-/**
- * Match backend/src/middleware/iframeProxy.js: rewrite Vite absolute `/assets/...`
- * so requests stay under /iframe-preview/<port>/ (otherwise the parent SPA on :5173 loads).
- */
+function rewriteSrcsetLikeAttributes(html, prefix) {
+  return html.replace(
+    /\s(srcset|imagesrcset|data-srcset)\s*=\s*(["'])([^"']*)\2/gi,
+    (_, attr, quote, val) => {
+      const next = val.replace(
+        /(^|[\s,])\s*\/(?!\/)(?!iframe-preview\/)([^\s,]+)/g,
+        (_, lead, pathPart) => `${lead}${prefix}/${pathPart}`,
+      );
+      return ` ${attr}=${quote}${next}${quote}`;
+    },
+  );
+}
+
 function transformIframeIndexHtml(html, port) {
   const prefix = `/iframe-preview/${port}`;
-  const rewritten = html.replace(
-    /(\s)(src|href)=(["'])\/(?!\/)(?!iframe-preview\/)/g,
+  let rewritten = rewriteSrcsetLikeAttributes(html, prefix);
+  rewritten = rewritten.replace(
+    /(\s)(src|href|poster|data-src|xlink:href)\s*=\s*(["'])\/(?!\/)(?!iframe-preview\/)/gi,
     (_, space, attr, quote) => `${space}${attr}=${quote}${prefix}/`,
   );
-  const injectScript = `<script>(function(){var p=window.location.pathname;if(/^\\/iframe-preview\\/\\d+\\/?$/.test(p)){try{window.history.replaceState(null,"",window.location.origin+"/"+window.location.search+window.location.hash);}catch(e){}}})();</script>`;
+  const baseTag = `<base href="${prefix}/">`;
+  const replaceStateScript = `<script>(function(){var p=window.location.pathname;if(/^\\/iframe-preview\\/\\d+\\/?$/.test(p)){try{window.history.replaceState(null,"",window.location.origin+"/"+window.location.search+window.location.hash);}catch(e){}}})();</script>`;
+  const imgSrcPatchScript = `<script>(function(){var P=${JSON.stringify(prefix)};function a(u){if(typeof u!=="string"||u.charAt(0)!=="/"||u.charAt(1)==="/"||u.indexOf(P)===0||u.indexOf("/api")===0)return u;return P+u;}try{var d=Object.getOwnPropertyDescriptor(HTMLImageElement.prototype,"src");if(d&&d.set)Object.defineProperty(HTMLImageElement.prototype,"src",{get:d.get,set:function(v){d.set.call(this,a(v));}});}catch(e){}})();</script>`;
+  const headInjection = `${baseTag}\n${replaceStateScript}\n${imgSrcPatchScript}`;
+  if (/<head(\s[^>]*)?>/i.test(rewritten)) {
+    return rewritten.replace(
+      /<head(\s[^>]*)?>/i,
+      (m) => `${m}\n${headInjection}\n`,
+    );
+  }
   if (rewritten.includes("</head>")) {
-    return rewritten.replace("</head>", injectScript + "\n</head>");
+    return rewritten.replace("</head>", `${headInjection}\n</head>`);
   }
-  if (rewritten.includes("<head>")) {
-    return rewritten.replace("<head>", "<head>" + injectScript);
-  }
-  return injectScript + rewritten;
+  return headInjection + rewritten;
 }
 
 /**
@@ -30,11 +46,17 @@ export function createIframePreviewMiddleware(resolveTarget) {
   function getProxy(port) {
     if (proxyCache.has(port)) return proxyCache.get(port);
     const target = resolveTarget(port);
+    const prefix = `/iframe-preview/${port}`;
     const proxy = createProxyMiddleware({
       target,
       changeOrigin: true,
       pathRewrite: (reqPath) =>
         reqPath.replace(`/iframe-preview/${port}`, "") || "/",
+      onError(err, req, res) {
+        console.warn(`[iframe-preview] ${port} error:`, err.message);
+        if (res && !res.headersSent) res.statusCode = 502;
+        if (res && typeof res.end === "function") res.end();
+      },
     });
     proxyCache.set(port, proxy);
     return proxy;
