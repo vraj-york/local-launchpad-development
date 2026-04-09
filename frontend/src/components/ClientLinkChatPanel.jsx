@@ -208,8 +208,7 @@ function ElementContextChip({
       ? "border border-white bg-emerald-500/15 text-white ring-1 ring-white/30"
       : "border-emerald-600/40 bg-emerald-50 text-emerald-950 ring-1 ring-emerald-600/15 dark:border-emerald-500/45 dark:bg-emerald-950/55 dark:text-emerald-50 dark:ring-emerald-500/20";
 
-  const iconClass =
-    variant === "onPrimary" ? "text-white" : "text-primary";
+  const iconClass = variant === "onPrimary" ? "text-white" : "text-primary";
 
   const monoClass =
     variant === "onPrimary"
@@ -459,12 +458,15 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const [composerEmailEditorOpen, setComposerEmailEditorOpen] = useState(false);
   const [composerEmailDraft, setComposerEmailDraft] = useState("");
   const [composerEmailError, setComposerEmailError] = useState("");
+  const [releaseAgentBusy, setReleaseAgentBusy] = useState(false);
 
   const lastAgentSnapshotRef = useRef({
     releaseId: null,
     status: null,
     activity: null,
   });
+  const settlePollLockRef = useRef(false);
+  const busyAutoPollStartedRef = useRef(false);
 
   const identityEmail = useMemo(
     () => getClientLinkVerifiedEmail(),
@@ -477,6 +479,12 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const canViewChat =
     Boolean(projectSlug?.trim()) && effectiveChatReleaseId != null;
   const canMutateChat = canViewChat && !isLocked && identityLooksValid;
+  const composerDisabled =
+    !canMutateChat ||
+    chatSending ||
+    chatPolling ||
+    chatHistoryLoading ||
+    releaseAgentBusy;
 
   const scratchTrim = useMemo(() => {
     return typeof scratchPrompt === "string" ? scratchPrompt.trim() : "";
@@ -530,7 +538,11 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   ]);
 
   const handleRefreshLiveBuild = useCallback(async () => {
-    if (!canMutateChat || effectiveChatReleaseId == null || !projectSlug?.trim()) {
+    if (
+      !canMutateChat ||
+      effectiveChatReleaseId == null ||
+      !projectSlug?.trim()
+    ) {
       return;
     }
     setRefreshBuildBusy(true);
@@ -543,7 +555,12 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     } finally {
       setRefreshBuildBusy(false);
     }
-  }, [canMutateChat, effectiveChatReleaseId, projectSlug, runTagBuildAndRefreshUi]);
+  }, [
+    canMutateChat,
+    effectiveChatReleaseId,
+    projectSlug,
+    runTagBuildAndRefreshUi,
+  ]);
 
   const visualPickSupported = previewIframeAccessible === true;
   const visualPickDisabledReason =
@@ -625,6 +642,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
         revertedAt: row.revertedAt || null,
         isReverted: Boolean(row.isReverted),
         revertCommitSha: row.revertCommitSha || null,
+        figmaConversionId: row.figmaConversionId ?? null,
       })),
     [],
   );
@@ -690,6 +708,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
 
   const pollUntilAgentSettles = useCallback(async () => {
     if (!projectSlug?.trim() || effectiveChatReleaseId == null) return;
+    if (settlePollLockRef.current) return;
+    settlePollLockRef.current = true;
     setChatPolling(true);
     const start = Date.now();
     const maxMs = 15 * 60 * 1000;
@@ -837,6 +857,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     } catch (e) {
       toast.error(e?.error || e?.message || "Status check failed");
     } finally {
+      settlePollLockRef.current = false;
       setChatPolling(false);
     }
   }, [
@@ -861,7 +882,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
             return {
               data: parts.base64,
               mimeType:
-                stagedChatReplacementImage.mimeType || parts.mimeType || "image/png",
+                stagedChatReplacementImage.mimeType ||
+                parts.mimeType ||
+                "image/png",
               width: stagedChatReplacementImage.width,
               height: stagedChatReplacementImage.height,
             };
@@ -935,18 +958,38 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       ]);
       void pollUntilAgentSettles();
     } catch (e) {
-      const rawMsg = extractChatHttpErrorMessage(e);
-      const mapped = mapChatSendErrorForUser(rawMsg);
-      const display = mapped || rawMsg || "Failed to send";
-      toast.error(display);
-      setChatMessages((m) => [
-        ...m,
-        {
-          role: "system",
-          tone: "error",
-          text: display,
-        },
-      ]);
+      const httpStatus = e?.response?.status;
+      const errCode = e?.response?.data?.code;
+      if (httpStatus === 409 || errCode === "CHAT_AGENT_BUSY") {
+        setReleaseAgentBusy(true);
+        setReleaseAgentBusyReason(
+          typeof errCode === "string" && errCode !== "CHAT_AGENT_BUSY"
+            ? errCode
+            : "agent_running",
+        );
+        try {
+          await refreshChatMessages(effectiveChatReleaseId);
+        } catch {
+          /* ignore */
+        }
+        toast.error(
+          extractChatHttpErrorMessage(e) ||
+            "Another stakeholder is using the AI agent for this version. Please wait.",
+        );
+      } else {
+        const rawMsg = extractChatHttpErrorMessage(e);
+        const mapped = mapChatSendErrorForUser(rawMsg);
+        const display = mapped || rawMsg || "Failed to send";
+        toast.error(display);
+        setChatMessages((m) => [
+          ...m,
+          {
+            role: "system",
+            tone: "error",
+            text: display,
+          },
+        ]);
+      }
     } finally {
       setChatSending(false);
     }
@@ -960,6 +1003,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     pickedElementContext,
     pollUntilAgentSettles,
     projectSlug,
+    refreshChatMessages,
     stagedChatReplacementImage,
   ]);
 
@@ -985,7 +1029,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           await runTagBuildAndRefreshUi();
         } catch (e) {
           toast.error(
-            extractChatHttpErrorMessage(e) || "Preview rebuild after revert failed.",
+            extractChatHttpErrorMessage(e) ||
+              "Preview rebuild after revert failed.",
           );
         }
         await refreshChatMessages(effectiveChatReleaseId);
@@ -1060,13 +1105,90 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     showMainChatUi,
   ]);
 
+  useEffect(() => {
+    if (
+      !isOpen ||
+      !showMainChatUi ||
+      effectiveChatReleaseId == null ||
+      !projectSlug?.trim()
+    ) {
+      setReleaseAgentBusy(false);
+      setReleaseAgentBusyReason(null);
+      setReleaseAgentActivity(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const st = await clientLinkFetchAgentStatus(
+          projectSlug,
+          Number(effectiveChatReleaseId),
+        );
+        if (cancelled) return;
+        const busy = Boolean(st?.busy);
+        setReleaseAgentBusy(busy);
+        setReleaseAgentBusyReason(
+          typeof st?.reason === "string" && st.reason.trim()
+            ? st.reason.trim()
+            : null,
+        );
+        const act =
+          st?.activity && typeof st.activity === "string"
+            ? st.activity.trim()
+            : "";
+        setReleaseAgentActivity(act || null);
+      } catch {
+        if (!cancelled) {
+          setReleaseAgentBusy(false);
+          setReleaseAgentBusyReason(null);
+          setReleaseAgentActivity(null);
+        }
+      }
+    };
+    void tick();
+    const id = setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [isOpen, showMainChatUi, effectiveChatReleaseId, projectSlug]);
+
+  useEffect(() => {
+    if (!releaseAgentBusy) {
+      busyAutoPollStartedRef.current = false;
+      return;
+    }
+    if (
+      !isOpen ||
+      !showMainChatUi ||
+      effectiveChatReleaseId == null ||
+      chatPolling
+    ) {
+      return;
+    }
+    if (busyAutoPollStartedRef.current) return;
+    busyAutoPollStartedRef.current = true;
+    void pollUntilAgentSettles();
+  }, [
+    releaseAgentBusy,
+    isOpen,
+    showMainChatUi,
+    effectiveChatReleaseId,
+    chatPolling,
+    pollUntilAgentSettles,
+  ]);
+
   return (
     <>
       <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden border-l border-border bg-card text-card-foreground">
         <div className="shrink-0 border-b border-border bg-muted/50 px-4 py-2">
           <div className="flex items-center justify-between gap-2">
             <h2 className="flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
-              <img src={logo} alt="launchpad logo" className="w-7 h-7 shrink-0" />
+              <img
+                src={logo}
+                alt="launchpad logo"
+                className="w-7 h-7 shrink-0"
+              />
               <span className="truncate">LaunchPad AI Chat</span>
             </h2>
             <div className="flex shrink-0 items-center gap-0.5">
@@ -1092,7 +1214,8 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-[14rem]">
-                    Re-fetch the release tag, rebuild, and reload the live preview
+                    Re-fetch the release tag, rebuild, and reload the live
+                    preview
                   </TooltipContent>
                 </Tooltip>
               ) : null}
@@ -1191,7 +1314,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                     chatPolling={chatPolling}
                     chatHistoryLoading={chatHistoryLoading}
                     revertLoadingKey={revertLoadingKey}
-                    chatMayMutate={canMutateChat}
+                    chatMayMutate={canMutateChat && !releaseAgentBusy}
                     onRequestRevertConfirm={handleOpenRevertConfirm}
                   />
                 ))}
@@ -1246,12 +1369,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                             <PreviewReplaceImageButton
                               iframeRef={previewIframeRef}
                               context={pickedElementContext}
-                              disabled={
-                                !canMutateChat ||
-                                chatSending ||
-                                chatPolling ||
-                                chatHistoryLoading
-                              }
+                              disabled={composerDisabled}
                               onResult={onPreviewReplaceImageResult}
                               onStagedForRepo={onReplacementStagedForRepo}
                               buttonClassName="h-8 rounded-full px-3"
@@ -1269,7 +1387,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                                 title="Queued for this message"
                               >
                                 <img
-                                  src={stagedChatReplacementImage.previewDataUrl}
+                                  src={
+                                    stagedChatReplacementImage.previewDataUrl
+                                  }
                                   alt=""
                                   className="size-16 rounded-[10px] object-cover"
                                   draggable={false}
@@ -1279,13 +1399,10 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                                 type="button"
                                 className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-slate-200/90 bg-white text-slate-600 shadow-md transition hover:bg-red-50 hover:text-red-600 dark:border-border dark:bg-card dark:hover:bg-red-950/50 dark:hover:text-red-300"
                                 aria-label="Remove queued image"
-                                disabled={
-                                  !canMutateChat ||
-                                  chatSending ||
-                                  chatPolling ||
-                                  chatHistoryLoading
+                                disabled={composerDisabled}
+                                onClick={() =>
+                                  onStagedChatReplacementImageChange(null)
                                 }
-                                onClick={() => onStagedChatReplacementImageChange(null)}
                               >
                                 <X className="size-3.5" aria-hidden />
                               </button>
@@ -1293,7 +1410,10 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                             <p className="min-w-0 max-w-[14rem] pt-1 text-[10px] font-medium leading-snug text-emerald-800 dark:text-emerald-300/95">
                               Attached — will send with your next message. Agent
                               saves under{" "}
-                              <span className="font-mono text-[9px]">src/assets/</span>.
+                              <span className="font-mono text-[9px]">
+                                src/assets/
+                              </span>
+                              .
                             </p>
                           </div>
                         ) : null}
@@ -1303,22 +1423,12 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                       placeholder="Type here to reflect changes..."
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
-                      disabled={
-                        !canMutateChat ||
-                        chatSending ||
-                        chatPolling ||
-                        chatHistoryLoading
-                      }
+                      disabled={composerDisabled}
                       className="min-h-[40px] flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-sm shadow-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0 dark:placeholder:text-muted-foreground"
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
-                          if (
-                            canMutateChat &&
-                            !chatSending &&
-                            !chatPolling &&
-                            !chatHistoryLoading
-                          ) {
+                          if (canMutateChat && !composerDisabled) {
                             void handleSendChat();
                           }
                         }
@@ -1364,9 +1474,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                                   handleSaveComposerEmail();
                                 }
                               }}
-                              disabled={
-                                chatSending || chatPolling || chatHistoryLoading
-                              }
+                              disabled={composerDisabled}
                               className="h-9 min-w-0 flex-1 rounded-full border-slate-200/90 bg-white text-xs shadow-sm dark:border-border dark:bg-background"
                             />
                             <Button
@@ -1376,9 +1484,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                               className="h-9 w-9 shrink-0 rounded-full"
                               aria-label="Update chat email"
                               disabled={
-                                chatSending ||
-                                chatPolling ||
-                                chatHistoryLoading ||
+                                composerDisabled ||
                                 !isPlausibleClientLinkEmail(
                                   composerEmailDraft.trim().toLowerCase(),
                                 )
@@ -1406,9 +1512,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                               variant={visualPickMode ? "default" : "secondary"}
                               disabled={
                                 !canMutateChat ||
-                                chatSending ||
-                                chatPolling ||
-                                chatHistoryLoading ||
+                                composerDisabled ||
                                 !visualPickSupported
                               }
                               className={`h-9 w-9 shrink-0 rounded-full disabled:opacity-40 ${
@@ -1440,12 +1544,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                       <Button
                         type="button"
                         size="icon"
-                        disabled={
-                          !canMutateChat ||
-                          chatSending ||
-                          chatPolling ||
-                          chatHistoryLoading
-                        }
+                        disabled={!canMutateChat || composerDisabled}
                         className="h-9 w-9 shrink-0 rounded-full disabled:opacity-40"
                         aria-label="Send message"
                         onClick={() => void handleSendChat()}
@@ -1474,10 +1573,13 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       >
         <DialogContent showCloseButton className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Discard all changes up to this checkpoint?</DialogTitle>
+            <DialogTitle>
+              Discard all changes up to this checkpoint?
+            </DialogTitle>
             <DialogDescription className="space-y-2 pt-1 text-left">
               <span className="block">
-              This will remove all changes made up to this checkpoint. This action cannot be undone.
+                This will remove all changes made up to this checkpoint. This
+                action cannot be undone.
               </span>
             </DialogDescription>
           </DialogHeader>

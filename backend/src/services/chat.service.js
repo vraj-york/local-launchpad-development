@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { ReleaseStatus } from "@prisma/client";
+import { Prisma, ReleaseStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import validator from "validator";
 import ApiError from "../utils/apiError.js";
@@ -7,6 +7,7 @@ import { assertPublicClientStakeholderEmail } from "../utils/publicClientStakeho
 import {
   createAgentForProjectRelease,
   getCursorAgentById,
+  isCursorAgentFailureTerminal,
   isCursorAgentSuccessTerminal,
   performMergeToLaunchpadAtCommit,
   postCursorAgentFollowup,
@@ -374,6 +375,65 @@ function getClientChatAgentReuseDecision(conv) {
     return { needFreshAgent: true, reason: "legacy_non_deferred_merge" };
   }
   return { needFreshAgent: false, reason: "reuse_followup_same_branch" };
+}
+
+/**
+ * Whether this release's client-link agent is busy (DB flags + optional live Cursor payload).
+ * `liveAgentPayload` is the JSON body from GET /v0/agents/:id when status === 200.
+ */
+export function resolveClientLinkReleaseBusy(conv, liveAgentPayload) {
+  if (!conv?.agentId) {
+    return { busy: false, reason: null };
+  }
+  if (conv.pendingClientChatMessageId != null) {
+    return { busy: true, reason: "pending_message" };
+  }
+  if (Boolean(conv.deferLaunchpadMerge) && Boolean(conv.awaitingLaunchpadConfirmation)) {
+    return { busy: true, reason: "awaiting_merge_confirmation" };
+  }
+  const liveSt =
+    liveAgentPayload?.status != null ? String(liveAgentPayload.status) : null;
+  if (liveSt) {
+    if (isCursorAgentSuccessTerminal(liveSt)) {
+      return { busy: false, reason: null };
+    }
+    if (isCursorAgentFailureTerminal(liveSt)) {
+      return { busy: false, reason: null };
+    }
+    return { busy: true, reason: "agent_running" };
+  }
+  const dbSt = conv.status != null ? String(conv.status) : "";
+  if (dbSt) {
+    if (isCursorAgentSuccessTerminal(dbSt)) {
+      return { busy: false, reason: null };
+    }
+    if (isCursorAgentFailureTerminal(dbSt)) {
+      return { busy: false, reason: null };
+    }
+    return { busy: true, reason: "agent_running" };
+  }
+  return { busy: false, reason: null };
+}
+
+/**
+ * Loads latest client-link conversion and (when configured) live Cursor agent JSON for busy checks / UI.
+ */
+async function getClientLinkReleaseBusyState(projectId, releaseId) {
+  const conv = await latestClientLinkConversionForRelease(projectId, Number(releaseId));
+  if (!conv?.agentId) {
+    return { busy: false, reason: null, conv: null, liveData: null };
+  }
+  let liveData = null;
+  if (process.env.CURSOR_API_KEY?.trim()) {
+    try {
+      const { status, data } = await getCursorAgentById(conv.agentId);
+      if (status === 200 && data) liveData = data;
+    } catch {
+      /* ignore */
+    }
+  }
+  const { busy, reason } = resolveClientLinkReleaseBusy(conv, liveData);
+  return { busy, reason, conv, liveData };
 }
 
 function extractAgentActivity(agentData) {
@@ -762,6 +822,20 @@ export async function clientLinkFollowup({
     throw new ApiError(400, "Message required");
   }
 
+  if (!process.env.CURSOR_API_KEY?.trim()) {
+    throw new ApiError(503, "Chat is temporarily unavailable.");
+  }
+
+  const rid = Number(releaseId);
+  const busyPre = await getClientLinkReleaseBusyState(project.id, rid);
+  if (busyPre.busy) {
+    throw new ApiError(
+      409,
+      "Another stakeholder is using the AI agent for this version. Please wait and try again.",
+      "CHAT_AGENT_BUSY",
+    );
+  }
+
   let textForCursor = sanitizedReplacement
     ? `${storedText}${CLIENT_REPO_IMAGE_INSTRUCTION}`
     : storedText;
@@ -770,21 +844,17 @@ export async function clientLinkFollowup({
   const userMessage = await prisma.chatHistory.create({
     data: {
       projectId: project.id,
-      releaseId: Number(releaseId),
+      releaseId: rid,
       role: "user",
       text: storedText,
     },
   });
 
-  if (!process.env.CURSOR_API_KEY?.trim()) {
-    throw new ApiError(503, "Chat is temporarily unavailable.");
-  }
-
   const [priorVersionedConversion, priorMergedChat] = await Promise.all([
     prisma.figmaConversion.findFirst({
       where: {
         projectId: project.id,
-        releaseId: Number(releaseId),
+        releaseId: rid,
         projectVersionId: { not: null },
       },
       select: { id: true },
@@ -792,7 +862,7 @@ export async function clientLinkFollowup({
     prisma.chatHistory.findFirst({
       where: {
         projectId: project.id,
-        releaseId: Number(releaseId),
+        releaseId: rid,
         role: "user",
         isActiveChat: true,
         mergedAt: { not: null },
@@ -803,7 +873,7 @@ export async function clientLinkFollowup({
   const forceLaunchpadBase =
     Boolean(priorVersionedConversion) || Boolean(priorMergedChat);
 
-  let conv = await latestClientLinkConversionForRelease(project.id, Number(releaseId));
+  let conv = await latestClientLinkConversionForRelease(project.id, rid);
   const { needFreshAgent, reason: agentReuseReason } =
     getClientChatAgentReuseDecision(conv);
 
@@ -815,7 +885,7 @@ export async function clientLinkFollowup({
         const git = await resolveGitSourceForNewClientChatAgent(
           project,
           forceLaunchpadBase,
-          releaseId,
+          rid,
         );
         commitBranch = git.sourceRef;
       } else {
@@ -864,7 +934,7 @@ export async function clientLinkFollowup({
     try {
       const result = await createClientChatAgent({
         project,
-        releaseId: Number(releaseId),
+        releaseId: rid,
         text: textForCursor,
         forceLaunchpadBase,
         promptImages: cursorImages.length > 0 ? cursorImages : null,
@@ -887,10 +957,22 @@ export async function clientLinkFollowup({
           where: {
             agentId: String(result.data.id),
             projectId: project.id,
-            releaseId: Number(releaseId),
+            releaseId: rid,
           },
           data: { pendingClientChatMessageId: userMessage.id },
         });
+      }
+      const fcId =
+        result.figmaConversionId != null && Number.isInteger(Number(result.figmaConversionId))
+          ? Number(result.figmaConversionId)
+          : null;
+      if (fcId != null) {
+        await prisma.chatHistory
+          .update({
+            where: { id: userMessage.id },
+            data: { figmaConversionId: fcId },
+          })
+          .catch(() => {});
       }
       return {
         ok: true,
@@ -919,25 +1001,86 @@ export async function clientLinkFollowup({
 
   let status;
   let data;
+  const agentIdForFollowup = conv.agentId;
   try {
-    await prisma.figmaConversion.update({
-      where: { id: conv.id },
-      data: {
-        pendingClientChatMessageId: userMessage.id,
-        deferLaunchpadMerge: true,
+    await prisma.$transaction(
+      async (tx) => {
+        const locked = await tx.figmaConversion.findFirst({
+          where: {
+            projectId: project.id,
+            releaseId: rid,
+            deferLaunchpadMerge: true,
+          },
+          orderBy: { id: "desc" },
+        });
+        if (!locked?.agentId) {
+          throw new ApiError(502, "No agent session found for this version.");
+        }
+        if (locked.id !== conv.id) {
+          throw new ApiError(
+            409,
+            "Chat session changed. Refresh the page and try again.",
+            "CHAT_AGENT_BUSY",
+          );
+        }
+        const { busy } = resolveClientLinkReleaseBusy(locked, null);
+        if (busy) {
+          throw new ApiError(
+            409,
+            "Another stakeholder is using the AI agent for this version. Please wait and try again.",
+            "CHAT_AGENT_BUSY",
+          );
+        }
+        await tx.figmaConversion.update({
+          where: { id: locked.id },
+          data: {
+            pendingClientChatMessageId: userMessage.id,
+            deferLaunchpadMerge: true,
+          },
+        });
       },
-    });
+      {
+        isolationLevel: "Serializable",
+        maxWait: 5000,
+        timeout: 15000,
+      },
+    );
     ({ status, data } = await postCursorAgentFollowup(
-      conv.agentId,
+      agentIdForFollowup,
       cursorImages.length > 0
         ? { text: textForCursor, images: cursorImages }
         : { text: textForCursor },
     ));
   } catch (err) {
-    await prisma.figmaConversion.update({
-      where: { id: conv.id },
-      data: { pendingClientChatMessageId: null },
-    }).catch(() => {});
+    if (err instanceof ApiError) {
+      if (err.statusCode !== 409) {
+        await prisma.figmaConversion
+          .update({
+            where: { id: conv.id },
+            data: { pendingClientChatMessageId: null },
+          })
+          .catch(() => {});
+      }
+      throw err;
+    }
+    const serializationFail =
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2034";
+    if (!serializationFail) {
+      await prisma.figmaConversion
+        .update({
+          where: { id: conv.id },
+          data: { pendingClientChatMessageId: null },
+        })
+        .catch(() => {});
+    }
+    if (serializationFail) {
+      throw new ApiError(
+        409,
+        "Another chat action completed at the same time. Please try again.",
+        "CHAT_AGENT_BUSY",
+      );
+    }
     if (err.code === "CURSOR_KEY_MISSING") {
       throw new ApiError(503, "Chat is temporarily unavailable.");
     }
@@ -945,6 +1088,12 @@ export async function clientLinkFollowup({
   }
 
   if (status < 200 || status >= 300) {
+    await prisma.figmaConversion
+      .update({
+        where: { id: conv.id },
+        data: { pendingClientChatMessageId: null },
+      })
+      .catch(() => {});
     const rawErr =
       typeof data?.error === "string" ? data.error : "Could not send message to agent";
     const message = mapCursorChatErrorMessageForClient(status, rawErr, rawErr);
@@ -953,6 +1102,37 @@ export async function clientLinkFollowup({
       message,
     );
   }
+
+  const st =
+    data?.status != null
+      ? String(data.status).trim().toUpperCase().replace(/\s+/g, "_")
+      : null;
+  const branchFromFollowup =
+    typeof data?.target?.branchName === "string"
+      ? data.target.branchName.trim()
+      : "";
+  const convPatch = {};
+  if (st) convPatch.status = st;
+  if (branchFromFollowup) convPatch.targetBranchName = branchFromFollowup;
+  if (Object.keys(convPatch).length > 0) {
+    await prisma.figmaConversion
+      .updateMany({
+        where: {
+          agentId: agentIdForFollowup,
+          projectId: project.id,
+          releaseId: rid,
+        },
+        data: convPatch,
+      })
+      .catch(() => {});
+  }
+
+  await prisma.chatHistory
+    .update({
+      where: { id: userMessage.id },
+      data: { figmaConversionId: conv.id },
+    })
+    .catch(() => {});
 
   return {
     ok: true,
@@ -967,30 +1147,51 @@ export async function clientLinkFollowup({
 export async function clientLinkAgentStatus({ slug, releaseId }) {
   const project = await resolveProjectBySlug(slug);
   await assertReleaseBelongs(releaseId, project.id);
+  const rid = Number(releaseId);
 
   let conv = await latestClientLinkConversionForRelease(project.id, Number(releaseId));
   if (!conv?.agentId) {
     conv = await latestConversionForAgentStatus(project.id, Number(releaseId));
   }
   if (!conv?.agentId) {
-    return { hasAgent: false, status: null };
+    return {
+      hasAgent: false,
+      status: null,
+      busy: false,
+      reason: null,
+    };
   }
 
+  const mergePendingFromConv = () =>
+    Boolean(conv.awaitingLaunchpadConfirmation) && conv.projectVersionId == null;
+
   if (!process.env.CURSOR_API_KEY?.trim()) {
-    return { hasAgent: true, status: null, error: "unconfigured" };
+    const { busy, reason } = resolveClientLinkReleaseBusy(conv, null);
+    return {
+      hasAgent: true,
+      status: null,
+      error: "unconfigured",
+      busy,
+      reason,
+      awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
+      mergeConfirmationPending: mergePendingFromConv(),
+      deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
+    };
   }
 
   try {
     const { status, data } = await getCursorAgentById(conv.agentId);
     if (status !== 200 || !data) {
+      const { busy, reason } = resolveClientLinkReleaseBusy(conv, null);
       return {
         hasAgent: true,
         status: null,
         error: "status_unavailable",
+        busy,
+        reason,
         awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
-        mergeConfirmationPending:
-          Boolean(conv.awaitingLaunchpadConfirmation) &&
-          conv.projectVersionId == null,
+        mergeConfirmationPending: mergePendingFromConv(),
+        deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
       };
     }
     const st = data.status != null ? String(data.status) : null;
@@ -1000,12 +1201,22 @@ export async function clientLinkAgentStatus({ slug, releaseId }) {
       conv.pendingClientChatMessageId != null
     ) {
       await syncPendingMessageCommitSha(project, conv);
+      conv = await latestClientLinkConversionForRelease(project.id, rid);
+      if (!conv?.agentId) {
+        return {
+          hasAgent: false,
+          status: null,
+          busy: false,
+          reason: null,
+        };
+      }
     }
     const mergeConfirmationPending =
       Boolean(conv.awaitingLaunchpadConfirmation) ||
       (isCursorAgentSuccessTerminal(st) &&
         Boolean(conv.deferLaunchpadMerge) &&
         conv.projectVersionId == null);
+    const { busy, reason } = resolveClientLinkReleaseBusy(conv, data);
     return {
       hasAgent: true,
       status: st,
@@ -1016,19 +1227,23 @@ export async function clientLinkAgentStatus({ slug, releaseId }) {
           : typeof data.source?.prUrl === "string"
             ? data.source.prUrl
             : null,
+      busy,
+      reason,
       awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
       mergeConfirmationPending,
       deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
     };
   } catch {
+    const { busy, reason } = resolveClientLinkReleaseBusy(conv, null);
     return {
       hasAgent: true,
       status: null,
       error: "poll_failed",
+      busy,
+      reason,
       awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
-      mergeConfirmationPending:
-        Boolean(conv.awaitingLaunchpadConfirmation) &&
-        conv.projectVersionId == null,
+      mergeConfirmationPending: mergePendingFromConv(),
+      deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
     };
   }
 }
@@ -1255,6 +1470,7 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
       mergedAt: true,
       revertedAt: true,
       revertCommitSha: true,
+      figmaConversionId: true,
       createdAt: true,
     },
   });
@@ -1270,6 +1486,7 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
       revertedAt: r.revertedAt || null,
       revertCommitSha: r.revertCommitSha || null,
       isReverted: r.role === "user" && Boolean(r.revertedAt),
+      figmaConversionId: r.figmaConversionId ?? null,
       createdAt: r.createdAt,
     })),
   };
@@ -1831,17 +2048,19 @@ export async function clientLinkRestoreVersion({
     throw new ApiError(404, "Version not found for this release");
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: project.assignedManagerId },
+  // deployVersionArtifactsToProjectFolder uses assertProjectAccess (creator / admin / assignees).
+  // Use project creator — not assignedManager — so stakeholder-triggered deploy matches SCM OAuth ownership.
+  const deployActor = await prisma.user.findUnique({
+    where: { id: project.createdById },
   });
-  if (!user) {
-    throw new ApiError(500, "Project has no assigned manager");
+  if (!deployActor) {
+    throw new ApiError(500, "Project creator account not found");
   }
 
   const deployed = await deployVersionArtifactsToProjectFolder({
     projectId: project.id,
     versionId: vid,
-    user,
+    user: deployActor,
   });
 
   await prisma.$transaction([
@@ -1866,16 +2085,14 @@ export async function clientLinkRestoreVersion({
 /**
  * Public: re-checkout the active version’s git tag, rebuild, and redeploy to the project folder
  * (same as deploy after merge). Used by client-link “refresh preview” when the UI is stale.
+ * No stakeholder email, release validation, release-lock, or project-access checks — anyone with the project slug can trigger a rebuild (security: slug secrecy only).
  */
 export async function clientLinkRefreshLiveBuild({
   slug,
-  releaseId,
-  clientEmail,
+  releaseId: _releaseIdIgnored = null,
+  clientEmail: _clientEmailIgnored = null,
 }) {
   const project = await resolveProjectBySlug(slug);
-  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail);
-  const release = await assertReleaseBelongs(releaseId, project.id);
-  assertReleaseNotLocked(release);
 
   const version = await prisma.projectVersion.findFirst({
     where: { projectId: project.id, isActive: true },
@@ -1888,17 +2105,11 @@ export async function clientLinkRefreshLiveBuild({
     );
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: project.assignedManagerId },
-  });
-  if (!user) {
-    throw new ApiError(500, "Project has no assigned manager");
-  }
-
   const deployed = await deployVersionArtifactsToProjectFolder({
     projectId: project.id,
     versionId: version.id,
-    user,
+    user: null,
+    skipProjectAccessCheck: true,
   });
 
   return {

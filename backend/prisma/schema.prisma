@@ -233,6 +233,7 @@ model FigmaConversion {
   release        Release         @relation(fields: [releaseId], references: [id], onDelete: Cascade)
   attemptedBy    User            @relation("FigmaConversionAttemptedBy", fields: [attemptedById], references: [id])
   projectVersion ProjectVersion? @relation(fields: [projectVersionId], references: [id], onDelete: SetNull)
+  linkedChatMessages ChatHistory[]
 }
 
 /// Public client-link chat history per release (persists across sessions).
@@ -248,14 +249,18 @@ model ChatHistory {
   revertCommitSha  String?
   /// When false, row is kept for audit but omitted from the client-link chat panel.
   isActiveChat     Boolean  @default(true)
+  /// Stable link to the FigmaConversion / Cursor agent run for this user turn (persists after pendingClientChatMessageId is cleared on the conversion row).
+  figmaConversionId Int?
   createdAt DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   release Release @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  figmaConversion FigmaConversion? @relation(fields: [figmaConversionId], references: [id], onDelete: SetNull)
 
   @@index([projectId, releaseId, createdAt])
   @@index([projectId, releaseId, isActiveChat])
   @@index([projectId, releaseId, appliedCommitSha])
+  @@index([figmaConversionId])
 }
 
 

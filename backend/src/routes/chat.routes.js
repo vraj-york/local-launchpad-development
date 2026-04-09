@@ -58,7 +58,9 @@ router.post("/:slug/followup", async (req, res) => {
     return res.json(result);
   } catch (err) {
     if (err instanceof ApiError) {
-      return res.status(err.statusCode).json({ error: err.message });
+      const body = { error: err.message };
+      if (err.code) body.code = err.code;
+      return res.status(err.statusCode).json(body);
     }
     return res.status(500).json({ error: "Server error" });
   }
@@ -123,7 +125,6 @@ router.post("/:slug/refresh-build", async (req, res) => {
   const slug = req.params.slug;
   const releaseId = readReleaseId(req.body, req.query);
   try {
-    if (!releaseId) return res.status(400).json({ error: "Release (r) required" });
     const result = await clientLinkRefreshLiveBuild({
       slug,
       releaseId,

@@ -1347,13 +1347,17 @@ export const getProjectByIdService = async (
 /**
  * Checkout tag, build, copy build output into projects/{projectPath}, reload nginx, update version buildUrl.
  * Does not change isActive (caller handles DB flags). Used by activate-version API and after release status → active.
+ * When `skipProjectAccessCheck` is true, skips assertProjectAccess (caller must enforce trust; e.g. public client-link refresh-build).
  */
 export async function deployVersionArtifactsToProjectFolder({
   projectId,
   versionId,
   user,
+  skipProjectAccessCheck = false,
 }) {
-  await assertProjectAccess(projectId, user);
+  if (!skipProjectAccessCheck) {
+    await assertProjectAccess(projectId, user);
+  }
 
   const version = await prisma.projectVersion.findFirst({
     where: { id: versionId, projectId },
