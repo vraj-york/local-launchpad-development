@@ -534,6 +534,151 @@ export const regenerateAllProjectNginxConfigs = async () => {
   // No-op: SSL wildcard reverted; configs are created on project create only.
 };
 
+/** Prepended to the user scratch prompt for the Cursor Cloud agent only (not stored on Project.scratchPrompt). */
+const SCRATCH_CURSOR_AGENT_BASE_PROMPT = `
+You are an experienced software engineer working in a fresh project repository. 
+Focus on the user's request and First create a plan and then implement it and aim for a result that builds and runs. 
+If requirements are ambiguous, make reasonable assumptions and state them briefly.`;
+
+/**
+ * @param {string} userPrompt
+ * @returns {string}
+ */
+function buildScratchAgentPromptText(userPrompt) {
+  const trimmed = typeof userPrompt === "string" ? userPrompt.trim() : "";
+  if (!trimmed) {
+    return SCRATCH_CURSOR_AGENT_BASE_PROMPT;
+  }
+  return `${SCRATCH_CURSOR_AGENT_BASE_PROMPT}
+
+User request:
+
+${trimmed}`;
+}
+
+/**
+ * Create release 1.0.0 and start the Cursor agent for the "from scratch" flow.
+ * On success, persists `scratchPrompt`, sets `fromScratch` true. On failure, rolls back the release and clears `scratchPrompt`.
+ */
+export async function runScratchAgentSetup({ projectId, userId, promptText }) {
+  if (!process.env.CURSOR_API_KEY?.trim()) {
+    await prisma.project
+      .update({
+        where: { id: projectId },
+        data: { scratchPrompt: null },
+      })
+      .catch(() => {});
+    throw new ApiError(
+      503,
+      "Scratch project requires Cursor API to be configured (CURSOR_API_KEY).",
+    );
+  }
+  let scratchRelease = null;
+  try {
+    scratchRelease = await createReleaseService(
+      {
+        projectId,
+        name: "1.0.0",
+        description: "Base Release for Project From Scratch",
+      },
+      { id: userId },
+    );
+    const agentResult = await createAgentForProjectRelease({
+      projectId,
+      releaseId: scratchRelease.id,
+      attemptedById: userId,
+      prompt: { text: buildScratchAgentPromptText(promptText) },
+      model: "composer-1.5",
+      deferLaunchpadMerge: false,
+      omitTargetFromBody: false,
+    });
+    if (!agentResult.ok) {
+      const msg =
+        typeof agentResult.data?.error === "string"
+          ? agentResult.data.error
+          : "Failed to start scratch Cursor agent";
+      throw new ApiError(
+        agentResult.status >= 400 && agentResult.status < 600
+          ? agentResult.status
+          : 502,
+        msg,
+      );
+    }
+    await prisma.project
+      .update({
+        where: { id: projectId },
+        data: { scratchPrompt: promptText, fromScratch: true },
+      })
+      .catch(() => {});
+  } catch (e) {
+    if (scratchRelease?.id) {
+      await prisma.release
+        .delete({ where: { id: scratchRelease.id } })
+        .catch(() => {});
+    }
+    await prisma.project
+      .update({
+        where: { id: projectId },
+        data: { scratchPrompt: null },
+      })
+      .catch(() => {});
+    if (e instanceof ApiError) throw e;
+    throw new ApiError(
+      502,
+      `Scratch agent setup failed: ${e?.message || String(e)}`,
+    );
+  }
+}
+
+/**
+ * Start the scratch Cursor agent from project details (deferred prompt).
+ */
+export async function startScratchAgentFromProjectService({ projectId, user, body }) {
+  const id = Number(projectId);
+  if (!Number.isInteger(id) || id < 1) {
+    throw new ApiError(400, "Invalid project id");
+  }
+  await assertProjectAccess(id, user);
+
+  const promptRaw = body?.prompt;
+  const promptTrimmed =
+    typeof promptRaw === "string" ? promptRaw.trim() : "";
+  if (!promptTrimmed) {
+    throw new ApiError(400, "prompt is required");
+  }
+  if (promptTrimmed.length > 100000) {
+    throw new ApiError(400, "prompt must be at most 100000 characters");
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+  if (!project) {
+    throw new ApiError(404, "Project not found");
+  }
+
+  const releaseCount = await prisma.release.count({
+    where: { projectId: id },
+  });
+  if (releaseCount > 0) {
+    throw new ApiError(400, "A release already exists for this project.");
+  }
+
+  await runScratchAgentSetup({
+    projectId: id,
+    userId: user.id,
+    promptText: promptTrimmed,
+  });
+
+  const refreshed = await getProjectByIdService(id, user);
+  return {
+    ...refreshed,
+    scratchAgentStarted: true,
+    scratchReleaseName: "1.0.0",
+  };
+}
+
 export const createProjectService = async ({ userId, body }) => {
   const {
     name,
@@ -906,6 +1051,7 @@ export const createProjectService = async ({ userId, body }) => {
           nginxConfigPath: path.join('nginx-configs', configFileName),
           scratchPrompt:
             isScratch && scratchPromptTrimmed ? scratchPromptTrimmed : null,
+          fromScratch: isScratch,
         },
       });
     });
@@ -913,77 +1059,28 @@ export const createProjectService = async ({ userId, body }) => {
     // 9. Start static server on this project's port (so http://localhost:8004/ works)
     startProjectServer(port, absoluteProjectPath);
 
-    if (isScratch) {
-      if (!process.env.CURSOR_API_KEY?.trim()) {
-        await prisma.project
-          .update({
-            where: { id: project.id },
-            data: { scratchPrompt: null },
-          })
-          .catch(() => {});
-        throw new ApiError(
-          503,
-          "Scratch project requires Cursor API to be configured (CURSOR_API_KEY).",
-        );
-      }
-      let scratchRelease = null;
-      try {
-        scratchRelease = await createReleaseService(
-          {
-            projectId: project.id,
-            name: "1.0.0",
-            description: "Base Release for Project From Scratch",
-          },
-          { id: userId },
-        );
-        const agentResult = await createAgentForProjectRelease({
-          projectId: project.id,
-          releaseId: scratchRelease.id,
-          attemptedById: userId,
-          prompt: { text: scratchPromptTrimmed },
-          model: "composer-1.5",
-          // false: startAgentPolling → performMergeToLaunchpad (omitTargetFromBody false → default autoBranch target)
-          deferLaunchpadMerge: false,
-          omitTargetFromBody: false,
-        });
-        if (!agentResult.ok) {
-          const msg =
-            typeof agentResult.data?.error === "string"
-              ? agentResult.data.error
-              : "Failed to start scratch Cursor agent";
-          throw new ApiError(
-            agentResult.status >= 400 && agentResult.status < 600
-              ? agentResult.status
-              : 502,
-            msg,
-          );
-        }
-      } catch (e) {
-        if (scratchRelease?.id) {
-          await prisma.release
-            .delete({ where: { id: scratchRelease.id } })
-            .catch(() => {});
-        }
-        await prisma.project
-          .update({
-            where: { id: project.id },
-            data: { scratchPrompt: null },
-          })
-          .catch(() => {});
-        if (e instanceof ApiError) throw e;
-        throw new ApiError(
-          502,
-          `Scratch agent setup failed: ${e?.message || String(e)}`,
-        );
-      }
+    if (isScratch && scratchPromptTrimmed) {
+      await runScratchAgentSetup({
+        projectId: project.id,
+        userId,
+        promptText: scratchPromptTrimmed,
+      });
     }
 
     const masked = maskProjectSecrets(project);
-    if (isScratch) {
+    if (isScratch && scratchPromptTrimmed) {
       return {
         ...masked,
+        fromScratch: true,
         scratchAgentStarted: true,
         scratchReleaseName: "1.0.0",
+      };
+    }
+    if (isScratch && !scratchPromptTrimmed) {
+      return {
+        ...masked,
+        fromScratch: true,
+        scratchAgentStarted: false,
       };
     }
     return masked;
@@ -1223,6 +1320,7 @@ export const getProjectByIdService = async (
       select: {
         id: true,
         name: true,
+        scratchPrompt: true,
         versions: versionsQuery,
         releases: releasesQuery,
       },

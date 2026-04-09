@@ -387,6 +387,18 @@ export const fetchProjectById = async (projectId) => {
   }
 };
 
+/** Start deferred from-scratch Cursor agent (release 1.0.0 + agent). */
+export const startProjectScratchAgent = async (projectId, prompt) => {
+  try {
+    const response = await api.post(`/api/projects/${projectId}/scratch-agent`, {
+      prompt,
+    });
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to start scratch agent" };
+  }
+};
+
 // Release Management API Functions
 
 // Function to fetch all releases for a project

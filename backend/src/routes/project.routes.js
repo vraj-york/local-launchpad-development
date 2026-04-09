@@ -9,7 +9,11 @@ import fetch from "node-fetch";
 import dotenv from "dotenv";
 import { getProjectLiveAbsolutePath } from "../utils/instanceRoot.js";
 import { projectController } from "../controllers/project.controller.js";
-import { createProjectValidation, updateProjectValidation } from "../validators/project.validator.js";
+import {
+  createProjectValidation,
+  updateProjectValidation,
+  startScratchAgentValidation,
+} from "../validators/project.validator.js";
 import { validate } from "../validators/validate.middleware.js";
 import { clearProjectLock as releaseClearProjectLock } from "../services/release.service.js";
 import { projectRepositoryWebUrl } from "../utils/projectGithubUrl.js";
@@ -389,6 +393,15 @@ router.post(
   validate,
   projectController.create
 );
+
+router.post(
+  "/:projectId/scratch-agent",
+  authenticateToken,
+  startScratchAgentValidation,
+  validate,
+  projectController.startScratchAgent,
+);
+
 /**
  * @swagger
  * /projects/{id}/live-url:

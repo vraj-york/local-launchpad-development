@@ -8,6 +8,7 @@ import {
     updateProjectDetailsService,
     deleteProjectService,
     switchProjectVersion,
+    startScratchAgentFromProjectService,
 } from "../services/project.service.js";
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
@@ -61,6 +62,16 @@ export const projectController = {
 
         res.status(201).json(project);
     }),
+
+    startScratchAgent: asyncHandler(async (req, res) => {
+        const data = await startScratchAgentFromProjectService({
+            projectId: req.params.projectId,
+            user: req.user,
+            body: req.body,
+        });
+        res.json(data);
+    }),
+
     update: asyncHandler(async (req, res) => {
         const project = await updateProjectDetailsService({
             projectId: Number(req.params.projectId),

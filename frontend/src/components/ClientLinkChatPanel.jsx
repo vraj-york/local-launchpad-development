@@ -424,6 +424,9 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
 
 export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   projectSlug,
+  scratchPrompt = null,
+  /** When set, scratch prompt is only shown for chat on this release (project’s first / oldest release). */
+  firstReleaseId = null,
   effectiveChatReleaseId,
   isLocked,
   isOpen,
@@ -474,6 +477,33 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const canViewChat =
     Boolean(projectSlug?.trim()) && effectiveChatReleaseId != null;
   const canMutateChat = canViewChat && !isLocked && identityLooksValid;
+
+  const scratchTrim = useMemo(() => {
+    return typeof scratchPrompt === "string" ? scratchPrompt.trim() : "";
+  }, [scratchPrompt]);
+
+  const scratchPromptAppliesToThisRelease = useMemo(() => {
+    if (firstReleaseId == null || effectiveChatReleaseId == null) return false;
+    return Number(firstReleaseId) === Number(effectiveChatReleaseId);
+  }, [firstReleaseId, effectiveChatReleaseId]);
+
+  /** Scratch prompt from project settings shown first only on the first (oldest) release; deduped if it matches the first stored user message. */
+  const displayMessages = useMemo(() => {
+    if (!scratchTrim || !scratchPromptAppliesToThisRelease) return chatMessages;
+    const firstUser = chatMessages.find((m) => m?.role === "user");
+    const firstText =
+      typeof firstUser?.text === "string" ? firstUser.text.trim() : "";
+    if (firstText === scratchTrim) return chatMessages;
+    return [
+      {
+        role: "user",
+        key: "client-link-scratch-prompt",
+        text: scratchTrim,
+        isScratchPrompt: true,
+      },
+      ...chatMessages,
+    ];
+  }, [chatMessages, scratchTrim, scratchPromptAppliesToThisRelease]);
 
   /** Checkout release tag, build, deploy — then refresh project JSON quietly (no full-page loader) and bust iframe cache. */
   const runTagBuildAndRefreshUi = useCallback(async () => {
@@ -1141,7 +1171,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           {showMainChatUi ? (
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3">
-                {chatMessages.length === 0 && (
+                {chatMessages.length === 0 && !scratchTrim && (
                   <p className="text-sm text-muted-foreground">
                     Describe the change you want (e.g. &quot;Make the hero
                     button larger&quot;). Use{" "}
@@ -1152,7 +1182,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                     the box below; hover the tag for full details.
                   </p>
                 )}
-                {chatMessages.map((msg, index) => (
+                {displayMessages.map((msg, index) => (
                   <ChatMessageRow
                     key={msg.id ?? msg.key ?? `m-${index}`}
                     msg={msg}

@@ -310,6 +310,19 @@ function mapCursorChatErrorMessageForClient(httpStatus, rawError, fallback) {
  * release (e.g. Figma) use deferLaunchpadMerge=false; they must not win findFirst(orderBy id desc)
  * or every chat message would look "legacy" and spawn a new agent.
  */
+const AGENT_STATUS_CONVERSION_SELECT = {
+  id: true,
+  agentId: true,
+  releaseId: true,
+  projectId: true,
+  status: true,
+  deferLaunchpadMerge: true,
+  awaitingLaunchpadConfirmation: true,
+  projectVersionId: true,
+  pendingClientChatMessageId: true,
+  targetBranchName: true,
+};
+
 function latestClientLinkConversionForRelease(projectId, releaseId) {
   const pid = Number(projectId);
   const rid = Number(releaseId);
@@ -323,18 +336,28 @@ function latestClientLinkConversionForRelease(projectId, releaseId) {
       deferLaunchpadMerge: true,
     },
     orderBy: { id: "desc" },
-    select: {
-      id: true,
-      agentId: true,
-      releaseId: true,
-      projectId: true,
-      status: true,
-      deferLaunchpadMerge: true,
-      awaitingLaunchpadConfirmation: true,
-      projectVersionId: true,
-      pendingClientChatMessageId: true,
-      targetBranchName: true,
+    select: AGENT_STATUS_CONVERSION_SELECT,
+  });
+}
+
+/**
+ * Scratch / Figma-style runs use deferLaunchpadMerge=false. Prefer client-link row first;
+ * if missing, use the latest conversion with an agent id on this release (e.g. scratch agent).
+ */
+function latestConversionForAgentStatus(projectId, releaseId) {
+  const pid = Number(projectId);
+  const rid = Number(releaseId);
+  if (!Number.isInteger(pid) || pid < 1 || !Number.isInteger(rid) || rid < 1) {
+    return Promise.resolve(null);
+  }
+  return prisma.figmaConversion.findFirst({
+    where: {
+      projectId: pid,
+      releaseId: rid,
+      agentId: { not: null },
     },
+    orderBy: { id: "desc" },
+    select: AGENT_STATUS_CONVERSION_SELECT,
   });
 }
 
@@ -945,7 +968,10 @@ export async function clientLinkAgentStatus({ slug, releaseId }) {
   const project = await resolveProjectBySlug(slug);
   await assertReleaseBelongs(releaseId, project.id);
 
-  const conv = await latestClientLinkConversionForRelease(project.id, Number(releaseId));
+  let conv = await latestClientLinkConversionForRelease(project.id, Number(releaseId));
+  if (!conv?.agentId) {
+    conv = await latestConversionForAgentStatus(project.id, Number(releaseId));
+  }
   if (!conv?.agentId) {
     return { hasAgent: false, status: null };
   }

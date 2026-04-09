@@ -96,6 +96,12 @@ model Project {
   stakeholderEmails   String?
   /// Initial Cursor agent prompt when creating a project from scratch (`isScratch` flow).
   scratchPrompt         String?  @db.Text
+  /// True when the project was created with `isScratch`; used to show deferred scratch UI until the first release exists.
+  fromScratch           Boolean  @default(false)
+  /// Last known Cursor cloud agent status for the from-scratch flow (updated by backend poller).
+  scratchAgentStatus    String?
+  /// Post-agent merge/tag/build phase for from-scratch projects (CREATING | FAILED | null).
+  scratchVersionStatus  String?
 
   githubConnectionId   Int?
   bitbucketConnectionId Int?
