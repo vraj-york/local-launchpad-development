@@ -477,7 +477,7 @@ async function findReleaseAnchorVersionForClientLinkMerge(projectId, releaseId) 
   return prisma.projectVersion.findFirst({
     where: { projectId: pid, releaseId: rid },
     orderBy: [{ isActive: "desc" }, { id: "desc" }],
-    select: { id: true, gitTag: true, zipFilePath: true, version: true, isActive: true },
+    select: { id: true, gitTag: true, version: true, isActive: true },
   });
 }
 
@@ -550,8 +550,7 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
           conversion.projectId,
           conversion.releaseId,
         );
-        tagSkip =
-          anchorSkip?.gitTag?.trim() || anchorSkip?.zipFilePath?.trim() || "";
+        tagSkip = anchorSkip?.gitTag?.trim() || "";
         if (anchorSkip && tagSkip) {
           const tr = await createTagIdempotent(owner, repo, tagSkip, headSha, token);
           if (!tr.ok) {
@@ -630,8 +629,7 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
       conversion.projectId,
       releaseId,
     );
-    const gt =
-      anchorVersion?.gitTag?.trim() || anchorVersion?.zipFilePath?.trim() || "";
+    const gt = anchorVersion?.gitTag?.trim() || "";
     if (!anchorVersion || !gt) {
       throw new Error(
         "No published version with a git tag exists for this release. Add or activate a version for this release before merging chat changes.",
@@ -688,7 +686,7 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
         where: { id: existingVersion.id },
         data: {
           version: versionNumber,
-          zipFilePath: tagName,
+          gitTag: tagName,
           buildUrl,
           releaseId: conversion.releaseId,
           uploadedBy: conversion.attemptedById,
@@ -701,7 +699,6 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
         releaseId: conversion.releaseId,
         version: versionNumber,
         gitTag: tagName,
-        zipFilePath: tagName,
         buildUrl,
         isActive: false,
         uploadedBy: conversion.attemptedById,
@@ -772,7 +769,7 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
               where: { id: existingVersion.id },
               data: {
                 version: versionNumber,
-                zipFilePath: tagName,
+                gitTag: tagName,
                 buildUrl,
                 isActive: true,
                 releaseId: conversion.releaseId,
@@ -786,7 +783,6 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
               releaseId: conversion.releaseId,
               version: versionNumber,
               gitTag: tagName,
-              zipFilePath: tagName,
               buildUrl,
               isActive: true,
               uploadedBy: conversion.attemptedById,

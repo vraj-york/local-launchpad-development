@@ -533,13 +533,10 @@ export const clientLinkRefreshLiveBuild = async (
 
 
 // Function to upload ZIP to a release
-export const uploadToRelease = async (releaseId, file, roadmapItemIds) => {
+export const uploadToRelease = async (releaseId, file) => {
   try {
     const formData = new FormData();
     formData.append("project", file);
-    if (roadmapItemIds) {
-      formData.append("roadmapItemIds", roadmapItemIds);
-    }
     const response = await api.post(
       `/api/releases/${releaseId}/upload`,
       formData,
@@ -575,51 +572,6 @@ export const updateProject = async (projectId, projectData) => {
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to update project" };
-  }
-};
-
-// Function to delete a roadmap
-export const deleteRoadmap = async (roadmapId) => {
-  try {
-    const response = await api.delete(`/api/roadmaps/${roadmapId}`);
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to delete roadmap" };
-  }
-};
-
-// Function to delete a roadmap item
-export const deleteRoadmapItem = async (roadmapId, itemId) => {
-  try {
-    const response = await api.delete(
-      `/api/roadmaps/${roadmapId}/items/${itemId}`,
-    );
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to delete roadmap item" };
-  }
-};
-
-//Get Roadmap Items by projectID
-export const getRoadmapItemsByProjectId = async (projectId) => {
-  try {
-    const response = await api.get(`/api/roadmaps/project/${projectId}/items`);
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to fetch roadmap items" };
-  }
-};
-
-//Update Roadmap Items by ProjectID
-export const updateRoadmapByProjectId = async (projectId, roadmapData) => {
-  try {
-    const res = await api.put(
-      `/api/roadmaps/project/${projectId}`,
-      roadmapData,
-    );
-    return res.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to update roadmap" };
   }
 };
 

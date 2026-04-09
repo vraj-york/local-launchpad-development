@@ -1,7 +1,6 @@
 import { getProjectDataPublically } from "@/api";
 import { Button } from "@/components/ui/button";
 import React, { useEffect, useState } from "react";
-import RoadMapManagement from "@/components/RoadMapManagement";
 import { ExternalLink } from "lucide-react";
 import { useParams } from "react-router-dom";
 import { formatProjectVersionLabel } from "@/lib/utils";
@@ -100,14 +99,6 @@ export const PublicProjectView = () => {
               {formatProjectVersionLabel(publicProject?.versions[0]?.version)}
             </p>
           </div>
-        </div>
-
-        <div className="mt-8">
-          <RoadMapManagement
-            value={publicProject?.roadmaps || []}
-            readOnly={true}
-            isEmbedded={true}
-          />
         </div>
       </div>
     </div>

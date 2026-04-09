@@ -41,7 +41,6 @@ import {
 } from "@/components/ui/tooltip";
 import { PageHeader } from "@/components/PageHeader";
 import ProjectGitJiraOAuthCard from "@/components/project/ProjectGitJiraOAuthCard";
-// import RoadMapManagement from "@/components/RoadMapManagement";
 import { toast } from "sonner";
 
 const PM_CREATE_BODY_OAUTH_DRAFT = "pm_create_body_oauth_draft";
@@ -398,32 +397,13 @@ const CreateProject = () => {
     );
     if (stakeholderErr) errors.stakeholderEmails = stakeholderErr;
 
-    // Roadmap is optional; validate only when user has added roadmaps
-    // if (roadmaps.length > 0) {
-    //   roadmaps.forEach((roadmap) => {
-    //     if (!roadmap.title.trim())
-    //       errors[`roadmap-${roadmap.id}-title`] = "Roadmap title is required";
-    //     if (!roadmap.timelineStart)
-    //       errors[`roadmap-${roadmap.id}-timelineStart`] =
-    //         "Start date is required";
-    //     if (!roadmap.timelineEnd)
-    //       errors[`roadmap-${roadmap.id}-timelineEnd`] = "End date is required";
-
-    //     if (roadmap.items.length === 0) {
-    //       errors[`roadmap-${roadmap.id}-items`] =
-    //         "At least one item is required";
-    //     } else {
-    //       roadmap.items.forEach((item) => {
-    //         if (!item.title.trim())
-    //           errors[`item-${item.id}-title`] = "Item title is required";
-    //         if (!item.startDate)
-    //           errors[`item-${item.id}-startDate`] = "Start date is required";
-    //         if (!item.endDate)
-    //           errors[`item-${item.id}-endDate`] = "End date is required";
-    //       });
-    //     }
-    //   });
-    // }
+    if (startFromScratch) {
+      const p = typeof scratchPrompt === "string" ? scratchPrompt.trim() : "";
+      if (!p) {
+        errors.scratchPrompt =
+          "Initial agent prompt is required when starting from scratch";
+      }
+    }
 
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
@@ -442,28 +422,6 @@ const CreateProject = () => {
     setLoading(true);
 
     try {
-      // Process roadmaps when provided (optional at project creation)
-      // const processedRoadmaps =
-      //   roadmaps.length > 0
-      //     ? roadmaps.map((roadmap) => {
-      //         const { id, ...roadmapRest } = roadmap;
-      //         return {
-      //           ...roadmapRest,
-      //           timelineStart: new Date(roadmap.timelineStart).toISOString(),
-      //           timelineEnd: new Date(roadmap.timelineEnd).toISOString(),
-      //           items: (roadmap.items || []).map((item) => {
-      //             const { id: itemId, ...itemRest } = item;
-      //             return {
-      //               ...itemRest,
-      //               startDate: new Date(item.startDate).toISOString(),
-      //               endDate: new Date(item.endDate).toISOString(),
-      //               priority: item.priority || "MEDIUM",
-      //             };
-      //           }),
-      //         };
-      //       })
-      //     : [];
-
       const selectedExternal = externalHubProjects.find(
         (p) => String(p.id) === String(selectedHubProjectId),
       );
@@ -796,23 +754,6 @@ const CreateProject = () => {
           onCreateFieldsChange={handleOauthCreateFieldsChange}
         />
 
-        {/* Roadmap Configuration */}
-        {/* <Card className="border-slate-200">
-          <CardHeader>
-            <CardTitle className="text-lg font-semibold text-slate-800">
-              Project Roadmap
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <RoadMapManagement
-              value={roadmaps}
-              onChange={setRoadmaps}
-              isEmbedded={true}
-              validationErrors={validationErrors}
-              initialEditingId={defaultRoadmapId}
-            />
-          </CardContent>
-        </Card> */}
         <Button
           type="submit"
           disabled={
