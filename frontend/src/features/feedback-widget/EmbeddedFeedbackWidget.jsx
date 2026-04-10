@@ -13,6 +13,8 @@ const EmbeddedFeedbackWidget = forwardRef(function EmbeddedFeedbackWidget(
     /** When true, the default floating Report Issue control is not rendered (use ref `open()` from a custom trigger). */
     hideDefaultTrigger = false,
     onCapturingChange,
+    /** Called when screen recording starts or stops (for disabling toolbar buttons, etc.). */
+    onScreenRecordingChange,
     onSuccess,
     onError,
   },
@@ -27,6 +29,7 @@ const EmbeddedFeedbackWidget = forwardRef(function EmbeddedFeedbackWidget(
       anchorToPreview,
       hideDefaultTrigger,
       onCapturingChange,
+      onScreenRecordingChange,
       onSuccess,
       onError,
     }),
@@ -37,6 +40,7 @@ const EmbeddedFeedbackWidget = forwardRef(function EmbeddedFeedbackWidget(
       anchorToPreview,
       hideDefaultTrigger,
       onCapturingChange,
+      onScreenRecordingChange,
       onSuccess,
       onError,
     ],

@@ -5,6 +5,8 @@
 # Backend image sets NGINX_BIN=/usr/sbin/nginx for Node-driven `nginx -s reload`; override via .env if needed.
 # Database: set DATABASE_URL in repo root .env
 # Migrations: backend entrypoint runs `prisma migrate deploy` when DATABASE_URL is set (fails startup on error).
+# Same entrypoint runs a one-shot stale FeedbackRecordingSession cleanup after migrate (SKIP_FEEDBACK_SESSION_CLEANUP=1 to skip).
+# Screen recording: `feedback-recording-worker` merges WebM chunks in S3 and attaches to Jira (needs AWS_* + DATABASE_URL + ffmpeg in image).
 # - Supabase / external only: docker compose up -d  (db service is NOT started)
 # - Local DB in Docker: DATABASE_URL=...@db:5432/... then: docker compose --profile with-db up -d
 #
@@ -120,6 +122,30 @@ services:
       db:
         condition: service_healthy
         required: false
+
+  # Merges feedback screen-recording chunks (S3 + ffmpeg) and attaches video to Jira. Same image as backend; no nginx/migrate entrypoint.
+  # Run exactly one replica (job claiming uses Postgres row locks).
+  feedback-recording-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    entrypoint: ["./worker-docker-entrypoint.sh"]
+    command: ["node", "src/workers/feedbackRecordingMerge.worker.js"]
+    env_file:
+      - .env
+      - path: .env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/zipsync}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:-}
+    depends_on:
+      - backend
 
   frontend:
     # VITE_* build args use variables from the repo root .env (Compose loads it for ${...} substitution).

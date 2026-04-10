@@ -149,6 +149,15 @@ if [ -n "$DATABASE_URL" ]; then
   fi
   echo "Seeding default admin user (if none exists)..."
   npx prisma db seed 2>/dev/null || true
+
+  # One-shot stale session cleanup per container start (covers docker compose deploy / restart).
+  # Set SKIP_FEEDBACK_SESSION_CLEANUP=1 to disable. Does not block startup on failure.
+  if [ "${SKIP_FEEDBACK_SESSION_CLEANUP:-}" = "1" ] || [ "${SKIP_FEEDBACK_SESSION_CLEANUP:-}" = "true" ]; then
+    echo "[WARN] SKIP_FEEDBACK_SESSION_CLEANUP set — skipping feedback recording session cleanup."
+  else
+    echo "Cleaning stale feedback recording sessions (post-migrate)..."
+    node src/scripts/cleanupStaleFeedbackRecordingSessions.js || echo "[WARN] Feedback session cleanup failed; continuing startup."
+  fi
 fi
 
 # When nginx runs in same container as Node, keep proxy_pass http://localhost: (default).

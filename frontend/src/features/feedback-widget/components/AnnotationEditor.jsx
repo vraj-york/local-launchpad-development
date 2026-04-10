@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tldraw, exportToBlob } from "tldraw";
-import { ArrowUp, Bug, TrendingUp } from "lucide-react";
+import { ArrowUp, Bug, Circle, Loader2, Square, TrendingUp } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -17,6 +17,54 @@ import {
   getClientLinkVerifiedEmail,
   isPlausibleClientLinkEmail,
 } from "@/lib/clientLinkVerifiedEmail";
+import { cn } from "@/lib/utils";
+
+/**
+ * Simple Loom-style record control in the form (not tldraw toolbar).
+ * @param {{ isRecording: boolean; disabled: boolean; onActivate: () => void | Promise<void> }} props
+ */
+function ScreenRecordFormButton({ isRecording, disabled, onActivate }) {
+  return (
+    <button
+      type="button"
+      data-testid="feedback-screen-record-button"
+      aria-label={isRecording ? "Stop screen recording" : "Start screen recording"}
+      title={
+        isRecording
+          ? "Stop screen recording"
+          : "Start screen recording (enter your email first). Video uploads in the background."
+      }
+      aria-pressed={isRecording}
+      disabled={disabled}
+      onClick={() => {
+        void onActivate();
+      }}
+      className={cn(
+        "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-2 border-slate-200 bg-white shadow-sm transition-all outline-none",
+        "hover:border-slate-300 hover:bg-slate-50",
+        "focus-visible:ring-2 focus-visible:ring-[#00b48a] focus-visible:ring-offset-2",
+        "disabled:cursor-not-allowed disabled:opacity-60",
+        isRecording && "animate-pulse border-red-300 bg-red-50",
+      )}
+    >
+      {disabled ? (
+        <Loader2 className="h-5 w-5 animate-spin text-slate-500" strokeWidth={2} aria-hidden />
+      ) : isRecording ? (
+        <Square
+          className="h-4 w-4 fill-red-600 text-red-600"
+          strokeWidth={2}
+          aria-hidden
+        />
+      ) : (
+        <Circle
+          className="h-5 w-5 fill-red-600 text-red-600"
+          strokeWidth={2}
+          aria-hidden
+        />
+      )}
+    </button>
+  );
+}
 
 const ISSUE_TYPE_OPTIONS = [
   {
@@ -40,6 +88,10 @@ const AnnotationEditor = ({
   metadata,
   onSave,
   requiresReporterEmail = false,
+  screenRecordingOffered = false,
+  screenRecordingActive = false,
+  onEnableScreenRecording,
+  onDisableScreenRecording,
 }) => {
   const [editor, setEditor] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -49,6 +101,9 @@ const AnnotationEditor = ({
     getClientLinkVerifiedEmail(),
   );
   const [error, setError] = useState("");
+  const [screenRecordingBusy, setScreenRecordingBusy] = useState(false);
+  const reporterEmailRef = useRef(reporterEmail);
+  reporterEmailRef.current = reporterEmail;
 
   const canSubmitFeedback = useMemo(() => {
     const emailNorm = reporterEmail.trim().toLowerCase();
@@ -57,6 +112,66 @@ const AnnotationEditor = ({
     }
     return Boolean(emailNorm && isPlausibleClientLinkEmail(emailNorm));
   }, [reporterEmail, requiresReporterEmail]);
+
+  const handleScreenRecordToolClick = useCallback(async () => {
+    if (screenRecordingActive) {
+      setScreenRecordingBusy(true);
+      setError("");
+      try {
+        await onDisableScreenRecording?.();
+      } catch (recErr) {
+        setError(
+          recErr?.message ||
+            "Could not finalize screen recording. Try again or submit without video.",
+        );
+      } finally {
+        setScreenRecordingBusy(false);
+      }
+      return;
+    }
+    if (!onEnableScreenRecording) return;
+    const emailNorm = reporterEmailRef.current.trim().toLowerCase();
+    if (
+      requiresReporterEmail &&
+      (!emailNorm || !isPlausibleClientLinkEmail(emailNorm))
+    ) {
+      setError(
+        "Enter your stakeholder email below, then tap the record button again.",
+      );
+      return;
+    }
+    if (
+      !requiresReporterEmail &&
+      emailNorm &&
+      !isPlausibleClientLinkEmail(emailNorm)
+    ) {
+      setError(
+        "Enter a valid email or clear the email field before recording.",
+      );
+      return;
+    }
+    setScreenRecordingBusy(true);
+    setError("");
+    try {
+      await onEnableScreenRecording(emailNorm);
+    } catch (recErr) {
+      setError(
+        recErr?.message || "Could not start screen recording. Try again.",
+      );
+    } finally {
+      setScreenRecordingBusy(false);
+    }
+  }, [
+    screenRecordingActive,
+    requiresReporterEmail,
+    onEnableScreenRecording,
+    onDisableScreenRecording,
+  ]);
+
+  const tldrawComponents = {
+    PageMenu: null,
+    NavigationPanel: null,
+  };
 
   useEffect(() => {
     const stored = getClientLinkVerifiedEmail();
@@ -201,23 +316,6 @@ const AnnotationEditor = ({
     }
   };
 
-  // Custom tldraw components to hide unwanted UI
-  const components = {
-    PageMenu: null, // Remove page menu
-    NavigationPanel: null, // Remove navigation panel (zoom controls)
-  };
-
-  // Custom tools - only keep the ones we want
-  const tools = [
-    "select",
-    "draw",
-    "arrow",
-    "rectangle",
-    "ellipse",
-    "text",
-    "highlight",
-  ];
-
   return (
     <div className="flex h-full min-h-[600px] gap-6">
       {/* Left side - tldraw editor */}
@@ -235,9 +333,13 @@ const AnnotationEditor = ({
         )}
 
         <div
-          className="h-full w-full overflow-hidden rounded-lg border-2 border-gray-200 bg-gray-50 [&_.tldraw]:rounded-lg [&_.tldraw_[data-testid='tools.note']]:!hidden [&_.tldraw_[data-testid='tools.eraser']]:!hidden [&_.tldraw_button[data-testid*='page']]:!hidden [&_.tldraw_.tlui-page-menu]:!hidden [&_.tldraw_.tlui-navigation-panel]:!hidden [&_.tldraw_[data-testid='tools.frame']]:!hidden"
+          className={cn(
+            "h-full w-full overflow-hidden rounded-lg border-2 border-gray-200 bg-gray-50 [&_.tldraw]:rounded-lg [&_.tldraw_button[data-testid*='page']]:!hidden [&_.tldraw_.tlui-page-menu]:!hidden [&_.tldraw_.tlui-navigation-panel]:!hidden [&_.tldraw_[data-testid='tools.frame']]:!hidden",
+            !screenRecordingActive &&
+              "[&_.tldraw_[data-testid='tools.note']]:!hidden [&_.tldraw_[data-testid='tools.eraser']]:!hidden",
+          )}
         >
-          <Tldraw onMount={setEditor} autoFocus components={components} />
+          <Tldraw onMount={setEditor} autoFocus components={tldrawComponents} />
         </div>
       </div>
 
@@ -248,8 +350,27 @@ const AnnotationEditor = ({
             Describe the Issue
           </h3>
           <p className="text-sm text-muted-foreground">
-            Use the tools on the left to edit the screenshot, then briefly
-            describe the issue you’re facing.
+            {screenRecordingActive ? (
+              <>
+                <span className="font-medium text-foreground">
+                  While recording
+                </span>
+                , use the drawing and eraser tools on the left to highlight the
+                screenshot. The video captures your shared screen and
+                microphone (and tab audio if you enabled it). Describe the issue
+                below, then submit.
+              </>
+            ) : (
+              <>
+                Use the tools on the left to mark up the screenshot. After you
+                enter your email, use{" "}
+                <span className="whitespace-nowrap font-medium text-foreground">
+                  Screen recording
+                </span>{" "}
+                to capture video with audio for Jira (uploads in the
+                background). Then describe the issue below.
+              </>
+            )}
           </p>
         </div>
 
@@ -280,6 +401,26 @@ const AnnotationEditor = ({
             </SelectContent>
           </Select>
         </div>
+
+        {screenRecordingOffered && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">
+                Screen recording
+              </p>
+              <p className="text-xs text-muted-foreground leading-snug">
+                {screenRecordingActive
+                  ? "Drawing tools are enabled on the screenshot. Allow the microphone when asked; for browser tab sound, enable “Share tab audio” in the picker."
+                  : "Enter your email first, then tap the red button. Allow screen + microphone; enable tab audio in the picker if you need it."}
+              </p>
+            </div>
+            <ScreenRecordFormButton
+              isRecording={screenRecordingActive}
+              disabled={screenRecordingBusy}
+              onActivate={handleScreenRecordToolClick}
+            />
+          </div>
+        )}
 
         <div className="space-y-2">
           <Label htmlFor="feedback-reporter-email">
