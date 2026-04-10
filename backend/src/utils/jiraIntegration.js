@@ -615,7 +615,13 @@ export async function addAttachmentToJiraIssue(issueKey, filePath, config) {
     const authHeaders = jiraIssueAuthHeaders(config);
     const url = `${jiraRestApiRoot(config)}/rest/api/3/issue/${encodeURIComponent(issueKey)}/attachments`;
     const filename = path.basename(filePath);
-    const mimeType = filename.toLowerCase().endsWith('.png') ? 'image/png' : (filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : 'image/png');
+    const lower = filename.toLowerCase();
+    let mimeType = 'application/octet-stream';
+    if (lower.endsWith('.png')) mimeType = 'image/png';
+    else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) mimeType = 'image/jpeg';
+    else if (lower.endsWith('.webp')) mimeType = 'image/webp';
+    else if (lower.endsWith('.webm')) mimeType = 'video/webm';
+    else if (lower.endsWith('.mp4')) mimeType = 'video/mp4';
     const form = new FormData();
     form.append('file', fs.createReadStream(filePath), { filename, contentType: mimeType });
     try {

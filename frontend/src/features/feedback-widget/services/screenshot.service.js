@@ -106,6 +106,266 @@ export const captureWithDisplayMedia = async () => {
 };
 
 /**
+ * Same as {@link captureWithDisplayMedia} but does **not** stop the display-capture tracks.
+ * Caller must stop the stream when recording is finished or discarded.
+ * @returns {Promise<{ canvas: HTMLCanvasElement; stream: MediaStream }>}
+ */
+export const captureDisplayMediaFrameAndKeepStream = async () => {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error(
+      "Screen capture is not supported in this browser. Use HTTPS and a modern browser (Chrome, Firefox, Edge, Safari).",
+    );
+  }
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: true,
+    audio: true,
+  });
+  try {
+    const video = document.createElement("video");
+    video.srcObject = stream;
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = () => {
+        video.play().then(resolve).catch(reject);
+      };
+      video.onerror = () => reject(new Error("Video failed to load"));
+    });
+
+    const width = video.videoWidth || 1920;
+    const height = video.videoHeight || 1080;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, width, height);
+
+    return { canvas, stream };
+  } catch (err) {
+    stream.getTracks().forEach((t) => t.stop());
+    throw err;
+  }
+};
+
+/**
+ * Request a display-capture stream only (no frame grab). Use when the screenshot
+ * came from html2canvas/iframe but the user still wants optional screen recording.
+ * Caller must stop tracks when done.
+ * @returns {Promise<MediaStream>}
+ */
+export async function acquireDisplayMediaStreamOnly() {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error(
+      "Screen capture is not supported in this browser. Use HTTPS and a modern browser (Chrome, Firefox, Edge, Safari).",
+    );
+  }
+  return navigator.mediaDevices.getDisplayMedia({ video: true });
+}
+
+/**
+ * Builds a stream for MediaRecorder: display video, optional tab/system audio,
+ * and microphone (mixed when both are present). Call `release()` after recording
+ * stops to close AudioContext and stop mic / leftover display-audio tracks.
+ *
+ * @param {MediaStream | null} existingDisplayStream — if null, opens a new display picker (video + audio).
+ * @returns {Promise<{ stream: MediaStream; release: () => void | Promise<void> }>}
+ */
+export async function buildCompositeRecordingStream(existingDisplayStream) {
+  let displayStream = existingDisplayStream;
+  const createdDisplay = !displayStream;
+  if (!displayStream) {
+    displayStream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: true,
+    });
+  }
+
+  let micStream = null;
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
+  } catch {
+    /* microphone denied or unavailable — continue with display / tab audio only */
+  }
+
+  const videoTracks = displayStream.getVideoTracks();
+  const displayAudioTracks = displayStream.getAudioTracks();
+  const micTracks = micStream ? Array.from(micStream.getAudioTracks()) : [];
+
+  const stopMicTracks = () => {
+    micTracks.forEach((t) => {
+      try {
+        t.stop();
+      } catch {
+        /* ignore */
+      }
+    });
+  };
+
+  if (videoTracks.length === 0) {
+    stopMicTracks();
+    if (createdDisplay) {
+      displayStream.getTracks().forEach((t) => t.stop());
+    }
+    throw new Error("No video track from screen capture.");
+  }
+
+  /** @type {AudioContext | null} */
+  let audioCtx = null;
+
+  const releaseSimple = () => {
+    stopMicTracks();
+    if (createdDisplay) {
+      displayStream.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {
+          /* ignore */
+        }
+      });
+    }
+  };
+
+  // Video only
+  if (displayAudioTracks.length === 0 && micTracks.length === 0) {
+    return {
+      stream: new MediaStream([...videoTracks]),
+      release: releaseSimple,
+    };
+  }
+
+  // Single audio source → attach track(s) directly
+  if (displayAudioTracks.length === 0 || micTracks.length === 0) {
+    const audioOut =
+      displayAudioTracks.length > 0 ? displayAudioTracks : micTracks;
+    return {
+      stream: new MediaStream([...videoTracks, ...audioOut]),
+      release: () => {
+        stopMicTracks();
+        if (createdDisplay) {
+          displayStream.getTracks().forEach((t) => {
+            try {
+              t.stop();
+            } catch {
+              /* ignore */
+            }
+          });
+        } else if (displayAudioTracks.length > 0) {
+          displayAudioTracks.forEach((t) => {
+            try {
+              t.stop();
+            } catch {
+              /* ignore */
+            }
+          });
+        }
+      },
+    };
+  }
+
+  // Mix tab/system audio + microphone
+  try {
+    audioCtx = new AudioContext();
+    const dest = audioCtx.createMediaStreamDestination();
+    const srcDisplay = audioCtx.createMediaStreamSource(
+      new MediaStream(displayAudioTracks),
+    );
+    const srcMic = audioCtx.createMediaStreamSource(new MediaStream(micTracks));
+    const gainDisplay = audioCtx.createGain();
+    const gainMic = audioCtx.createGain();
+    gainDisplay.gain.value = 0.85;
+    gainMic.gain.value = 1;
+    srcDisplay.connect(gainDisplay).connect(dest);
+    srcMic.connect(gainMic).connect(dest);
+    await audioCtx.resume();
+    const mixed = dest.stream.getAudioTracks();
+    return {
+      stream: new MediaStream([...videoTracks, ...mixed]),
+      release: async () => {
+        stopMicTracks();
+        try {
+          srcDisplay.disconnect();
+          srcMic.disconnect();
+        } catch {
+          /* ignore */
+        }
+        try {
+          await audioCtx?.close();
+        } catch {
+          /* ignore */
+        }
+        audioCtx = null;
+        displayAudioTracks.forEach((t) => {
+          try {
+            t.stop();
+          } catch {
+            /* ignore */
+          }
+        });
+        if (createdDisplay) {
+          displayStream.getVideoTracks().forEach((t) => {
+            try {
+              t.stop();
+            } catch {
+              /* ignore */
+            }
+          });
+        }
+      },
+    };
+  } catch {
+    try {
+      await audioCtx?.close();
+    } catch {
+      /* ignore */
+    }
+    audioCtx = null;
+    stopMicTracks();
+    return {
+      stream: new MediaStream([...videoTracks, ...micTracks]),
+      release: releaseSimple,
+    };
+  }
+}
+
+/**
+ * Grab one video frame from an active display-capture stream (does not stop tracks).
+ * @param {MediaStream} stream
+ * @returns {Promise<HTMLCanvasElement>}
+ */
+export async function captureFrameFromMediaStream(stream) {
+  if (!stream?.getVideoTracks?.()?.length) {
+    throw new Error("No video track in stream.");
+  }
+  const video = document.createElement("video");
+  video.srcObject = stream;
+  video.muted = true;
+  video.playsInline = true;
+  await new Promise((resolve, reject) => {
+    video.onloadedmetadata = () => {
+      video.play().then(resolve).catch(reject);
+    };
+    video.onerror = () => reject(new Error("Video failed to load"));
+  });
+  const w = video.videoWidth || 1280;
+  const h = video.videoHeight || 720;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0, w, h);
+  return canvas;
+}
+
+/**
  * Inline all <img> in the cloned document to data URIs so html2canvas doesn't re-fetch (avoids CORS/404). When imageBaseUrl is set (iframe capture), resolve relative src against it so fetches hit iframe origin. After inlining, show the img and hide Radix-style avatar fallbacks so the screenshot shows the photo, not the fallback text.
  */
 async function inlineImages(clonedDoc, imageBaseUrl) {

@@ -38,6 +38,7 @@ import {
   Smartphone,
   Sparkles,
   Tablet,
+  Video,
 } from "lucide-react";
 import { ClientLinkChatPanel } from "../components/ClientLinkChatPanel";
 import { ClientLinkResponsivePreviewShell } from "../components/ClientLinkResponsivePreviewShell";
@@ -68,6 +69,7 @@ export const ClientLink = () => {
   const previewIframeRef = useRef(null);
   const feedbackWidgetRef = useRef(null);
   const [feedbackCapturing, setFeedbackCapturing] = useState(false);
+  const [feedbackRecording, setFeedbackRecording] = useState(false);
   const [visualPickMode, setVisualPickMode] = useState(false);
   const [pickedElementContext, setPickedElementContext] = useState(null);
   /** Queued for next chat send: same image as preview replace, for Cursor + repo. */
@@ -639,9 +641,24 @@ export const ClientLink = () => {
               type="button"
               variant="outline"
               size="sm"
+              className="h-8 shrink-0 gap-1.5 border-slate-300 bg-white px-2.5 text-slate-800 shadow-sm hover:bg-slate-50 sm:px-3"
+              onClick={() => feedbackWidgetRef.current?.openRecordFirst?.()}
+              disabled={feedbackCapturing || feedbackRecording}
+              title="Record your screen, then fill details and submit to Jira"
+              aria-label="Record screen for feedback"
+            >
+              <Video className="size-4 shrink-0 text-red-600" aria-hidden />
+              <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
+                Record
+              </span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
               className="h-8 shrink-0 gap-1.5 border-red-200/80 bg-gradient-to-r from-red-50 to-rose-50 px-2.5 text-red-700 shadow-sm hover:from-red-100/90 hover:to-rose-100/90 hover:text-red-800 sm:px-3"
               onClick={() => feedbackWidgetRef.current?.open()}
-              disabled={feedbackCapturing}
+              disabled={feedbackCapturing || feedbackRecording}
               title="Report an issue or provide feedback"
               aria-label="Report Issue"
             >
@@ -821,6 +838,7 @@ export const ClientLink = () => {
             anchorToPreview
             hideDefaultTrigger
             onCapturingChange={setFeedbackCapturing}
+            onScreenRecordingChange={setFeedbackRecording}
             onSuccess={(res) => {
               if (
                 res &&

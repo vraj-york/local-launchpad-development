@@ -28,6 +28,10 @@ npx prisma generate
 echo "🗄️ Running database migrations..."
 npx prisma db push
 
+# One-shot cleanup after deploy (same logic as Docker entrypoint). Non-fatal if DB is briefly unavailable.
+echo "🧹 Cleaning stale feedback recording sessions..."
+npm run cron:cleanup-feedback-sessions || echo "[WARN] Feedback session cleanup failed (non-fatal)."
+
 # Stop existing PM2 process
 echo "🛑 Stopping existing process..."
 pm2 stop $SERVICE_NAME 2>/dev/null || true
