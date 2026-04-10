@@ -15,8 +15,10 @@ import {
     assertProjectAccess,
 } from "../services/project.service.js";
 import {
-    listAwesomeCursorrulesFolders,
+    listMergedCursorRulesCatalog,
     importAwesomeCursorrulesFolders,
+    upsertCustomCursorRule,
+    listAllCustomCursorRules,
 } from "../services/awesomeCursorrules.service.js";
 import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
@@ -157,8 +159,40 @@ export const projectController = {
             throw new ApiError(400, "Invalid project id");
         }
         await assertProjectAccess(projectId, req.user);
-        const folders = await listAwesomeCursorrulesFolders();
+        const { folders } = await listMergedCursorRulesCatalog();
         res.json({ folders });
+    }),
+
+    /** GET /api/projects/:projectId/cursor-rules/custom — shared rules (same data for every project; projectId is for access control only). */
+    listCustomCursorRules: asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.projectId);
+        if (Number.isNaN(projectId)) {
+            throw new ApiError(400, "Invalid project id");
+        }
+        await assertProjectAccess(projectId, req.user);
+        const data = await listAllCustomCursorRules();
+        res.json(data);
+    }),
+
+    /** POST /api/projects/:projectId/cursor-rules/custom — upsert shared rule (projectId for access only). */
+    createCustomCursorRule: asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.projectId);
+        if (Number.isNaN(projectId)) {
+            throw new ApiError(400, "Invalid project id");
+        }
+        await assertProjectAccess(projectId, req.user);
+        const found = await prisma.project.findUnique({
+            where: { id: projectId },
+            select: { id: true },
+        });
+        if (!found) {
+            throw new ApiError(404, "Project not found");
+        }
+        const result = await upsertCustomCursorRule({
+            folderName: req.body?.folderName,
+            body: req.body?.body,
+        });
+        res.status(201).json(result);
     }),
 
     /** POST /api/projects/:projectId/cursor-rules/import */
