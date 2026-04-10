@@ -962,11 +962,6 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       const errCode = e?.response?.data?.code;
       if (httpStatus === 409 || errCode === "CHAT_AGENT_BUSY") {
         setReleaseAgentBusy(true);
-        setReleaseAgentBusyReason(
-          typeof errCode === "string" && errCode !== "CHAT_AGENT_BUSY"
-            ? errCode
-            : "agent_running",
-        );
         try {
           await refreshChatMessages(effectiveChatReleaseId);
         } catch {
@@ -1113,8 +1108,6 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       !projectSlug?.trim()
     ) {
       setReleaseAgentBusy(false);
-      setReleaseAgentBusyReason(null);
-      setReleaseAgentActivity(null);
       return undefined;
     }
     let cancelled = false;
@@ -1127,21 +1120,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
         if (cancelled) return;
         const busy = Boolean(st?.busy);
         setReleaseAgentBusy(busy);
-        setReleaseAgentBusyReason(
-          typeof st?.reason === "string" && st.reason.trim()
-            ? st.reason.trim()
-            : null,
-        );
-        const act =
-          st?.activity && typeof st.activity === "string"
-            ? st.activity.trim()
-            : "";
-        setReleaseAgentActivity(act || null);
       } catch {
         if (!cancelled) {
           setReleaseAgentBusy(false);
-          setReleaseAgentBusyReason(null);
-          setReleaseAgentActivity(null);
         }
       }
     };

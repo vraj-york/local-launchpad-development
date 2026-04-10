@@ -21,8 +21,10 @@ const api = axios.create({
 // Launchpad APIs: use id token (stored as "token") so backend gets email from payload; Hub uses access_token separately
 api.interceptors.request.use(
   (config) => {
+    const path = typeof config.url === "string" ? config.url : "";
+    const isPublicClientLinkChat = path.includes("/api/chat/");
     const token = localStorage.getItem("token");
-    if (token) {
+    if (token && !isPublicClientLinkChat) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
@@ -194,6 +196,9 @@ api.interceptors.response.use(
     const originalRequest = error.config;
     if (error.response?.status !== 401) return Promise.reject(error);
     if (!originalRequest) return Promise.reject(error);
+    if (originalRequest.url?.includes("/api/chat/")) {
+      return Promise.reject(error);
+    }
     // Don't retry refresh endpoint to avoid loop
     if (originalRequest.url?.includes("/api/auth/refresh")) {
       clearAuthAndRedirect();
