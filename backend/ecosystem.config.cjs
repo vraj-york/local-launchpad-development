@@ -1,6 +1,20 @@
 module.exports = {
   apps: [
     {
+      name: 'launchpad-feedback-recording-worker',
+      script: 'src/workers/feedbackRecordingMerge.worker.js',
+      cwd: process.cwd(),
+      instances: 1,
+      exec_mode: 'fork',
+      env_development: {
+        NODE_ENV: 'development',
+      },
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      env_file: '.env',
+    },
+    {
       name: 'launchpad-backend',
       script: 'src/server.js',
       cwd: process.cwd(),

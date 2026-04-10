@@ -14,8 +14,12 @@ import {
 } from "../services/integrationCredential.service.js";
 import { assertPublicClientStakeholderEmail } from "../utils/publicClientStakeholder.utils.js";
 import ApiError from "../utils/apiError.js";
+import recordingRoutes from "./feedback.recording.routes.js";
+import { getRecordingSessionForFeedbackSubmit } from "../services/feedbackRecording.service.js";
 
 const router = express.Router();
+
+router.use(recordingRoutes);
 
 // In-memory upload only — no screenshot storage on disk
 const upload = multer({
@@ -84,9 +88,35 @@ router.post(
         }
       }
 
+      const recordingSessionIdRaw =
+        typeof req.body.recordingSessionId === "string"
+          ? req.body.recordingSessionId.trim()
+          : "";
+      const recordingChunkCountRaw = req.body.recordingChunkCount;
+      const recordingChunkCountParsed =
+        recordingChunkCountRaw != null && String(recordingChunkCountRaw).trim() !== ""
+          ? Number(recordingChunkCountRaw)
+          : undefined;
+
+      if (recordingSessionIdRaw && !projectId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "projectId is required when submitting with a screen recording.",
+        });
+      }
+      if (recordingSessionIdRaw && !String(clientEmail || "").trim()) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "clientEmail is required when submitting with a screen recording.",
+        });
+      }
+
       let jiraTicket = null;
       let jiraUrl = null;
       let jiraError = null;
+      let recordingError = null;
 
       if (!projectId) {
         /* no Jira without project */
@@ -117,6 +147,12 @@ router.post(
               project?.jiraProjectKey &&
               (project.jiraConnectionId ||
                 (project.jiraApiToken && project.jiraUsername));
+            if (recordingSessionIdRaw && !hasJiraConfig) {
+              throw new ApiError(
+                400,
+                "Screen recording requires Jira to be configured for this project.",
+              );
+            }
             if (!hasJiraConfig) {
               /* skip Jira */
             } else {
@@ -173,6 +209,49 @@ router.post(
                 if (!attachResult.success) {
                   jiraError = attachResult.error || jiraError;
                 }
+
+                if (recordingSessionIdRaw && jiraTicket) {
+                  try {
+                    await getRecordingSessionForFeedbackSubmit({
+                      sessionId: recordingSessionIdRaw,
+                      projectId: Number(projectId),
+                      clientEmail,
+                      recordingChunkCount: recordingChunkCountParsed,
+                    });
+                    const dup = await prisma.feedbackRecordingMergeJob.findFirst({
+                      where: {
+                        sessionId: recordingSessionIdRaw,
+                        status: { in: ["pending", "processing"] },
+                      },
+                    });
+                    if (!dup) {
+                      await prisma.feedbackRecordingMergeJob.create({
+                        data: {
+                          sessionId: recordingSessionIdRaw,
+                          jiraIssueKey: jiraTicket,
+                          projectId: Number(projectId),
+                          status: "pending",
+                        },
+                      });
+                      console.log(
+                        "[feedback] Recording merge job enqueued",
+                        recordingSessionIdRaw,
+                        jiraTicket,
+                      );
+                    }
+                  } catch (recErr) {
+                    console.error(
+                      "[feedback] Recording merge enqueue error:",
+                      recErr.message,
+                      recErr.stack,
+                    );
+                    recordingError =
+                      recErr instanceof ApiError
+                        ? recErr.message
+                        : recErr.message ||
+                          "Screen recording could not be queued.";
+                  }
+                }
               } else {
                 jiraError =
                   ticketResult.error || "Jira ticket creation failed.";
@@ -193,12 +272,25 @@ router.post(
         }
       }
 
+      let recordingStatus;
+      if (recordingSessionIdRaw) {
+        if (recordingError) {
+          recordingStatus = "error";
+        } else if (jiraTicket) {
+          recordingStatus = "processing";
+        } else {
+          recordingStatus = "skipped";
+        }
+      }
+
       return res.status(200).json({
         success: true,
         message: "Feedback saved.",
         ...(jiraTicket && { jiraTicket }),
         ...(jiraUrl && { jiraUrl }),
         ...(jiraError && { jiraError }),
+        ...(recordingError && { recordingError }),
+        ...(recordingStatus && { recordingStatus }),
       });
     } catch (err) {
       if (err instanceof ApiError) {

@@ -530,6 +530,7 @@ router.post(
  */
 router.get("/public/:slug", projectController.getProjectPublicDetail);
 
+
 router.get(
   "/:projectId/cursor-rules/catalog",
   authenticateToken,

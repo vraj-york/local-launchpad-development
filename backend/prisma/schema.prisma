@@ -119,6 +119,7 @@ model Project {
   releases          Release[]
   figmaConversions  FigmaConversion[]
   chatHistory ChatHistory[]
+  feedbackRecordingSessions FeedbackRecordingSession[]
 }
 
 /// Instance-wide custom Cursor rule packs (shared across all projects; single rules.mdc per folder on import).
@@ -128,6 +129,58 @@ model CustomCursorRule {
   body       String   @db.Text
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+/// Chunked screen recording for feedback widget (S3) → FFmpeg merge → Jira attachment.
+model FeedbackRecordingSession {
+  id                String                         @id @default(uuid())
+  projectId         Int
+  reporterEmail     String
+  /// Opaque secret; required for chunk presign and complete endpoints.
+  sessionToken      String
+  status            FeedbackRecordingSessionStatus @default(uploading)
+  /// Declared total chunks when client calls complete (or on feedback submit).
+  chunkCount        Int?
+  finalS3Key        String?
+  error             String?                        @db.Text
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
+
+  project   Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  mergeJobs FeedbackRecordingMergeJob[]
+
+  @@index([projectId, createdAt])
+}
+
+enum FeedbackRecordingSessionStatus {
+  uploading
+  ready_for_merge
+  merged
+  failed
+}
+
+model FeedbackRecordingMergeJob {
+  id            String                        @id @default(uuid())
+  sessionId     String
+  jiraIssueKey  String
+  projectId     Int
+  status        FeedbackRecordingMergeJobStatus @default(pending)
+  attempts      Int                           @default(0)
+  lockedAt      DateTime?
+  lastError     String?                       @db.Text
+  createdAt     DateTime                      @default(now())
+  updatedAt     DateTime                      @updatedAt
+
+  session FeedbackRecordingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}
+
+enum FeedbackRecordingMergeJobStatus {
+  pending
+  processing
+  completed
+  failed
 }
 
 model ProjectVersion {

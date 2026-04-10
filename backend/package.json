@@ -6,6 +6,8 @@
   "scripts": {
     "test": "node --test \"src/**/*.test.js\"",
     "start": "node src/server.js",
+    "worker:feedback-recording": "node src/workers/feedbackRecordingMerge.worker.js",
+    "cron:cleanup-feedback-sessions": "node src/scripts/cleanupStaleFeedbackRecordingSessions.js",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop launchpad-backend",
     "pm2:restart": "pm2 restart launchpad-backend",
@@ -20,7 +22,9 @@
   "type": "module",
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.1011.0",
+    "@aws-sdk/client-s3": "^3.987.0",
     "@aws-sdk/lib-storage": "^3.987.0",
+    "@aws-sdk/s3-request-presigner": "^3.987.0",
     "@prisma/client": "^6.15.0",
     "aws-jwt-verify": "^5.1.1",
     "axios": "^1.13.5",

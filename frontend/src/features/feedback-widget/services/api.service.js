@@ -12,6 +12,18 @@ export const submitFeedback = async (apiUrl, projectId, data) => {
     if (data.clientEmail) {
       formData.append("clientEmail", String(data.clientEmail).trim());
     }
+    if (data.recordingSessionId) {
+      formData.append(
+        "recordingSessionId",
+        String(data.recordingSessionId).trim(),
+      );
+    }
+    if (data.recordingChunkCount != null && data.recordingChunkCount !== "") {
+      formData.append(
+        "recordingChunkCount",
+        String(data.recordingChunkCount),
+      );
+    }
 
     const response = await fetch(`${apiUrl}/api/feedback`, {
       method: "POST",

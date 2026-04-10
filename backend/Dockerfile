@@ -5,7 +5,8 @@ WORKDIR /app
 
 # Nginx for project subdomains on port 80; git for release upload (init, commit, push to GitHub).
 # /run: nginx pid file (see nginx-docker.conf pid directive); /var/log/nginx: error/access logs.
-RUN apk add --no-cache nginx git \
+# ffmpeg: feedback recording merge worker (docker-compose service feedback-recording-worker)
+RUN apk add --no-cache nginx git ffmpeg \
     && mkdir -p /var/log/nginx /run \
     && rm -f /etc/nginx/http.d/default.conf 2>/dev/null || true
 
@@ -25,7 +26,8 @@ COPY ecosystem.config.cjs ./
 
 # Entrypoint and nginx configs for deployment
 COPY entrypoint.sh ./
-RUN chmod +x entrypoint.sh
+COPY worker-docker-entrypoint.sh ./
+RUN chmod +x entrypoint.sh worker-docker-entrypoint.sh
 RUN mkdir -p ./nginx-configs
 COPY nginx-frontend.conf ./
 
