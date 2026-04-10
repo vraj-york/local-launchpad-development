@@ -537,6 +537,18 @@ router.get(
   projectController.cursorRulesCatalog,
 );
 
+router.get(
+  "/:projectId/cursor-rules/custom",
+  authenticateToken,
+  projectController.listCustomCursorRules,
+);
+
+router.post(
+  "/:projectId/cursor-rules/custom",
+  authenticateToken,
+  projectController.createCustomCursorRule,
+);
+
 router.post(
   "/:projectId/cursor-rules/import",
   authenticateToken,

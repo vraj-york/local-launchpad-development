@@ -3,6 +3,7 @@ import fs from "fs-extra";
 import path from "path";
 import { execa } from "execa";
 import ApiError from "../utils/apiError.js";
+import { prisma } from "../lib/prisma.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import { parseGitRepoPath } from "./github.service.js";
 import { parseScmRepoPath } from "../utils/scmPath.js";
@@ -77,6 +78,83 @@ export async function listAwesomeCursorrulesFolders() {
   return folders;
 }
 
+/**
+ * Folder names for instance-wide custom rule packs (shared across all projects).
+ */
+export async function listCustomCursorRuleFolderNames() {
+  const rows = await prisma.customCursorRule.findMany({
+    select: { folderName: true },
+  });
+  return rows.map((r) => r.folderName).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * All custom rule rows (edit UI; same list from any project).
+ */
+export async function listAllCustomCursorRules() {
+  const rules = await prisma.customCursorRule.findMany({
+    orderBy: { folderName: "asc" },
+    select: {
+      id: true,
+      folderName: true,
+      body: true,
+      updatedAt: true,
+    },
+  });
+  return { rules };
+}
+
+/**
+ * Merged catalog: PatrickJS/awesome-cursorrules folders plus shared custom names (sorted, deduped).
+ */
+export async function listMergedCursorRulesCatalog() {
+  const [githubFolders, customNames] = await Promise.all([
+    listAwesomeCursorrulesFolders(),
+    listCustomCursorRuleFolderNames(),
+  ]);
+  const merged = [...new Set([...githubFolders, ...customNames])].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  return { folders: merged };
+}
+
+/**
+ * Create or update a shared custom rule pack. Name must not collide with upstream catalog.
+ */
+export async function upsertCustomCursorRule({ folderName, body }) {
+  const name = typeof folderName === "string" ? folderName.trim() : "";
+  assertSafeFolderName(name);
+  const bodyStr = typeof body === "string" ? body : "";
+  const byteLength = Buffer.byteLength(bodyStr, "utf8");
+  if (byteLength > MAX_CUSTOM_RULE_BODY_BYTES) {
+    throw new ApiError(
+      413,
+      `Custom rule body exceeds ${MAX_CUSTOM_RULE_BODY_BYTES} bytes (UTF-8).`,
+    );
+  }
+
+  const upstream = new Set(await listAwesomeCursorrulesFolders());
+  if (upstream.has(name)) {
+    throw new ApiError(
+      400,
+      `That folder name is already used in the public awesome-cursorrules catalog. Choose a different name.`,
+    );
+  }
+
+  await prisma.customCursorRule.upsert({
+    where: { folderName: name },
+    create: {
+      folderName: name,
+      body: bodyStr,
+    },
+    update: {
+      body: bodyStr,
+    },
+  });
+
+  return { folderName: name };
+}
+
 function assertSafeFolderName(name) {
   if (
     typeof name !== "string" ||
@@ -124,6 +202,11 @@ async function getFileBuffer(fileMeta) {
 
 const MAX_FOLDERS_PER_IMPORT = 25;
 const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+/** Max UTF-8 size for a single custom rule pack body (create/upsert). */
+const MAX_CUSTOM_RULE_BODY_BYTES = 512 * 1024;
+
+/** Single file written for DB-backed custom packs under each folder. */
+export const CUSTOM_CURSOR_RULE_MDC_FILENAME = "rules.mdc";
 
 /** Relative path inside the developer repo (POSIX-style for `git` CLI). */
 const RULES_REL_IN_REPO = ".cursor/rules/awesome-cursorrules";
@@ -191,7 +274,18 @@ export async function importAwesomeCursorrulesFolders(project, folderNames) {
     throw new ApiError(400, "Could not build authenticated git URL.");
   }
 
-  const catalog = new Set(await listAwesomeCursorrulesFolders());
+  const githubCatalog = new Set(await listAwesomeCursorrulesFolders());
+  const requestedNames = [...new Set(folderNames.map((s) => String(s).trim()))];
+  const needCustom = requestedNames.filter((n) => !githubCatalog.has(n));
+  const customRows =
+    needCustom.length > 0
+      ? await prisma.customCursorRule.findMany({
+          where: {
+            folderName: { in: needCustom },
+          },
+        })
+      : [];
+  const customByName = new Map(customRows.map((r) => [r.folderName, r]));
 
   const tmpBase = path.join(
     getBackendRoot(),
@@ -218,31 +312,49 @@ export async function importAwesomeCursorrulesFolders(project, folderNames) {
     for (const rawName of folderNames) {
       const name = String(rawName).trim();
       assertSafeFolderName(name);
-      if (!catalog.has(name)) {
-        throw new ApiError(400, `Unknown rules folder: ${name}`);
+
+      if (githubCatalog.has(name)) {
+        const prefix = `${RULES_PREFIX}/${name}`;
+        const files = await listFilesRecursive(prefix);
+        const baseDir = rulesPackDir(workDir, name);
+
+        for (const fileMeta of files) {
+          const rel = fileMeta.path.startsWith(prefix + "/")
+            ? fileMeta.path.slice(prefix.length + 1)
+            : path.basename(fileMeta.path);
+          if (!rel || rel.includes("..") || path.isAbsolute(rel)) {
+            throw new ApiError(400, `Unsafe file path in repo: ${fileMeta.path}`);
+          }
+          const buf = await getFileBuffer(fileMeta);
+          totalBytes += buf.length;
+          if (totalBytes > MAX_TOTAL_BYTES) {
+            throw new ApiError(413, "Total import size exceeds limit");
+          }
+          const outPath = path.join(baseDir, rel);
+          await fs.ensureDir(path.dirname(outPath));
+          await fs.writeFile(outPath, buf);
+          written.push({ folder: name, path: rel });
+        }
+        continue;
       }
 
-      const prefix = `${RULES_PREFIX}/${name}`;
-      const files = await listFilesRecursive(prefix);
+      const customRow = customByName.get(name);
+      if (!customRow) {
+        throw new ApiError(
+          400,
+          `Unknown rules folder: ${name}. Create it under "Create your own" first, or pick a catalog folder.`,
+        );
+      }
+      const buf = Buffer.from(customRow.body, "utf8");
+      totalBytes += buf.length;
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        throw new ApiError(413, "Total import size exceeds limit");
+      }
       const baseDir = rulesPackDir(workDir, name);
-
-      for (const fileMeta of files) {
-        const rel = fileMeta.path.startsWith(prefix + "/")
-          ? fileMeta.path.slice(prefix.length + 1)
-          : path.basename(fileMeta.path);
-        if (!rel || rel.includes("..") || path.isAbsolute(rel)) {
-          throw new ApiError(400, `Unsafe file path in repo: ${fileMeta.path}`);
-        }
-        const buf = await getFileBuffer(fileMeta);
-        totalBytes += buf.length;
-        if (totalBytes > MAX_TOTAL_BYTES) {
-          throw new ApiError(413, "Total import size exceeds limit");
-        }
-        const outPath = path.join(baseDir, rel);
-        await fs.ensureDir(path.dirname(outPath));
-        await fs.writeFile(outPath, buf);
-        written.push({ folder: name, path: rel });
-      }
+      const mdcRel = CUSTOM_CURSOR_RULE_MDC_FILENAME;
+      await fs.ensureDir(baseDir);
+      await fs.writeFile(path.join(baseDir, mdcRel), buf);
+      written.push({ folder: name, path: mdcRel });
     }
 
     await git(workDir, ["add", "-f", RULES_REL_IN_REPO]);

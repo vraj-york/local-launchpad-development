@@ -392,7 +392,7 @@ export const fetchProjectById = async (projectId) => {
   }
 };
 
-/** Catalog: subfolder names under PatrickJS/awesome-cursorrules/rules (GitHub API via backend). */
+/** Catalog: merged list of PatrickJS/awesome-cursorrules folders plus shared custom packs (backend). */
 export const fetchCursorRulesCatalog = async (projectId) => {
   try {
     const response = await api.get(
@@ -401,6 +401,31 @@ export const fetchCursorRulesCatalog = async (projectId) => {
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to load Cursor rules catalog" };
+  }
+};
+
+/** List shared custom Cursor rules (same for all projects; projectId is only for API auth). */
+export const fetchProjectCustomCursorRules = async (projectId) => {
+  try {
+    const response = await api.get(
+      `/api/projects/${projectId}/cursor-rules/custom`,
+    );
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to load custom Cursor rules" };
+  }
+};
+
+/** Create or update a shared custom rule pack (instance-wide; projectId is only for API auth). */
+export const createProjectCustomCursorRule = async (projectId, { folderName, body }) => {
+  try {
+    const response = await api.post(
+      `/api/projects/${projectId}/cursor-rules/custom`,
+      { folderName, body },
+    );
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to save custom Cursor rules" };
   }
 };
 
