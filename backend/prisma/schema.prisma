@@ -119,7 +119,15 @@ model Project {
   releases          Release[]
   figmaConversions  FigmaConversion[]
   chatHistory ChatHistory[]
+}
 
+/// Instance-wide custom Cursor rule packs (shared across all projects; single rules.mdc per folder on import).
+model CustomCursorRule {
+  id         Int      @id @default(autoincrement())
+  folderName String   @unique
+  body       String   @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model ProjectVersion {
