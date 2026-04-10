@@ -1274,6 +1274,8 @@ export const getProjectByIdService = async (
       name: true,
       status: true,
       lockedBy: true,
+      backendAgentId: true,
+      backendAgentStatus: true,
       clientReleaseNote: true,
       clientReviewAiSummary: true,
       clientReviewAiSummaryAt: true,

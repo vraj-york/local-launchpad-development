@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format, startOfDay } from "date-fns";
 import {
   fetchReleases,
@@ -8,6 +8,8 @@ import {
   patchRelease,
   fetchReleaseChangelog,
   regenerateReleaseReviewSummary,
+  fetchCursorRulesCatalog,
+  importCursorRulesFolders,
 } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -19,6 +21,7 @@ import {
   CheckCircle,
   ChevronDown,
   FileArchive,
+  Loader2,
   Lock,
   Plus,
   Upload,
@@ -26,6 +29,7 @@ import {
   Sparkles,
   History,
   Pencil,
+  FileCode,
 } from "lucide-react";
 import { Badge } from "./ui/badge";
 import {
@@ -59,6 +63,12 @@ import {
 import { DatePickerWithRange } from "./ui/date-range-picker";
 import { DatePickerSingle } from "./ui/date-picker-single";
 import { cn } from "@/lib/utils";
+import {
+  isBackendAgentFailureTerminal,
+  isBackendAgentPollActive,
+  isBackendAgentSuccessTerminal,
+  normalizeBackendAgentStatus,
+} from "@/lib/backendAgentStatus";
 
 const RELEASE_STATUS_CHANGELOG_LABELS = {
   draft: "Draft",
@@ -316,6 +326,16 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
   const [changelogByRelease, setChangelogByRelease] = useState({});
   const [changelogLoadingId, setChangelogLoadingId] = useState(null);
 
+  const [cursorRulesOpen, setCursorRulesOpen] = useState(false);
+  const [cursorRulesFolders, setCursorRulesFolders] = useState([]);
+  const [cursorRulesLoading, setCursorRulesLoading] = useState(false);
+  const [cursorRulesSearch, setCursorRulesSearch] = useState("");
+  const [selectedCursorFolders, setSelectedCursorFolders] = useState(
+    () => new Set(),
+  );
+  const [cursorRulesImporting, setCursorRulesImporting] = useState(false);
+
+
   const latestReleaseTuple = useMemo(
     () => maxReleaseTupleFromList(releases),
     [releases],
@@ -326,9 +346,59 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     [releases],
   );
 
+  const hasDeveloperRepo = Boolean(
+    String(project?.developmentRepoUrl ?? "").trim(),
+  );
+
   const lastRelease = latestReleaseTuple
     ? latestReleaseTuple.map(String).join(".")
     : null;
+
+    const filteredCursorFolders = useMemo(() => {
+      const q = cursorRulesSearch.trim().toLowerCase();
+      if (!q) return cursorRulesFolders;
+      return cursorRulesFolders.filter((f) =>
+        String(f).toLowerCase().includes(q),
+      );
+    }, [cursorRulesFolders, cursorRulesSearch]);
+  
+    const toggleCursorFolder = (name) => {
+      setSelectedCursorFolders((prev) => {
+        const next = new Set(prev);
+        if (next.has(name)) next.delete(name);
+        else next.add(name);
+        return next;
+      });
+    };
+  
+    const handleImportCursorRules = async () => {
+      if (selectedCursorFolders.size === 0) {
+        toast.error("Select at least one rules pack");
+        return;
+      }
+      setCursorRulesImporting(true);
+      try {
+        const result = await importCursorRulesFolders(projectId, [
+          ...selectedCursorFolders,
+        ]);
+        if (result.skipped) {
+          toast.success(
+            `Rules already matched the repo (${result.filesWritten} file(s)); no new commit.`,
+          );
+        } else {
+          toast.success(
+            `Pushed ${result.filesWritten} file(s) to ${result.developmentRepoUrl ?? "the developer repository"} (.cursor/rules/awesome-cursorrules/).`,
+          );
+        }
+        setCursorRulesOpen(false);
+        setSelectedCursorFolders(new Set());
+        setCursorRulesSearch("");
+      } catch (err) {
+        toast.error(err.error || err.message || "Import failed");
+      } finally {
+        setCursorRulesImporting(false);
+      }
+    };
 
   const openCreateReleaseDialog = () => {
     if (!canManageReleases) return;
@@ -345,20 +415,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     setShowCreateForm(true);
   };
 
-  useEffect(() => {
-    if (projectId) {
-      loadReleases();
-    }
-  }, [projectId]);
-
-  useEffect(() => {
-    if (!canManageReleases) {
-      setShowCreateForm(false);
-      setEditDialog(null);
-    }
-  }, [canManageReleases]);
-
-  const loadReleases = async () => {
+  const loadReleases = useCallback(async () => {
     try {
       setLoading(true);
       const data = await fetchReleases(projectId);
@@ -368,7 +425,80 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId]);
+
+  const loadReleasesSilent = useCallback(async () => {
+    try {
+      const data = await fetchReleases(projectId);
+      setReleases(data);
+    } catch {
+      /* ignore */
+    }
+  }, [projectId]);
+
+  const loadRoadmaps = useCallback(async () => {
+    try {
+      setRoadmapsLoading(true);
+      setRoadmapError("");
+      const data = await getRoadmapItemsByProjectId(projectId);
+      setRoadmaps(data || []);
+    } catch (err) {
+      setRoadmapError(err.error || err.message || "Failed to load roadmaps");
+      setRoadmaps([]);
+    } finally {
+      setRoadmapsLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (projectId) {
+      loadReleases();
+      loadRoadmaps();
+    }
+  }, [projectId, loadReleases, loadRoadmaps]);
+  
+  useEffect(() => {
+    if (!cursorRulesOpen || !projectId) return;
+    let cancelled = false;
+    (async () => {
+      setCursorRulesLoading(true);
+      try {
+        const data = await fetchCursorRulesCatalog(projectId);
+        if (!cancelled && Array.isArray(data?.folders)) {
+          setCursorRulesFolders(data.folders);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          toast.error(err.error || err.message || "Failed to load catalog");
+          setCursorRulesFolders([]);
+        }
+      } finally {
+        if (!cancelled) setCursorRulesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cursorRulesOpen, projectId]);
+
+  useEffect(() => {
+    if (!canManageReleases) {
+      setShowCreateForm(false);
+      setEditDialog(null);
+    }
+  }, [canManageReleases]);
+
+  const needsBackendAgentPoll = useMemo(
+    () =>
+      releases.some((r) => isBackendAgentPollActive(r.backendAgentStatus)),
+    [releases],
+  );
+
+  useEffect(() => {
+    if (!projectId || !needsBackendAgentPoll) return undefined;
+    const intervalId = setInterval(() => void loadReleasesSilent(), 4000);
+    return () => clearInterval(intervalId);
+  }, [projectId, needsBackendAgentPoll, loadReleasesSilent]);
 
   const loadChangelog = async (releaseId) => {
     setChangelogLoadingId(releaseId);
@@ -728,6 +858,37 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     <div>
       <PageHeader title="Release Management">
         {canManageReleases && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {hasDeveloperRepo ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2 border-slate-200 bg-white/80 hover:bg-slate-50"
+              onClick={() => setCursorRulesOpen(true)}
+            >
+              <FileCode className="h-4 w-4 shrink-0" />
+              Add Cursor Rules
+            </Button>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-block cursor-not-allowed">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2 border-slate-200 bg-white/80 hover:bg-slate-50"
+                    disabled
+                  >
+                    <FileCode className="h-4 w-4 shrink-0" />
+                    Add Cursor Rules
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs">
+                Set a developer repository URL on the project (GitHub) before importing rules.
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Button
             className="text-white gap-2"
             onClick={openCreateReleaseDialog}
@@ -735,8 +896,56 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
             <Plus />
             Create Release
           </Button>
+        </div>
         )}
       </PageHeader>
+
+      {releases.some(
+        (r) =>
+          r.backendAgentStatus &&
+          (isBackendAgentPollActive(r.backendAgentStatus) ||
+            isBackendAgentFailureTerminal(r.backendAgentStatus)),
+      ) ? (
+        <div className="mb-4 space-y-2" role="region" aria-label="Backend plan agent status">
+          {releases.map((r) => {
+            const st = r.backendAgentStatus;
+            if (!st) return null;
+            if (isBackendAgentSuccessTerminal(st)) return null;
+            const running = isBackendAgentPollActive(st);
+            const bad = isBackendAgentFailureTerminal(st);
+            if (!running && !bad) return null;
+            return (
+              <div
+                key={r.id}
+                role="status"
+                className={cn(
+                  "flex gap-3 rounded-lg border px-4 py-3 text-sm shadow-sm",
+                  running &&
+                    "border-amber-200 bg-amber-50/90 text-amber-950",
+                  bad && "border-red-200 bg-red-50/90 text-red-950",
+                )}
+              >
+                {running ? (
+                  <Loader2
+                    className="h-5 w-5 shrink-0 animate-spin opacity-80"
+                    aria-hidden
+                  />
+                ) : null}
+                <div>
+                  <span className="font-semibold">{r.name}: </span>
+                  {running ? "Backend plan agent is running…" : null}
+                  {bad ? "Backend plan agent failed." : null}
+                  {running ? (
+                    <span className="ml-2 font-mono text-xs opacity-80">
+                      {normalizeBackendAgentStatus(st)}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
 
       <div className="flex flex-col gap-6">
         <SelectActiveVersion
@@ -1252,7 +1461,119 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
           </div>
         </div>
       </div>
-
+      
+      <Dialog
+        open={cursorRulesOpen}
+        onOpenChange={(open) => {
+          setCursorRulesOpen(open);
+          if (!open) {
+            setCursorRulesSearch("");
+            setSelectedCursorFolders(new Set());
+          }
+        }}
+      >
+        <DialogContent
+          showCloseButton={false}
+          className="max-h-[85vh] flex flex-col sm:max-w-lg"
+        >
+          <DialogHeader>
+            <DialogTitle>Add Cursor Rules</DialogTitle>
+            <DialogDescription className="text-left text-slate-600">
+              Choose one or more packs from{" "}
+              <a
+                href="https://github.com/PatrickJS/awesome-cursorrules/tree/main/rules"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-primary underline-offset-2 hover:underline"
+              >
+                PatrickJS/awesome-cursorrules
+              </a>{" "}
+              (rules folder). Files are fetched with the GitHub API, committed
+              under{" "}
+              <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+                .cursor/rules/awesome-cursorrules/&lt;pack&gt;/
+              </code>{" "}
+              in your GitHub developer repository, and pushed to the default
+              branch.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex min-h-0 flex-1 flex-col gap-3">
+            <Input
+              placeholder="Search folder names…"
+              value={cursorRulesSearch}
+              onChange={(e) => setCursorRulesSearch(e.target.value)}
+              disabled={cursorRulesLoading}
+            />
+            <div className="min-h-[200px] max-h-[45vh] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/50 p-2">
+              {cursorRulesLoading ? (
+                <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500">
+                  <Spinner className="h-5 w-5" />
+                  Loading catalog…
+                </div>
+              ) : filteredCursorFolders.length === 0 ? (
+                <p className="py-8 text-center text-sm text-slate-500">
+                  No folders match your search.
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {filteredCursorFolders.map((name) => (
+                    <li key={name}>
+                      <label className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-white">
+                        <Checkbox
+                          checked={selectedCursorFolders.has(name)}
+                          onCheckedChange={() => toggleCursorFolder(name)}
+                          className="mt-0.5"
+                        />
+                        <span className="break-all leading-snug text-slate-800">
+                          {name}
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <p className="text-xs text-slate-500">
+              {selectedCursorFolders.size} selected
+            </p>
+          </div>
+          <DialogFooter
+            showCloseButton={false}
+            className="flex-row flex-wrap justify-end gap-2 sm:gap-2 [&>button]:shrink-0"
+          >
+            {!cursorRulesImporting ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => setCursorRulesOpen(false)}
+              >
+                Cancel
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              className="shrink-0 text-white"
+              onClick={handleImportCursorRules}
+              disabled={
+                cursorRulesImporting ||
+                cursorRulesLoading ||
+                selectedCursorFolders.size === 0 ||
+                !hasDeveloperRepo
+              }
+            >
+              {cursorRulesImporting ? (
+                <>
+                  <Spinner className="mr-2 h-4 w-4 shrink-0" />
+                  <span className="whitespace-nowrap">Importing…</span>
+                </>
+              ) : (
+                "Add"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* Create Release Form Modal */}
       <Dialog
         open={canManageReleases && showCreateForm}
