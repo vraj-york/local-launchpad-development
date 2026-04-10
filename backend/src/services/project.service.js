@@ -13,6 +13,7 @@ import fsExtra from "fs-extra";
 import os from 'os';
 import fs from "fs-extra";
 import { startProjectServer } from "../projectServers.js";
+import { signalNginxReload } from "../utils/nginxBinary.js";
 import {
   runBuildSequence,
   reloadNginx as reloadNginxRelease,
@@ -526,19 +527,11 @@ export const allowPortThroughFirewall = async (port) => {
 };
 export const reloadNginx = async () => {
   try {
-    const { stdout } = await execAsync('which nginx');
-    const nginxBin = stdout.trim();
-    // Docker/backend-as-root: no sudo. Host Linux: sudo usually required.
-    try {
-      await execAsync(`${nginxBin} -s reload`);
-    } catch {
-      await execAsync(`sudo ${nginxBin} -s reload`);
-    }
+    await signalNginxReload();
     return true;
   } catch (error) {
     console.error(`[NGINX RELOAD ERROR]: ${error.message}`);
-    // On Local Mac, we don't want to crash the whole app if Nginx isn't running
-    if (os.platform() !== 'darwin') throw error;
+    if (os.platform() !== "darwin") throw error;
   }
 };
 

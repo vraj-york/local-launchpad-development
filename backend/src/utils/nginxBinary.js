@@ -21,13 +21,10 @@ function pathWithHomebrew() {
     : `${prefix}:${base}`;
 }
 
-function defaultNginxBinary() {
-  return os.platform() === "linux" ? "/usr/sbin/nginx" : "/usr/local/bin/nginx";
-}
-
 /**
  * Resolve nginx executable without the `which` command (often missing on Alpine Node images).
  * On macOS, prepends Homebrew paths so `command -v nginx` works when launched from Cursor/VS Code.
+ * Returns null if no binary exists (e.g. local dev without nginx) — callers should skip reload, not exec a bogus path.
  */
 export async function resolveNginxBinary() {
   const fromEnv = process.env.NGINX_BIN?.trim();
@@ -54,7 +51,7 @@ export async function resolveNginxBinary() {
       if (fs.existsSync(p)) return p;
     }
   }
-  return defaultNginxBinary();
+  return null;
 }
 
 function processIsRoot() {
@@ -82,12 +79,27 @@ function looksLikeNginxMasterNotRunning(err) {
  */
 export async function signalNginxReload() {
   const nginxBin = await resolveNginxBinary();
+  if (!nginxBin) {
+    console.warn(
+      "[nginx] Skipping reload: nginx executable not found. Build output is already under projects/; set NGINX_BIN or install nginx if you proxy with nginx.",
+    );
+    return;
+  }
   const opts = { maxBuffer: 64 * 1024 };
 
   try {
     await execAsync(`${nginxBin} -s reload`, opts);
     return;
   } catch (errDirect) {
+    if (
+      /No such file or directory/i.test(execErrorText(errDirect)) &&
+      /nginx/i.test(execErrorText(errDirect))
+    ) {
+      console.warn(
+        "[nginx] Skipping reload: nginx binary missing or not runnable. Output is already deployed under projects/.",
+      );
+      return;
+    }
     if (os.platform() === "darwin" && looksLikeNginxMasterNotRunning(errDirect)) {
       console.warn(
         "[nginx] Skipping reload: nginx is not running (no PID file). Start with: brew services start nginx",

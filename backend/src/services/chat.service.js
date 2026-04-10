@@ -355,7 +355,7 @@ function latestConversionForAgentStatus(projectId, releaseId) {
     where: {
       projectId: pid,
       releaseId: rid,
-      agentId: { not: null },
+      agentId: { not: "" },
     },
     orderBy: { id: "desc" },
     select: AGENT_STATUS_CONVERSION_SELECT,
@@ -597,6 +597,36 @@ async function syncPendingMessageCommitSha(project, conv) {
   } catch {
     return null;
   }
+}
+
+/** One in-flight sync per pending message so multiple client-link tabs polling agent-status do not stampede SCM / DB. */
+const syncPendingShaInflight = new Map();
+
+async function syncPendingMessageCommitShaCoalesced(project, conv) {
+  const chatHistoryId = Number(conv?.pendingClientChatMessageId);
+  const releaseId = Number(conv?.releaseId);
+  const pid = project?.id;
+  if (
+    !Number.isInteger(pid) ||
+    pid < 1 ||
+    !Number.isInteger(chatHistoryId) ||
+    chatHistoryId < 1 ||
+    !Number.isInteger(releaseId) ||
+    releaseId < 1
+  ) {
+    return syncPendingMessageCommitSha(project, conv);
+  }
+  const key = `${pid}:${releaseId}:${chatHistoryId}`;
+  let inflight = syncPendingShaInflight.get(key);
+  if (!inflight) {
+    inflight = syncPendingMessageCommitSha(project, conv).finally(() => {
+      if (syncPendingShaInflight.get(key) === inflight) {
+        syncPendingShaInflight.delete(key);
+      }
+    });
+    syncPendingShaInflight.set(key, inflight);
+  }
+  return inflight;
 }
 
 /**
@@ -1149,44 +1179,29 @@ export async function clientLinkAgentStatus({ slug, releaseId }) {
   await assertReleaseBelongs(releaseId, project.id);
   const rid = Number(releaseId);
 
-  let conv = await latestClientLinkConversionForRelease(project.id, Number(releaseId));
-  if (!conv?.agentId) {
-    conv = await latestConversionForAgentStatus(project.id, Number(releaseId));
-  }
-  if (!conv?.agentId) {
-    return {
-      hasAgent: false,
-      status: null,
-      busy: false,
-      reason: null,
-    };
-  }
-
-  const mergePendingFromConv = () =>
-    Boolean(conv.awaitingLaunchpadConfirmation) && conv.projectVersionId == null;
-
-  if (!process.env.CURSOR_API_KEY?.trim()) {
-    const { busy, reason } = resolveClientLinkReleaseBusy(conv, null);
-    return {
-      hasAgent: true,
-      status: null,
-      error: "unconfigured",
-      busy,
-      reason,
-      awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
-      mergeConfirmationPending: mergePendingFromConv(),
-      deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
-    };
-  }
-
   try {
-    const { status, data } = await getCursorAgentById(conv.agentId);
-    if (status !== 200 || !data) {
+    let conv = await latestClientLinkConversionForRelease(project.id, Number(releaseId));
+    if (!conv?.agentId) {
+      conv = await latestConversionForAgentStatus(project.id, Number(releaseId));
+    }
+    if (!conv?.agentId) {
+      return {
+        hasAgent: false,
+        status: null,
+        busy: false,
+        reason: null,
+      };
+    }
+
+    const mergePendingFromConv = () =>
+      Boolean(conv.awaitingLaunchpadConfirmation) && conv.projectVersionId == null;
+
+    if (!process.env.CURSOR_API_KEY?.trim()) {
       const { busy, reason } = resolveClientLinkReleaseBusy(conv, null);
       return {
         hasAgent: true,
         status: null,
-        error: "status_unavailable",
+        error: "unconfigured",
         busy,
         reason,
         awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
@@ -1194,56 +1209,83 @@ export async function clientLinkAgentStatus({ slug, releaseId }) {
         deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
       };
     }
-    const st = data.status != null ? String(data.status) : null;
-    if (
-      isCursorAgentSuccessTerminal(st) &&
-      Boolean(conv.deferLaunchpadMerge) &&
-      conv.pendingClientChatMessageId != null
-    ) {
-      await syncPendingMessageCommitSha(project, conv);
-      conv = await latestClientLinkConversionForRelease(project.id, rid);
-      if (!conv?.agentId) {
+
+    try {
+      const { status, data } = await getCursorAgentById(conv.agentId);
+      if (status !== 200 || !data) {
+        const { busy, reason } = resolveClientLinkReleaseBusy(conv, null);
         return {
-          hasAgent: false,
+          hasAgent: true,
           status: null,
-          busy: false,
-          reason: null,
+          error: "status_unavailable",
+          busy,
+          reason,
+          awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
+          mergeConfirmationPending: mergePendingFromConv(),
+          deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
         };
       }
-    }
-    const mergeConfirmationPending =
-      Boolean(conv.awaitingLaunchpadConfirmation) ||
-      (isCursorAgentSuccessTerminal(st) &&
+      const st = data.status != null ? String(data.status) : null;
+      if (
+        isCursorAgentSuccessTerminal(st) &&
         Boolean(conv.deferLaunchpadMerge) &&
-        conv.projectVersionId == null);
-    const { busy, reason } = resolveClientLinkReleaseBusy(conv, data);
+        conv.pendingClientChatMessageId != null
+      ) {
+        await syncPendingMessageCommitShaCoalesced(project, conv);
+        conv = await latestClientLinkConversionForRelease(project.id, rid);
+        if (!conv?.agentId) {
+          return {
+            hasAgent: false,
+            status: null,
+            busy: false,
+            reason: null,
+          };
+        }
+      }
+      const mergeConfirmationPending =
+        Boolean(conv.awaitingLaunchpadConfirmation) ||
+        (isCursorAgentSuccessTerminal(st) &&
+          Boolean(conv.deferLaunchpadMerge) &&
+          conv.projectVersionId == null);
+      const { busy, reason } = resolveClientLinkReleaseBusy(conv, data);
+      return {
+        hasAgent: true,
+        status: st,
+        activity: extractAgentActivity(data),
+        prUrl:
+          typeof data.target?.prUrl === "string"
+            ? data.target.prUrl
+            : typeof data.source?.prUrl === "string"
+              ? data.source.prUrl
+              : null,
+        busy,
+        reason,
+        awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
+        mergeConfirmationPending,
+        deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
+      };
+    } catch {
+      const { busy, reason } = resolveClientLinkReleaseBusy(conv, null);
+      return {
+        hasAgent: true,
+        status: null,
+        error: "poll_failed",
+        busy,
+        reason,
+        awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
+        mergeConfirmationPending: mergePendingFromConv(),
+        deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
+      };
+    }
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    console.error("[clientLinkAgentStatus] unexpected", err?.message || err);
     return {
-      hasAgent: true,
-      status: st,
-      activity: extractAgentActivity(data),
-      prUrl:
-        typeof data.target?.prUrl === "string"
-          ? data.target.prUrl
-          : typeof data.source?.prUrl === "string"
-            ? data.source.prUrl
-            : null,
-      busy,
-      reason,
-      awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
-      mergeConfirmationPending,
-      deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
-    };
-  } catch {
-    const { busy, reason } = resolveClientLinkReleaseBusy(conv, null);
-    return {
-      hasAgent: true,
+      hasAgent: false,
       status: null,
-      error: "poll_failed",
-      busy,
-      reason,
-      awaitingLaunchpadConfirmation: Boolean(conv.awaitingLaunchpadConfirmation),
-      mergeConfirmationPending: mergePendingFromConv(),
-      deferLaunchpadMerge: Boolean(conv.deferLaunchpadMerge),
+      busy: false,
+      reason: null,
+      error: "status_unavailable",
     };
   }
 }
@@ -1446,7 +1488,7 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
     try {
       const { status, data } = await getCursorAgentById(conv.agentId);
       if (status === 200 && isCursorAgentSuccessTerminal(data?.status)) {
-        await syncPendingMessageCommitSha(project, conv);
+        await syncPendingMessageCommitShaCoalesced(project, conv);
       }
     } catch {
       // Best-effort only; never block chat history.
@@ -1712,7 +1754,7 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
     releaseId: conv.releaseId,
     projectId: conv.projectId,
   };
-  await syncPendingMessageCommitSha(project, syncConv);
+  await syncPendingMessageCommitShaCoalesced(project, syncConv);
 
   let requestedSha = null;
   if (pendingOk) {
