@@ -204,22 +204,180 @@ export function isCursorAgentSuccessTerminal(status) {
   );
 }
 
-/** Cursor terminal states where the agent is no longer doing work (new client-link sends may proceed). */
+/** Terminal failure states from Cursor Cloud agent polling. */
 export function isCursorAgentFailureTerminal(status) {
   if (status == null || status === "") return false;
   const u = String(status).trim().toUpperCase().replace(/\s+/g, "_");
-  if (u.includes("FAIL")) return true;
+  if (u === "FAILED" || u === "ERROR" || u === "CANCELLED" || u === "CANCELED")
+    return true;
+  return u.includes("FAIL");
+}
+
+function buildBackendPlanPrompt(projectVersionId, releaseId) {
   return (
-    u === "FAILED" ||
-    u === "FAILURE" ||
-    u === "ERROR" ||
-    u === "CANCELLED" ||
-    u === "CANCELED" ||
-    u === "STOPPED" ||
-    u === "ABORTED" ||
-    u === "TIMEOUT" ||
-    u === "TIMED_OUT"
+    "You are working in the developer integration repository, which includes the Launchpad platform UI as a git submodule at launchpad-frontend/.\n\n" +
+    "Use launchpad-frontend/ as the reference for Launchpad patterns and behavior. Compare launchpad-frontend/ with Frontend/ in this repository (for example using git diff or an equivalent approach) and apply the necessary changes under the Frontend/ folder so it aligns with or correctly reflects patterns from the submodule.\n\n" +
+    `Create a Plan named backend-v${projectVersionId}-release${releaseId}.md in the backend/plan (or equivalent) folder at the repository root that documents how to implement or connect a backend that supports this Frontend: APIs, data contracts, auth or session notes if relevant, deployment considerations, and concrete integration steps.`
   );
+}
+
+/**
+ * After release lock: run Cursor agent in the GitHub developer integration repo (post-submodule push).
+ * Fire-and-forget from release.service; updates Release.backendAgentId / backendAgentStatus.
+ * @param {{ releaseId: number, projectId: number, projectVersionId: number, attemptedById: number }} params
+ */
+export async function startReleaseBackendPlanAgent({
+  releaseId,
+  projectId,
+  projectVersionId,
+  attemptedById: _attemptedById,
+}) {
+  const markFailed = async () => {
+    try {
+      await prisma.release.update({
+        where: { id: releaseId },
+        data: { backendAgentStatus: "FAILED" },
+      });
+    } catch (e) {
+      console.error("[cursor] backend plan agent: mark FAILED failed", e?.message || e);
+    }
+  };
+
+  try {
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: {
+        id: true,
+        name: true,
+        developmentRepoUrl: true,
+        gitRepoPath: true,
+        githubUsername: true,
+        githubToken: true,
+        githubConnectionId: true,
+        bitbucketUsername: true,
+        bitbucketToken: true,
+        bitbucketConnectionId: true,
+        createdById: true,
+      },
+    });
+    if (!project) return;
+
+    const devRaw = String(project.developmentRepoUrl || "").trim();
+    if (!devRaw) return;
+
+    const devParsed = parseScmRepoPath(devRaw);
+    if (!devParsed || devParsed.provider !== "github") {
+      console.warn("[cursor] backend plan agent: developmentRepoUrl must be a GitHub repo path");
+      return;
+    }
+
+    let scmAccess = null;
+    try {
+      scmAccess = await resolveScmCredentialsFromProject(project);
+    } catch {
+      scmAccess = null;
+    }
+    const ghAccessToken = scmAccess?.token?.trim() || "";
+    if (!ghAccessToken || scmAccess?.provider !== "github") {
+      console.warn("[cursor] backend plan agent: GitHub credentials required");
+      await markFailed();
+      return;
+    }
+
+    const repositoryUrl = `https://github.com/${devParsed.owner}/${devParsed.repo}`;
+    const meta = await scmGetRepositoryMetadata(
+      "github",
+      devParsed.owner,
+      devParsed.repo,
+      ghAccessToken,
+    );
+    if (!meta.ok) {
+      console.warn("[cursor] backend plan agent: cannot read developer repo metadata", meta.message);
+      await markFailed();
+      return;
+    }
+    const refBranch =
+      (meta.defaultBranch && String(meta.defaultBranch).trim()) ||
+      (typeof CURSOR_AGENT_SOURCE_REF_ENV === "string" && CURSOR_AGENT_SOURCE_REF_ENV.trim()
+        ? CURSOR_AGENT_SOURCE_REF_ENV.trim()
+        : "main");
+
+    const promptText = buildBackendPlanPrompt(projectVersionId, releaseId);
+
+    const { data } = await cursorRequest({
+      method: "POST",
+      path: "/v0/agents",
+      body: {
+        prompt: { text: promptText },
+        source: { repository: repositoryUrl, ref: refBranch },
+        target: { autoBranch: true },
+      },
+    });
+
+    if (!data?.id) {
+      await markFailed();
+      return;
+    }
+
+    const agentId = String(data.id).trim();
+    const initialStatus = data.status
+      ? String(data.status).toUpperCase().replace(/\s+/g, "_")
+      : "CREATING";
+
+    await prisma.release.update({
+      where: { id: releaseId },
+      data: {
+        backendAgentId: agentId,
+        backendAgentStatus: initialStatus,
+      },
+    });
+
+    startReleaseBackendAgentPolling(agentId, releaseId);
+  } catch (err) {
+    console.error("[cursor] startReleaseBackendPlanAgent:", err?.message || err);
+    await markFailed();
+  }
+}
+
+/**
+ * Poll Cursor for release-scoped backend plan agent; updates Release.backendAgentStatus only.
+ */
+export function startReleaseBackendAgentPolling(agentId, releaseId) {
+  if (!agentId || typeof agentId !== "string" || !agentId.trim()) return;
+  const id = agentId.trim();
+  let timeoutId = null;
+
+  const poll = async () => {
+    try {
+      const { status, data: agentData } = await getCursorAgentById(id);
+      if (status !== 200 || !agentData) {
+        timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
+        return;
+      }
+      const agentStatus = agentData?.status
+        ? String(agentData.status).toUpperCase().replace(/\s+/g, "_")
+        : null;
+
+      await prisma.release.updateMany({
+        where: { id: releaseId, backendAgentId: id },
+        data: { backendAgentStatus: agentStatus || undefined },
+      });
+
+      if (
+        isCursorAgentSuccessTerminal(agentStatus) ||
+        isCursorAgentFailureTerminal(agentStatus)
+      ) {
+        return;
+      }
+
+      timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
+    } catch (err) {
+      console.error("[cursor] backend agent poll error:", err?.message || err);
+      timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
+    }
+  };
+
+  void poll();
 }
 
 /**

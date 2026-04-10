@@ -177,6 +177,10 @@ model Release {
   showClientReviewSummary   Boolean   @default(true)
   /// Optional team notes for the AI only when generating “what to review” (not shown on client link).
   clientReviewAiGenerationContext String? @db.Text
+  /// Cursor Cloud agent id for post-lock backend plan (developer integration repo).
+  backendAgentId     String?
+  /// Last known Cursor agent status for backend plan (polled server-side).
+  backendAgentStatus String?
 
   createdBy   Int
   createdAt   DateTime @default(now())

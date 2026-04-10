@@ -34,6 +34,7 @@ import {
   BotMessageSquare,
   FileText,
   Laptop,
+  Loader2,
   Lock,
   Smartphone,
   Sparkles,
@@ -51,6 +52,11 @@ import {
   isPlausibleClientLinkEmail,
   setClientLinkVerifiedEmail,
 } from "@/lib/clientLinkVerifiedEmail";
+import {
+  isBackendAgentFailureTerminal,
+  isBackendAgentPollActive,
+  normalizeBackendAgentStatus,
+} from "@/lib/backendAgentStatus";
 
 const PREVIEW_MOBILE_W = 390;
 const PREVIEW_TABLET_W = 820;
@@ -205,6 +211,20 @@ export const ClientLink = () => {
   useEffect(() => {
     loadProject();
   }, [loadProject]);
+
+  const needsBackendAgentPoll = React.useMemo(
+    () =>
+      (releases || []).some((r) =>
+        isBackendAgentPollActive(r.backendAgentStatus),
+      ),
+    [releases],
+  );
+
+  useEffect(() => {
+    if (!projectSlug?.trim() || !needsBackendAgentPoll) return undefined;
+    const intervalId = setInterval(() => void reloadProjectQuiet(), 4000);
+    return () => clearInterval(intervalId);
+  }, [projectSlug, needsBackendAgentPoll, reloadProjectQuiet]);
 
   useEffect(() => {
     if (!lockConfirmOpen) return;
@@ -727,6 +747,38 @@ export const ClientLink = () => {
           </div>
         </div>
       </header>
+      ) : null}
+      {activeReleaseLocked &&
+      activeRelease?.backendAgentStatus &&
+      (isBackendAgentPollActive(activeRelease.backendAgentStatus) ||
+        isBackendAgentFailureTerminal(activeRelease.backendAgentStatus)) ? (
+        <div
+          role="status"
+          className={cn(
+            "mx-4 mb-2 flex gap-3 rounded-lg border px-4 py-2.5 text-sm shadow-sm sm:mx-6",
+            isBackendAgentPollActive(activeRelease.backendAgentStatus) &&
+              "border-amber-200 bg-amber-50/90 text-amber-950",
+            isBackendAgentFailureTerminal(activeRelease.backendAgentStatus) &&
+              "border-red-200 bg-red-50/90 text-red-950",
+          )}
+        >
+          {isBackendAgentPollActive(activeRelease.backendAgentStatus) ? (
+            <Loader2 className="h-5 w-5 shrink-0 animate-spin opacity-80" aria-hidden />
+          ) : null}
+          <span>
+            {isBackendAgentPollActive(activeRelease.backendAgentStatus)
+              ? "Backend plan agent is running…"
+              : null}
+            {isBackendAgentFailureTerminal(activeRelease.backendAgentStatus)
+              ? "Backend plan agent failed."
+              : null}
+            {isBackendAgentPollActive(activeRelease.backendAgentStatus) ? (
+              <span className="ml-2 font-mono text-xs opacity-80">
+                {normalizeBackendAgentStatus(activeRelease.backendAgentStatus)}
+              </span>
+            ) : null}
+          </span>
+        </div>
       ) : null}
       <div
         id="feedback-capture-area"

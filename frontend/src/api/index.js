@@ -392,6 +392,31 @@ export const fetchProjectById = async (projectId) => {
   }
 };
 
+/** Catalog: subfolder names under PatrickJS/awesome-cursorrules/rules (GitHub API via backend). */
+export const fetchCursorRulesCatalog = async (projectId) => {
+  try {
+    const response = await api.get(
+      `/api/projects/${projectId}/cursor-rules/catalog`,
+    );
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to load Cursor rules catalog" };
+  }
+};
+
+/** Push selected rule packs to the GitHub developer repository under `.cursor/rules/awesome-cursorrules/...`. */
+export const importCursorRulesFolders = async (projectId, folders) => {
+  try {
+    const response = await api.post(
+      `/api/projects/${projectId}/cursor-rules/import`,
+      { folders },
+    );
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to import Cursor rules" };
+  }
+};
+
 /** Start deferred from-scratch Cursor agent (release 1.0.0 + agent). */
 export const startProjectScratchAgent = async (projectId, prompt) => {
   try {

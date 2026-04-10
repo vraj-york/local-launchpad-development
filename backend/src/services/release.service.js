@@ -625,6 +625,96 @@ async function deactivateProjectVersionsForRelease(tx, releaseId) {
 }
 
 /**
+ * Shared lock: optional dev-repo submodule sync, lock row, deactivate release versions,
+ * sync project active version, then fire Cursor backend plan agent when dev URL + active version exist.
+ * Caller must enforce auth / stakeholder checks.
+ * @param {{ releaseId: number, lockedByEmail?: string|null, attemptedById: number }} opts
+ */
+async function performReleaseLockPipeline({
+  releaseId,
+  lockedByEmail = null,
+  attemptedById,
+}) {
+  const release = await prisma.release.findUnique({
+    where: { id: releaseId },
+    select: {
+      id: true,
+      projectId: true,
+      status: true,
+      name: true,
+      createdBy: true,
+    },
+  });
+  if (!release) {
+    throw new ApiError(404, "Release not found");
+  }
+  if (release.status === ReleaseStatus.locked) {
+    throw new ApiError(400, "Release is already locked");
+  }
+
+  const [projectFull, releaseRow] = await Promise.all([
+    prisma.project.findUnique({ where: { id: release.projectId } }),
+    prisma.release.findUnique({
+      where: { id: releaseId },
+      select: { name: true },
+    }),
+  ]);
+  if (!projectFull) {
+    throw new ApiError(404, "Project not found");
+  }
+
+  const devUrl = String(projectFull.developmentRepoUrl || "").trim();
+  if (devUrl) {
+    const { syncDeveloperRepoSubmoduleForReleaseLock } = await import(
+      "./developerRepoSubmodule.service.js",
+    );
+    await syncDeveloperRepoSubmoduleForReleaseLock({
+      releaseId,
+      project: projectFull,
+      releaseName: releaseRow?.name ?? release.name,
+    });
+  }
+
+  const activeVersion = await prisma.projectVersion.findFirst({
+    where: { releaseId, isActive: true },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+
+  const lockedByData =
+    lockedByEmail != null && String(lockedByEmail).trim() !== ""
+      ? { lockedBy: String(lockedByEmail).trim().toLowerCase() }
+      : {};
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.release.update({
+      where: { id: releaseId },
+      data: {
+        status: ReleaseStatus.locked,
+        ...lockedByData,
+      },
+    });
+    await deactivateProjectVersionsForRelease(tx, releaseId);
+    await syncProjectActiveVersionForProject(tx, release.projectId);
+    return row;
+  });
+
+  if (devUrl && activeVersion?.id) {
+    const { startReleaseBackendPlanAgent } = await import("./cursor.service.js");
+    void startReleaseBackendPlanAgent({
+      releaseId,
+      projectId: release.projectId,
+      projectVersionId: activeVersion.id,
+      attemptedById,
+    }).catch((e) =>
+      console.error("[release] startReleaseBackendPlanAgent:", e?.message || e),
+    );
+  }
+
+  return updated;
+}
+
+/**
  * Set release status: draft | active | locked | skip.
  * — Only one release per project may be active; setting a release to active demotes any other active release in the project to draft (locked releases are unchanged).
  * — A locked release cannot change status via this endpoint (idempotent `locked` is a no-op).
@@ -709,18 +799,21 @@ export const setReleaseStatusService = async (releaseId, status, user, options =
     status: { from: release.status, to: releaseStatus },
   };
 
-  await prisma.$transaction(async (tx) => {
-    if (releaseStatus === ReleaseStatus.locked) {
-      await tx.release.update({
-        where: { id: releaseId },
-        data: {
-          status: ReleaseStatus.locked,
-        },
-      });
-      await syncProjectActiveVersionForProject(tx, release.projectId);
-      return;
-    }
+  if (releaseStatus === ReleaseStatus.locked) {
+    await performReleaseLockPipeline({
+      releaseId,
+      lockedByEmail: null,
+      attemptedById: userId,
+    });
+    return prisma.release.findUnique({
+      where: { id: releaseId },
+      include: {
+        versions: { orderBy: { createdAt: "desc" }, take: 5 },
+      },
+    });
+  }
 
+  await prisma.$transaction(async (tx) => {
     if (releaseStatus === ReleaseStatus.active) {
       await tx.release.updateMany({
         where: {
@@ -839,37 +932,11 @@ export const lockReleaseService = async (releaseId, locked, user) => {
     throw new ApiError(400, "Release is already locked");
   }
 
-  const [projectFull, releaseRow] = await Promise.all([
-    prisma.project.findUnique({ where: { id: release.projectId } }),
-    prisma.release.findUnique({
-      where: { id: releaseId },
-      select: { name: true },
-    }),
-  ]);
-  if (!projectFull) {
-    throw new ApiError(404, "Project not found");
-  }
-
-  const { syncDeveloperRepoSubmoduleForReleaseLock } = await import(
-    "./developerRepoSubmodule.service.js"
-  );
-  await syncDeveloperRepoSubmoduleForReleaseLock({
+  return performReleaseLockPipeline({
     releaseId,
-    project: projectFull,
-    releaseName: releaseRow?.name,
+    lockedByEmail: null,
+    attemptedById: userId,
   });
-
-  const updated = await prisma.$transaction(async (tx) => {
-    const row = await tx.release.update({
-      where: { id: releaseId },
-      data: {
-        status: ReleaseStatus.locked,
-      },
-    });
-    await deactivateProjectVersionsForRelease(tx, releaseId);
-    return row;
-  });
-  return updated;
 };
 
 /**
@@ -1836,7 +1903,11 @@ export const getReleaseInfoService = async (releaseId) => {
 export const publicLockReleaseService = async (releaseId, lockedBy) => {
   const release = await prisma.release.findUnique({
     where: { id: releaseId },
-    include: {
+    select: {
+      id: true,
+      status: true,
+      name: true,
+      createdBy: true,
       project: {
         select: {
           id: true,
@@ -1864,39 +1935,10 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
     throw new ApiError(400, "Release is already locked");
   }
 
-  const projectFull = await prisma.project.findUnique({
-    where: { id: release.project.id },
-  });
-  if (!projectFull) {
-    throw new ApiError(404, "Project not found");
-  }
-
-  const { syncDeveloperRepoSubmoduleForReleaseLock } = await import(
-    "./developerRepoSubmodule.service.js"
-  );
-  await syncDeveloperRepoSubmoduleForReleaseLock({
+  const updatedRelease = await performReleaseLockPipeline({
     releaseId,
-    project: projectFull,
-    releaseName: release.name,
-  });
-
-  const updatedRelease = await prisma.$transaction(async (tx) => {
-    const row = await tx.release.update({
-      where: { id: releaseId },
-      data: {
-        status: ReleaseStatus.locked,
-        lockedBy: email,
-      },
-      select: {
-        id: true,
-        name: true,
-        status: true,
-        projectId: true,
-        lockedBy: true,
-      },
-    });
-    await deactivateProjectVersionsForRelease(tx, releaseId);
-    return row;
+    lockedByEmail: email,
+    attemptedById: release.createdBy,
   });
 
   return {

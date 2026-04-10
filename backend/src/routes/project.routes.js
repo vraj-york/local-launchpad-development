@@ -18,6 +18,7 @@ import { validate } from "../validators/validate.middleware.js";
 import { clearProjectLock as releaseClearProjectLock } from "../services/release.service.js";
 import { projectRepositoryWebUrl } from "../utils/projectGithubUrl.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
+import ApiError from "../utils/apiError.js";
 dotenv.config();
 
 const router = express.Router();
@@ -528,6 +529,18 @@ router.post(
  *         description: Success
  */
 router.get("/public/:slug", projectController.getProjectPublicDetail);
+
+router.get(
+  "/:projectId/cursor-rules/catalog",
+  authenticateToken,
+  projectController.cursorRulesCatalog,
+);
+
+router.post(
+  "/:projectId/cursor-rules/import",
+  authenticateToken,
+  projectController.importCursorRules,
+);
 
 /**
  * @swagger

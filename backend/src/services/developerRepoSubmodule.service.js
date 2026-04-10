@@ -1,29 +1,22 @@
 import path from "path";
 import fs from "fs-extra";
 import { execa } from "execa";
+import fetch from "node-fetch";
 import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import { parseGitRepoPath } from "./github.service.js";
 import { parseScmRepoPath } from "../utils/scmPath.js";
 import { resolveGithubCredentialsFromProject } from "./integrationCredential.service.js";
-
-function normalizeGithubRepoPath(raw) {
-  if (raw == null) return null;
-  const parsed = parseGitRepoPath(String(raw));
-  if (!parsed) return null;
-  return `github.com/${parsed.owner}/${parsed.repo}`;
-}
-
-function publicHttpsRepoUrl(parsed) {
-  return `https://github.com/${parsed.owner}/${parsed.repo}.git`;
-}
-
-function authenticatedCloneUrl(parsed, token) {
-  const t = token?.trim();
-  if (!t) return null;
-  return `https://x-access-token:${t}@github.com/${parsed.owner}/${parsed.repo}.git`;
-}
+import {
+  authenticatedCloneUrl,
+  configureGithubHttpExtraHeader,
+  configureGithubHttpsAuthInsteadOf,
+  git,
+  gitHeadlessEnv,
+  normalizeGithubRepoPath,
+  publicHttpsRepoUrl,
+} from "../utils/developerRepoGit.util.js";
 
 /** Fixed submodule path inside the developer repository (git submodule path / folder name). */
 const LAUNCHPAD_FRONTEND_SUBMODULE_PATH = "launchpad-frontend";
@@ -34,43 +27,18 @@ function parentSubmoduleCommitMessage() {
   return "Update the Launchpad branch";
 }
 
-async function git(cwd, args, opts = {}) {
-  try {
-    return await execa("git", args, {
-      cwd,
-      ...opts,
-      env: { ...process.env, ...opts.env },
-    });
-  } catch (e) {
-    const stderr = e.stderr?.toString?.() || "";
-    const msg = (stderr || e.shortMessage || e.message || String(e)).slice(0, 800);
-    throw new ApiError(502, `Git failed: ${msg}`);
-  }
-}
-
 /** True if string looks like a full git object id. */
 function looksLikeFullSha(s) {
   return /^[0-9a-f]{40}$/i.test(String(s).trim());
 }
 
-function pickShaFromLsRemote(stdout) {
-  const lines = stdout.trim().split("\n").filter(Boolean);
-  let fallback = null;
-  for (const line of lines) {
-    const tab = line.indexOf("\t");
-    if (tab === -1) continue;
-    const sha = line.slice(0, tab).trim();
-    const name = line.slice(tab + 1).trim();
-    if (name.endsWith("^{}")) return sha.toLowerCase();
-    if (/^[0-9a-f]{40}$/i.test(sha)) fallback = sha.toLowerCase();
-  }
-  return fallback;
-}
-
 /**
- * Resolve active version gitTag (tag, branch name, or full sha) to a commit SHA on the platform remote.
+ * Resolve tag/branch/sha to a commit SHA on the platform GitHub repo using the REST API.
+ * Avoids `git ls-remote`, which in headless/Docker often ignores url.insteadOf and embedded credentials
+ * and then fails with "terminal prompts disabled".
+ * @param {{ owner: string, repo: string }} srcParsed
  */
-async function resolvePlatformRefToCommitSha(cwd, remoteUrl, gitTagRef) {
+async function resolvePlatformRefToCommitSha(srcParsed, gitTagRef, token) {
   const ref = String(gitTagRef).trim();
   if (!ref) {
     throw new ApiError(400, "Active version has an empty git tag / ref.");
@@ -78,26 +46,51 @@ async function resolvePlatformRefToCommitSha(cwd, remoteUrl, gitTagRef) {
   if (looksLikeFullSha(ref)) {
     return ref.toLowerCase();
   }
-  const { stdout } = await git(cwd, [
-    "ls-remote",
-    remoteUrl,
-    `refs/tags/${ref}^{}`,
-    `refs/tags/${ref}`,
-    `refs/heads/${ref}`,
-  ]);
-  const sha = pickShaFromLsRemote(stdout);
-  if (!sha) {
+  const t = typeof token === "string" ? token.trim() : "";
+  if (!t) {
+    throw new ApiError(400, "GitHub token is required to resolve the version ref.");
+  }
+  const owner = encodeURIComponent(srcParsed.owner);
+  const repo = encodeURIComponent(srcParsed.repo);
+  const refEnc = encodeURIComponent(ref);
+  const url = `https://api.github.com/repos/${owner}/${repo}/commits/${refEnc}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${t}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "project-management-platform/release-lock",
+    },
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const errBody = await res.json();
+      detail =
+        typeof errBody?.message === "string" ? errBody.message : JSON.stringify(errBody);
+    } catch {
+      detail = (await res.text()).slice(0, 300);
+    }
     throw new ApiError(
-      400,
-      `Could not resolve "${ref}" to a commit on the platform repository (tag, branch, or full SHA).`,
+      res.status === 404 ? 404 : 400,
+      `Could not resolve "${ref}" on the platform GitHub repository (${res.status}): ${detail}`,
     );
   }
-  return sha;
+  const data = await res.json();
+  const sha = typeof data?.sha === "string" ? data.sha.trim() : "";
+  if (!/^[0-9a-f]{40}$/i.test(sha)) {
+    throw new ApiError(502, "GitHub API returned an unexpected commit payload.");
+  }
+  return sha.toLowerCase();
 }
 
+/** `remoteUrl` should be the public HTTPS repo URL; auth is via `configureGithubHttpExtraHeader(subAbs)`. */
 async function ensureSubmoduleHasCommit(subAbs, remoteUrl, commitSha, refHint) {
   await git(subAbs, ["remote", "set-url", "origin", remoteUrl]);
-  await execa("git", ["-C", subAbs, "fetch", "--unshallow"], { reject: false });
+  await execa("git", ["-C", subAbs, "fetch", "--unshallow"], {
+    reject: false,
+    env: gitHeadlessEnv(),
+  });
   await git(subAbs, ["fetch", "origin", "--tags"]);
   await git(subAbs, ["fetch", "origin"]).catch(() => {});
   try {
@@ -136,6 +129,33 @@ async function pathExists(p) {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * If launchpad-frontend exists but is not a valid submodule checkout, remove it so
+ * `git submodule add` can run (stale folder, broken submodule, or partial clone).
+ */
+async function resetBrokenSubmodulePathForAdd(workDir, submoduleRel) {
+  const subAbs = path.join(workDir, submoduleRel);
+  const hasSubGit = await pathExists(path.join(subAbs, ".git"));
+  if (hasSubGit) return;
+
+  const existingName = await getSubmoduleNameForPath(workDir, submoduleRel);
+  if (existingName) {
+    await execa("git", ["submodule", "deinit", "-f", submoduleRel], {
+      cwd: workDir,
+      reject: false,
+      env: gitHeadlessEnv(),
+    });
+  }
+  await execa("git", ["rm", "-rf", "--cached", submoduleRel], {
+    cwd: workDir,
+    reject: false,
+    env: gitHeadlessEnv(),
+  });
+  if (await pathExists(subAbs)) {
+    await fs.remove(subAbs);
   }
 }
 
@@ -220,7 +240,7 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
     );
   }
 
-  const { githubToken } = await resolveGithubCredentialsFromProject(project);
+  const { githubToken, githubUsername } = await resolveGithubCredentialsFromProject(project);
   const token = githubToken?.trim();
   if (!token) {
     throw new ApiError(400, "GitHub credentials are required to sync the developer repository.");
@@ -232,9 +252,10 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
     throw new ApiError(400, "Invalid GitHub repository path.");
   }
 
-  const devAuthUrl = authenticatedCloneUrl(devParsed, token);
-  const srcAuthUrl = authenticatedCloneUrl(srcParsed, token);
+  const devAuthUrl = authenticatedCloneUrl(devParsed, token, githubUsername);
+  const srcAuthUrl = authenticatedCloneUrl(srcParsed, token, githubUsername);
   const srcPublicUrl = publicHttpsRepoUrl(srcParsed);
+  const devPublicUrl = publicHttpsRepoUrl(devParsed);
   if (!devAuthUrl || !srcAuthUrl) {
     throw new ApiError(400, "Could not build authenticated git URLs.");
   }
@@ -256,8 +277,10 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
   try {
     await fs.ensureDir(tmpBase);
     await git(tmpBase, ["clone", devAuthUrl, workDir]);
+    await configureGithubHttpsAuthInsteadOf(workDir, token, githubUsername);
+    await configureGithubHttpExtraHeader(workDir, token, githubUsername);
 
-    const commitSha = await resolvePlatformRefToCommitSha(workDir, srcAuthUrl, tag);
+    const commitSha = await resolvePlatformRefToCommitSha(srcParsed, tag, token);
 
     const subAbs = path.join(workDir, submoduleRel);
     let hasSubGit = await pathExists(path.join(subAbs, ".git"));
@@ -272,17 +295,24 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
           `submodule.${existingName}.url`,
           srcPublicUrl,
         ]);
-        await execa("git", ["submodule", "sync"], { cwd: workDir, reject: false });
+        await execa("git", ["submodule", "sync"], {
+          cwd: workDir,
+          reject: false,
+          env: gitHeadlessEnv(),
+        });
         await execa("git", ["submodule", "update", "--init", "--recursive"], {
           cwd: workDir,
           reject: false,
+          env: gitHeadlessEnv(),
         });
         hasSubGit = await pathExists(path.join(subAbs, ".git"));
       }
     }
 
     if (!hasSubGit) {
-      await git(workDir, [...gitIdent, "submodule", "add", "-f", srcPublicUrl, submoduleRel]);
+      await resetBrokenSubmodulePathForAdd(workDir, submoduleRel);
+      /* Embedded credentials: submodule clone often ignores parent url.insteadOf; .gitmodules is rewritten to public URL below. */
+      await git(workDir, [...gitIdent, "submodule", "add", "-f", srcAuthUrl, submoduleRel]);
     }
 
     const submoduleName =
@@ -294,10 +324,15 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
       `submodule.${submoduleName}.url`,
       srcPublicUrl,
     ]);
-    await execa("git", ["submodule", "sync"], { cwd: workDir, reject: false });
+    await execa("git", ["submodule", "sync"], {
+      cwd: workDir,
+      reject: false,
+      env: gitHeadlessEnv(),
+    });
     await execa("git", ["submodule", "update", "--init", "--recursive"], {
       cwd: workDir,
       reject: false,
+      env: gitHeadlessEnv(),
     });
     const subReady = await pathExists(path.join(subAbs, ".git"));
     if (!subReady) {
@@ -307,7 +342,8 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
       );
     }
 
-    await ensureSubmoduleHasCommit(subAbs, srcAuthUrl, commitSha, tag);
+    await configureGithubHttpExtraHeader(subAbs, token, githubUsername);
+    await ensureSubmoduleHasCommit(subAbs, srcPublicUrl, commitSha, tag);
     await git(subAbs, ["checkout", "--force", commitSha]);
 
     await git(subAbs, ["remote", "set-url", "origin", srcPublicUrl]);
@@ -319,12 +355,13 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
     const diffCached = await execa("git", ["diff", "--cached", "--quiet"], {
       cwd: workDir,
       reject: false,
+      env: gitHeadlessEnv(),
     });
     if (diffCached.exitCode !== 0) {
       await git(workDir, [...gitIdent, "commit", "-m", commitMsg]);
     }
 
-    await git(workDir, ["remote", "set-url", "origin", devAuthUrl]);
+    await git(workDir, ["remote", "set-url", "origin", devPublicUrl]);
     await git(workDir, ["push", "origin", "HEAD"]);
 
     return {

@@ -1,15 +1,24 @@
 
 import {
-    createProjectService, listProjectsService, setReleaseStatusService,
+    createProjectService,
+    listProjectsService,
+    setReleaseStatusService,
     getProjectLiveUrlService,
-    listProjectVersionsService, getProjectByIdService,
+    listProjectVersionsService,
+    getProjectByIdService,
     getJiraTicketsService,
     activateProjectVersionService,
     updateProjectDetailsService,
     deleteProjectService,
     switchProjectVersion,
     startScratchAgentFromProjectService,
+    assertProjectAccess,
 } from "../services/project.service.js";
+import {
+    listAwesomeCursorrulesFolders,
+    importAwesomeCursorrulesFolders,
+} from "../services/awesomeCursorrules.service.js";
+import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
 
@@ -139,5 +148,36 @@ export const projectController = {
         );
 
         res.json(result);
-    })
+    }),
+
+    /** GET /api/projects/:projectId/cursor-rules/catalog */
+    cursorRulesCatalog: asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.projectId);
+        if (Number.isNaN(projectId)) {
+            throw new ApiError(400, "Invalid project id");
+        }
+        await assertProjectAccess(projectId, req.user);
+        const folders = await listAwesomeCursorrulesFolders();
+        res.json({ folders });
+    }),
+
+    /** POST /api/projects/:projectId/cursor-rules/import */
+    importCursorRules: asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.projectId);
+        if (Number.isNaN(projectId)) {
+            throw new ApiError(400, "Invalid project id");
+        }
+        await assertProjectAccess(projectId, req.user);
+        const project = await prisma.project.findUnique({
+            where: { id: projectId },
+        });
+        if (!project) {
+            throw new ApiError(404, "Project not found");
+        }
+        const result = await importAwesomeCursorrulesFolders(
+            project,
+            req.body?.folders,
+        );
+        res.json(result);
+    }),
 };
