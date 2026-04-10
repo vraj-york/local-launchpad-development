@@ -19,11 +19,6 @@ import { clearProjectLock as releaseClearProjectLock } from "../services/release
 import { projectRepositoryWebUrl } from "../utils/projectGithubUrl.js";
 import { parseStoredEmailListToSet } from "../utils/emailList.utils.js";
 import ApiError from "../utils/apiError.js";
-import { assertProjectAccess } from "../services/project.service.js";
-import {
-  listAwesomeCursorrulesFolders,
-  importAwesomeCursorrulesFolders,
-} from "../services/awesomeCursorrules.service.js";
 dotenv.config();
 
 const router = express.Router();
@@ -538,40 +533,13 @@ router.get("/public/:slug", projectController.getProjectPublicDetail);
 router.get(
   "/:projectId/cursor-rules/catalog",
   authenticateToken,
-  async (req, res, next) => {
-    try {
-      const projectId = Number(req.params.projectId);
-      if (Number.isNaN(projectId)) throw new ApiError(400, "Invalid project id");
-      await assertProjectAccess(projectId, req.user);
-      const folders = await listAwesomeCursorrulesFolders();
-      res.json({ folders });
-    } catch (e) {
-      next(e);
-    }
-  },
+  projectController.cursorRulesCatalog,
 );
 
 router.post(
   "/:projectId/cursor-rules/import",
   authenticateToken,
-  async (req, res, next) => {
-    try {
-      const projectId = Number(req.params.projectId);
-      if (Number.isNaN(projectId)) throw new ApiError(400, "Invalid project id");
-      await assertProjectAccess(projectId, req.user);
-      const project = await prisma.project.findUnique({
-        where: { id: projectId },
-      });
-      if (!project) throw new ApiError(404, "Project not found");
-      const result = await importAwesomeCursorrulesFolders(
-        project,
-        req.body?.folders,
-      );
-      res.json(result);
-    } catch (e) {
-      next(e);
-    }
-  },
+  projectController.importCursorRules,
 );
 
 /**
