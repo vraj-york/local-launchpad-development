@@ -809,11 +809,7 @@ async function createClientChatAgent({
     prompt,
     model: "composer-1.5",
     deferLaunchpadMerge: true,
-    omitTargetFromBody: false,
-    target: {
-      branchName: "launchpad",
-      autoCreatePr: false,
-    },
+    omitTargetFromBody: true,
     source: {
       repository: repositoryUrl,
       ref: sourceRef,
