@@ -27,8 +27,29 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import githubMarkSvg from "@/assets/apps/GitHub.svg";
+import bitbucketMarkSvg from "@/assets/apps/Bitbucket.svg";
+import jiraMarkSvg from "@/assets/apps/Jira.svg";
+import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+
+/** Renders brand SVGs from `src/assets` (Vite resolves imports to URLs). */
+function IntegrationBrandImg({ src, className, invertOnDark }) {
+  return (
+    <img
+      src={src}
+      alt=""
+      aria-hidden
+      draggable={false}
+      className={cn(
+        "pointer-events-none shrink-0 object-contain",
+        invertOnDark && "dark:invert dark:opacity-90",
+        className,
+      )}
+    />
+  );
+}
 
 const GH_REPO_PATH_RE =
   /^(https?:\/\/)?github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i;
@@ -57,7 +78,7 @@ function repositoryPlatformFromUrl(raw) {
 }
 
 const REPO_PLATFORM_PAIR_MISMATCH_MSG =
-  "Source repository  and development repository  must be on the same platform (GitHub or Bitbucket).";
+  "Source repository and development repository must be on the same platform (GitHub or Bitbucket).";
 
 const REPO_PLATFORM_IMMUTABLE_MSG =
   "Repository platform cannot be changed once set. Both source and development repositories must remain on the same platform.";
@@ -109,8 +130,10 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
   const [reposLoading, setReposLoading] = useState(false);
   const [reposPage, setReposPage] = useState(1);
   const [reposHasMore, setReposHasMore] = useState(false);
-  const [repoSearch, setRepoSearch] = useState("");
   const [developmentRepoUrlInput, setDevelopmentRepoUrlInput] = useState("");
+  const [devRepoMode, setDevRepoMode] = useState(() =>
+    isEdit ? "keep" : "pick",
+  );
   const [devRepoPickNonce, setDevRepoPickNonce] = useState(0);
   const [jiraProjects, setJiraProjects] = useState([]);
   const [jiraProjectsLoading, setJiraProjectsLoading] = useState(false);
@@ -121,14 +144,6 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
   const jiraConnections = integrationsPayload?.jira?.connections ?? [];
 
   const activeRepos = scmHost === "github" ? githubRepos : bitbucketRepos;
-
-  const filteredRepos = useMemo(() => {
-    const q = repoSearch.trim().toLowerCase();
-    if (!q) return activeRepos;
-    return activeRepos.filter((r) =>
-      String(r.fullName || "").toLowerCase().includes(q),
-    );
-  }, [activeRepos, repoSearch]);
 
   const gitRepoPath =
     repoMode === "manual"
@@ -158,9 +173,12 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       setRepoMode("keep");
       setPickedRepoPath("");
       setGitRepoPathManual("");
-      setRepoSearch("");
       setJiraProjectKey(editProject.jiraProjectKey ?? "");
-      setDevelopmentRepoUrlInput(String(editProject.developmentRepoUrl ?? ""));
+      {
+        const devUrl = String(editProject.developmentRepoUrl ?? "").trim();
+        setDevelopmentRepoUrlInput(String(editProject.developmentRepoUrl ?? ""));
+        setDevRepoMode(devUrl ? "keep" : "pick");
+      }
       setDevRepoPickNonce(0);
       setGithubRepos([]);
       setBitbucketRepos([]);
@@ -183,8 +201,8 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       setRepoMode("auto");
       setPickedRepoPath("");
       setGitRepoPathManual("");
-      setRepoSearch("");
       setDevelopmentRepoUrlInput("");
+      setDevRepoMode("pick");
       setDevRepoPickNonce(0);
       setJiraProjectKey("");
     }
@@ -217,6 +235,14 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       if (typeof d.gitRepoPathManual === "string") setGitRepoPathManual(d.gitRepoPathManual);
       if (typeof d.developmentRepoUrlInput === "string")
         setDevelopmentRepoUrlInput(d.developmentRepoUrlInput);
+      if (d.devRepoMode === "pick" || d.devRepoMode === "manual") {
+        setDevRepoMode(d.devRepoMode);
+      } else if (
+        typeof d.developmentRepoUrlInput === "string" &&
+        d.developmentRepoUrlInput.trim()
+      ) {
+        setDevRepoMode("manual");
+      }
       if (typeof d.jiraProjectKey === "string") setJiraProjectKey(d.jiraProjectKey);
       if (typeof d.jiraBaseUrlResolved === "string") setJiraBaseUrlResolved(d.jiraBaseUrlResolved);
 
@@ -305,7 +331,14 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       if (typeof d.developmentRepoUrlInput === "string") {
         setDevelopmentRepoUrlInput(d.developmentRepoUrlInput);
       }
-      if (typeof d.repoSearch === "string") setRepoSearch(d.repoSearch);
+      if (d.devRepoMode === "pick" || d.devRepoMode === "manual") {
+        setDevRepoMode(d.devRepoMode);
+      } else if (
+        typeof d.developmentRepoUrlInput === "string" &&
+        d.developmentRepoUrlInput.trim()
+      ) {
+        setDevRepoMode("manual");
+      }
       if (typeof d.jiraBaseUrlResolved === "string") setJiraBaseUrlResolved(d.jiraBaseUrlResolved);
       if (typeof d.selectedGithubConnectionId === "string" && d.selectedGithubConnectionId) {
         if (gh.some((c) => String(c.id) === d.selectedGithubConnectionId)) {
@@ -347,8 +380,8 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
           gitRepoPathManual,
           jiraProjectKey,
           developmentRepoUrlInput,
+          devRepoMode,
           jiraBaseUrlResolved,
-          repoSearch,
         }),
       );
     } catch {
@@ -365,8 +398,8 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
     gitRepoPathManual,
     jiraProjectKey,
     developmentRepoUrlInput,
+    devRepoMode,
     jiraBaseUrlResolved,
-    repoSearch,
   ]);
 
   const repoListOpts = useMemo(() => {
@@ -559,7 +592,8 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       }
       if (
         !errors.developmentRepoUrl &&
-        (repoMode === "manual" || repoMode === "pick")
+        (repoMode === "manual" || repoMode === "pick") &&
+        (devRepoMode === "manual" || devRepoMode === "pick")
       ) {
         const mainRaw =
           repoMode === "manual" ? gitRepoPathManual.trim() : pickedRepoPath.trim();
@@ -591,6 +625,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       gitRepoPathManual,
       pickedRepoPath,
       developmentRepoUrlInput,
+      devRepoMode,
     ],
   );
 
@@ -683,6 +718,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       gitRepoPathManual,
       pickedRepoPath,
       developmentRepoUrlInput,
+      devRepoMode,
     ],
   );
 
@@ -763,6 +799,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       pickedRepoPath,
       gitRepoPathManual,
       developmentRepoUrlInput,
+      devRepoMode,
       jiraProjectKey,
       jiraBaseUrlResolved,
     }),
@@ -775,6 +812,7 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       pickedRepoPath,
       gitRepoPathManual,
       developmentRepoUrlInput,
+      devRepoMode,
       jiraProjectKey,
       jiraBaseUrlResolved,
     ],
@@ -817,45 +855,57 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
       jiraBaseUrlResolved,
       integrationsPayload,
       developmentRepoUrlInput,
+      devRepoMode,
     ],
   );
 
   return (
-    <Card className="border-slate-200 overflow-hidden">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-lg font-semibold text-slate-800">
-          Code host &amp; Jira for this project
-        </CardTitle>
-        <p className="text-sm text-muted-foreground font-normal pt-1">
-          {isEdit ? (
-            <>
-              Same options as create project. Add accounts on{" "}
-              <Link
-                to="/settings/integrations"
-                className="text-primary underline-offset-4 hover:underline"
-              >
-                Integrations
-              </Link>
-              ; signing in with an account you already use only refreshes that connection.
-            </>
-          ) : (
-            <>
-              Choose which saved accounts this workspace uses. Add more on{" "}
-              <Link
-                to="/settings/integrations"
-                className="text-primary underline-offset-4 hover:underline"
-              >
-                Integrations
-              </Link>
-              .
-            </>
-          )}
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        {validationErrors.integrations && (
-          <p className="text-sm text-destructive">{validationErrors.integrations}</p>
-        )}
+    <>
+      {validationErrors.integrations ? (
+        <div
+          role="alert"
+          className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          {validationErrors.integrations}
+        </div>
+      ) : null}
+
+      <Card className="border-border shadow-sm overflow-hidden">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg font-semibold text-foreground flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5" aria-hidden>
+              <IntegrationBrandImg src={githubMarkSvg} invertOnDark className="size-5" />
+              <IntegrationBrandImg src={bitbucketMarkSvg} className="size-5" />
+            </span>
+            <span>Code host</span>
+          </CardTitle>
+          <p className="text-sm text-muted-foreground font-normal pt-1">
+            {isEdit ? (
+              <>
+                Pick GitHub or Bitbucket and the account for this repo. Manage connections on{" "}
+                <Link
+                  to="/settings/integrations"
+                  className="text-primary underline-offset-4 hover:underline"
+                >
+                  Integrations
+                </Link>
+                ; reconnecting only refreshes an existing link.
+              </>
+            ) : (
+              <>
+                One code host per project. Add accounts under{" "}
+                <Link
+                  to="/settings/integrations"
+                  className="text-primary underline-offset-4 hover:underline"
+                >
+                  Integrations
+                </Link>
+                .
+              </>
+            )}
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-6">
         <div className="space-y-2">
           <Label>Code host</Label>
           <Select
@@ -864,16 +914,21 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
               setScmHost(v);
               setPickedRepoPath("");
               setGitRepoPathManual("");
-              setRepoSearch("");
             }}
             disabled={integrationsLoading}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="github">GitHub</SelectItem>
-              <SelectItem value="bitbucket">Bitbucket</SelectItem>
+              <SelectItem value="github">
+                <IntegrationBrandImg src={githubMarkSvg} invertOnDark className="size-4" />
+                GitHub
+              </SelectItem>
+              <SelectItem value="bitbucket">
+                <IntegrationBrandImg src={bitbucketMarkSvg} className="size-4" />
+                Bitbucket
+              </SelectItem>
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
@@ -887,35 +942,27 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
             .
           </p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-3 rounded-lg border border-slate-200 p-4">
-            <div className="font-medium text-slate-800">
-              {scmHost === "github" ? "GitHub account" : "Bitbucket account"}
-            </div>
-            {integrationsLoading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : scmHost === "github" ? (
-              <>
-                <Select
-                  value={selectedGithubConnectionId || undefined}
-                  onValueChange={setSelectedGithubConnectionId}
-                  disabled={githubConnections.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select GitHub account" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-72">
-                    {githubConnections.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.login ? `@${c.login}` : `Account #${c.id}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-4 transition-colors">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="font-medium text-foreground flex min-w-0 items-center gap-2">
+                {scmHost === "github" ? (
+                  <>
+                    <IntegrationBrandImg src={githubMarkSvg} invertOnDark className="size-5 shrink-0" />
+                    <span>GitHub account</span>
+                  </>
+                ) : (
+                  <>
+                    <IntegrationBrandImg src={bitbucketMarkSvg} className="size-5 shrink-0" />
+                    <span>Bitbucket account</span>
+                  </>
+                )}
+              </div>
+              {scmHost === "github" ? (
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
+                  className="w-full shrink-0 sm:w-auto"
                   disabled={integrationsLoading || oauthBusy}
                   onClick={async () => {
                     setOauthBusy("gh");
@@ -936,32 +983,17 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                 >
                   {oauthBusy === "gh" ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
+                  ) : (
+                    <IntegrationBrandImg src={githubMarkSvg} invertOnDark className="mr-2 size-4" />
+                  )}
                   {isEdit ? "Reconnect selected account" : "Add GitHub account"}
                 </Button>
-              </>
-            ) : (
-              <>
-                <Select
-                  value={selectedBitbucketConnectionId || undefined}
-                  onValueChange={setSelectedBitbucketConnectionId}
-                  disabled={bitbucketConnections.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Bitbucket account" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-72">
-                    {bitbucketConnections.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.login ? c.login : `Account #${c.id}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              ) : (
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
+                  className="w-full shrink-0 sm:w-auto"
                   disabled={integrationsLoading || oauthBusy}
                   onClick={async () => {
                     setOauthBusy("bb");
@@ -985,68 +1017,60 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                 >
                   {oauthBusy === "bb" ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
+                  ) : (
+                    <IntegrationBrandImg src={bitbucketMarkSvg} className="mr-2 size-4" />
+                  )}
                   {isEdit ? "Reconnect selected account" : "Add Bitbucket account"}
                 </Button>
-              </>
-            )}
-          </div>
-          <div className="space-y-3 rounded-lg border border-slate-200 p-4">
-            <div className="font-medium text-slate-800">Jira site</div>
+              )}
+            </div>
             {integrationsLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : scmHost === "github" ? (
+              <Select
+                value={selectedGithubConnectionId || undefined}
+                onValueChange={setSelectedGithubConnectionId}
+                disabled={githubConnections.length === 0}
+              >
+                <SelectTrigger className="w-full">
+                  <span className="flex min-w-0 flex-1 items-center gap-2">
+                    <IntegrationBrandImg src={githubMarkSvg} invertOnDark className="size-4" />
+                    <SelectValue placeholder="Select GitHub account" />
+                  </span>
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {githubConnections.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.login ? `@${c.login}` : `Account #${c.id}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : (
-              <>
-                <Select
-                  value={selectedJiraConnectionId || undefined}
-                  onValueChange={setSelectedJiraConnectionId}
-                  disabled={jiraConnections.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Jira site" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-72">
-                    {jiraConnections.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.baseUrl || `Site #${c.id}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={integrationsLoading || oauthBusy}
-                  onClick={async () => {
-                    setOauthBusy("ji");
-                    try {
-                      oauthDraftRestoredRef.current = false;
-                      onBeforeOAuthRedirect?.();
-                      persistCreateGitJiraDraftForOAuth();
-                      const opts = oauthReturnTo ? { returnTo: oauthReturnTo } : {};
-                      const url = isEdit
-                        ? await getJiraOAuthAuthorizeUrl(selectedJiraConnectionId, opts)
-                        : await getJiraOAuthAuthorizeUrl(undefined, opts);
-                      window.location.href = url;
-                    } catch (e) {
-                      toast.error(e.message || "Could not start Jira OAuth");
-                      setOauthBusy(null);
-                    }
-                  }}
-                >
-                  {oauthBusy === "ji" ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
-                  {isEdit ? "Reconnect selected site" : "Add Jira site"}
-                </Button>
-              </>
+              <Select
+                value={selectedBitbucketConnectionId || undefined}
+                onValueChange={setSelectedBitbucketConnectionId}
+                disabled={bitbucketConnections.length === 0}
+              >
+                <SelectTrigger className="w-full">
+                  <span className="flex min-w-0 flex-1 items-center gap-2">
+                    <IntegrationBrandImg src={bitbucketMarkSvg} className="size-4" />
+                    <SelectValue placeholder="Select Bitbucket account" />
+                  </span>
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {bitbucketConnections.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.login ? c.login : `Account #${c.id}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             )}
-          </div>
         </div>
 
         <div className="space-y-2">
-          <Label>Repository</Label>
+          <Label>Launchpad Repository</Label>
           <Select
             value={repoMode}
             onValueChange={(v) => {
@@ -1055,8 +1079,15 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
               if (v !== "manual") setGitRepoPathManual("");
             }}
           >
-            <SelectTrigger>
-              <SelectValue />
+            <SelectTrigger className="w-full">
+              <span className="flex min-w-0 flex-1 items-center gap-2">
+                {scmHost === "github" ? (
+                  <IntegrationBrandImg src={githubMarkSvg} invertOnDark className="size-4" />
+                ) : (
+                  <IntegrationBrandImg src={bitbucketMarkSvg} className="size-4" />
+                )}
+                <SelectValue />
+              </span>
             </SelectTrigger>
             <SelectContent>
               {isEdit ? (
@@ -1070,16 +1101,6 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
           </Select>
           {repoMode === "pick" && (
             <div className="space-y-2 pt-1">
-              <Input
-                placeholder="Filter repositories…"
-                value={repoSearch}
-                onChange={(e) => setRepoSearch(e.target.value)}
-                disabled={
-                  !(scmHost === "github"
-                    ? selectedGithubConnectionId
-                    : selectedBitbucketConnectionId) || reposLoading
-                }
-              />
               <Select
                 value={pickedRepoPath || undefined}
                 onValueChange={setPickedRepoPath}
@@ -1089,16 +1110,23 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
                     : selectedBitbucketConnectionId) || reposLoading
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue
                     placeholder={reposLoading ? "Loading…" : "Choose repository"}
                   />
                 </SelectTrigger>
                 <SelectContent className="max-h-60">
-                  {filteredRepos.map((r) => (
+                  {activeRepos.map((r) => (
                     <SelectItem key={r.gitRepoPath} value={r.gitRepoPath}>
-                      {r.fullName}
-                      {r.private ? " (private)" : ""}
+                      {scmHost === "github" ? (
+                        <IntegrationBrandImg src={githubMarkSvg} invertOnDark className="size-3.5" />
+                      ) : (
+                        <IntegrationBrandImg src={bitbucketMarkSvg} className="size-3.5" />
+                      )}
+                      <span>
+                        {r.fullName}
+                        {r.private ? " (private)" : ""}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1163,48 +1191,215 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="developmentRepoUrl-shared">
-            Developer repository{isEdit ? " (optional)" : " (required)"}
-          </Label>
-          
-          <Input
-            id="developmentRepoUrl-shared"
-            placeholder={
-              scmHost === "github"
-                ? "github.com/org/customer-repo"
-                : "bitbucket.org/workspace/customer-repo"
-            }
-            value={developmentRepoUrlInput}
-            onChange={(e) => setDevelopmentRepoUrlInput(e.target.value)}
-            className={validationErrors.developmentRepoUrl ? "border-destructive" : ""}
-          />
-          {(scmHost === "github"
-            ? selectedGithubConnectionId
-            : selectedBitbucketConnectionId) &&
-            filteredRepos.length > 0 && (
-            <Select
-              key={devRepoPickNonce}
-              onValueChange={(v) => {
-                setDevelopmentRepoUrlInput(v);
-                setDevRepoPickNonce((n) => n + 1);
-              }}
-            >
-              <SelectTrigger className="h-9">
-                <SelectValue placeholder="Or choose from your repositories…" />
-              </SelectTrigger>
-              <SelectContent className="max-h-60">
-                {filteredRepos.map((r) => (
-                  <SelectItem key={`devrepo-${r.gitRepoPath}`} value={r.gitRepoPath}>
-                    {r.fullName}
-                    {r.private ? " (private)" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <Label>Development repository{isEdit ? " (optional)" : " (required)"}</Label>
+          <Select
+            value={devRepoMode}
+            onValueChange={(v) => {
+              setDevRepoMode(v);
+              if (v === "keep" && isEdit && editProject) {
+                setDevelopmentRepoUrlInput(String(editProject.developmentRepoUrl ?? ""));
+              } else if (v === "pick") {
+                setDevelopmentRepoUrlInput("");
+              }
+              setDevRepoPickNonce((n) => n + 1);
+            }}
+          >
+            <SelectTrigger className="w-full">
+              <span className="flex min-w-0 flex-1 items-center gap-2">
+                {scmHost === "github" ? (
+                  <IntegrationBrandImg src={githubMarkSvg} invertOnDark className="size-4" />
+                ) : (
+                  <IntegrationBrandImg src={bitbucketMarkSvg} className="size-4" />
+                )}
+                <SelectValue />
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              {isEdit ? (
+                <SelectItem value="keep">Keep current development repository</SelectItem>
+              ) : null}
+              <SelectItem value="pick">Link an existing repository</SelectItem>
+              <SelectItem value="manual">Enter repository path manually</SelectItem>
+            </SelectContent>
+          </Select>
+          {devRepoMode === "pick" && (
+            <div className="space-y-2 pt-1">
+              <Select
+                key={devRepoPickNonce}
+                value={developmentRepoUrlInput || undefined}
+                onValueChange={(v) => {
+                  setDevelopmentRepoUrlInput(v);
+                  setDevRepoPickNonce((n) => n + 1);
+                }}
+                disabled={
+                  !(scmHost === "github"
+                    ? selectedGithubConnectionId
+                    : selectedBitbucketConnectionId) || reposLoading
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue
+                    placeholder={reposLoading ? "Loading…" : "Choose repository"}
+                  />
+                </SelectTrigger>
+                <SelectContent className="max-h-60">
+                  {activeRepos.map((r) => (
+                    <SelectItem key={`devrepo-${r.gitRepoPath}`} value={r.gitRepoPath}>
+                      {scmHost === "github" ? (
+                        <IntegrationBrandImg src={githubMarkSvg} invertOnDark className="size-3.5" />
+                      ) : (
+                        <IntegrationBrandImg src={bitbucketMarkSvg} className="size-3.5" />
+                      )}
+                      <span>
+                        {r.fullName}
+                        {r.private ? " (private)" : ""}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {reposHasMore && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={reposLoading}
+                  onClick={loadMoreRepos}
+                >
+                  {reposLoading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  Load more
+                </Button>
+              )}
+            </div>
+          )}
+          {devRepoMode === "manual" && (
+            <div className="space-y-1 pt-1">
+              <Input
+                id="developmentRepoUrl-manual-shared"
+                placeholder={
+                  scmHost === "github"
+                    ? "github.com/org/customer-repo"
+                    : "bitbucket.org/workspace/customer-repo"
+                }
+                value={developmentRepoUrlInput}
+                onChange={(e) => setDevelopmentRepoUrlInput(e.target.value)}
+                className={
+                  validationErrors.developmentRepoUrl ? "border-destructive" : ""
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Must be a repo the selected {scmHost === "github" ? "GitHub" : "Bitbucket"}{" "}
+                account can access, and different from the Launchpad repository.
+              </p>
+            </div>
+          )}
+          {devRepoMode === "keep" && isEdit && editProject?.developmentRepoUrl && (
+            <p className="text-xs text-muted-foreground font-mono break-all">
+              Current: {editProject.developmentRepoUrl}
+            </p>
           )}
           {validationErrors.developmentRepoUrl && (
             <p className="text-sm text-destructive">{validationErrors.developmentRepoUrl}</p>
           )}
+        </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border shadow-sm overflow-hidden">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg font-semibold text-foreground flex flex-wrap items-center gap-2">
+            <IntegrationBrandImg src={jiraMarkSvg} className="size-5" />
+            <span>Jira</span>
+          </CardTitle>
+          <p className="text-sm text-muted-foreground font-normal pt-1">
+            {isEdit ? (
+              <>
+                Link the Jira site and project for tickets. Sites are managed on{" "}
+                <Link
+                  to="/settings/integrations"
+                  className="text-primary underline-offset-4 hover:underline"
+                >
+                  Integrations
+                </Link>
+                .
+              </>
+            ) : (
+              <>
+                Choose a saved Jira site and project key. Add sites on{" "}
+                <Link
+                  to="/settings/integrations"
+                  className="text-primary underline-offset-4 hover:underline"
+                >
+                  Integrations
+                </Link>
+                .
+              </>
+            )}
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-6">
+        <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-4 transition-colors">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="font-medium text-foreground flex min-w-0 items-center gap-2">
+                <IntegrationBrandImg src={jiraMarkSvg} className="size-5 shrink-0" />
+                <span>Jira site</span>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full shrink-0 sm:w-auto"
+                disabled={integrationsLoading || oauthBusy}
+                onClick={async () => {
+                  setOauthBusy("ji");
+                  try {
+                    oauthDraftRestoredRef.current = false;
+                    onBeforeOAuthRedirect?.();
+                    persistCreateGitJiraDraftForOAuth();
+                    const opts = oauthReturnTo ? { returnTo: oauthReturnTo } : {};
+                    const url = isEdit
+                      ? await getJiraOAuthAuthorizeUrl(selectedJiraConnectionId, opts)
+                      : await getJiraOAuthAuthorizeUrl(undefined, opts);
+                    window.location.href = url;
+                  } catch (e) {
+                    toast.error(e.message || "Could not start Jira OAuth");
+                    setOauthBusy(null);
+                  }
+                }}
+              >
+                {oauthBusy === "ji" ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <IntegrationBrandImg src={jiraMarkSvg} className="mr-2 size-4" />
+                )}
+                {isEdit ? "Reconnect selected site" : "Add Jira site"}
+              </Button>
+            </div>
+            {integrationsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : (
+              <Select
+                value={selectedJiraConnectionId || undefined}
+                onValueChange={setSelectedJiraConnectionId}
+                disabled={jiraConnections.length === 0}
+              >
+                <SelectTrigger className="w-full">
+                  <span className="flex min-w-0 flex-1 items-center gap-2">
+                    <IntegrationBrandImg src={jiraMarkSvg} className="size-4" />
+                    <SelectValue placeholder="Select Jira site" />
+                  </span>
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {jiraConnections.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.baseUrl || `Site #${c.id}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
         </div>
 
         <div className="space-y-2">
@@ -1221,13 +1416,16 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
               onValueChange={(key) => setJiraProjectKey(key)}
               disabled={!selectedJiraConnectionId}
             >
-              <SelectTrigger id="jiraProjectPick-shared">
+              <SelectTrigger id="jiraProjectPick-shared" className="w-full">
                 <SelectValue placeholder="Select project (or type key below)" />
               </SelectTrigger>
               <SelectContent className="max-h-60">
                 {jiraProjects.map((p) => (
                   <SelectItem key={p.id} value={p.key}>
-                    {p.key} — {p.name}
+                    <IntegrationBrandImg src={jiraMarkSvg} className="size-3.5" />
+                    <span>
+                      {p.key} — {p.name}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1251,8 +1449,9 @@ const ProjectGitJiraOAuthCard = forwardRef(function ProjectGitJiraOAuthCard(
             </p>
           )}
         </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </>
   );
 });
 

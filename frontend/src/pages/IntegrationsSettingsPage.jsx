@@ -13,6 +13,27 @@ import {
 } from "../api";
 import { toast } from "sonner";
 import { Loader2, Unplug, Plus } from "lucide-react";
+import githubMarkSvg from "@/assets/apps/GitHub.svg";
+import bitbucketMarkSvg from "@/assets/apps/BitBucket.svg";
+import jiraMarkSvg from "@/assets/apps/Jira.svg";
+import { cn } from "@/lib/utils";
+
+/** Brand mark for integration cards (matches ProjectGitJiraOAuthCard). */
+function IntegrationBrandMark({ src, className, invertOnDark }) {
+  return (
+    <img
+      src={src}
+      alt=""
+      aria-hidden
+      draggable={false}
+      className={cn(
+        "pointer-events-none shrink-0 object-contain",
+        invertOnDark && "dark:invert dark:opacity-90",
+        className,
+      )}
+    />
+  );
+}
 
 const IntegrationsSettingsPage = () => {
   const [status, setStatus] = useState(null);
@@ -154,7 +175,10 @@ const IntegrationsSettingsPage = () => {
         <div className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg">GitHub</CardTitle>
+              <div className="flex min-w-0 items-center gap-2">
+                <IntegrationBrandMark src={githubMarkSvg} invertOnDark className="size-6" />
+                <CardTitle className="text-lg">GitHub</CardTitle>
+              </div>
               <Button
                 type="button"
                 size="sm"
@@ -230,7 +254,10 @@ const IntegrationsSettingsPage = () => {
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg">Bitbucket</CardTitle>
+              <div className="flex min-w-0 items-center gap-2">
+                <IntegrationBrandMark src={bitbucketMarkSvg} className="size-6" />
+                <CardTitle className="text-lg">Bitbucket</CardTitle>
+              </div>
               <Button
                 type="button"
                 size="sm"
@@ -308,7 +335,10 @@ const IntegrationsSettingsPage = () => {
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg">Jira (Atlassian)</CardTitle>
+              <div className="flex min-w-0 items-center gap-2">
+                <IntegrationBrandMark src={jiraMarkSvg} className="size-6" />
+                <CardTitle className="text-lg">Jira (Atlassian)</CardTitle>
+              </div>
               <Button
                 type="button"
                 size="sm"
