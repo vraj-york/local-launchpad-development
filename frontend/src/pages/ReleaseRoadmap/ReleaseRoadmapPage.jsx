@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { fetchProjectById, fetchReleases } from "@/api";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/layouts/PageHeader";
+import { PageHeader } from "@/components/common/PageHeader";
 import { Spinner } from "@/components/ui/spinner";
 import { ReleaseRoadmap } from "./components/ReleaseRoadmap";
 

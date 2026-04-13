@@ -38,7 +38,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { PageHeader } from "@/layouts/PageHeader";
+import { PageHeader } from "@/components/common/PageHeader";
 import ProjectGitJiraOAuthCard from "./components/ProjectGitJiraOAuthCard";
 import { toast } from "sonner";
 

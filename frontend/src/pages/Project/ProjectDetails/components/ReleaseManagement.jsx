@@ -17,7 +17,7 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { PageHeader } from "@/layouts/PageHeader";
+import { PageHeader } from "@/components/common/PageHeader";
 import { Spinner } from "@/components/ui/spinner";
 import {
   CheckCircle,

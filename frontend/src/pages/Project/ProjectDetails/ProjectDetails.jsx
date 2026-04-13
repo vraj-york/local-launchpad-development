@@ -16,7 +16,7 @@ import {
   startProjectScratchAgent,
 } from "@/api";
 import ReleaseManagement from "./components/ReleaseManagement";
-import { PageHeader } from "@/layouts/PageHeader";
+import { PageHeader } from "@/components/common/PageHeader";
 import config from "@/config";
 import { toast } from "sonner";
 import { Label } from "@/components/ui/label";

@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/card";
 import ProjectCard from "./components/ProjectCard";
 import { CreateProjectButton } from "@/pages/Project/CreateProject";
-import { PageHeader } from "@/layouts/PageHeader";
+import { PageHeader } from "@/components/common/PageHeader";
 
 const Dashboard = () => {
   const [projects, setProjects] = useState([]);
