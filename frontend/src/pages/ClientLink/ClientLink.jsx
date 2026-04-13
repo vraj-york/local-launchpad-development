@@ -81,6 +81,9 @@ export const ClientLink = () => {
   /** Queued for next chat send: same image as preview replace, for Cursor + repo. */
   const [stagedChatReplacementImage, setStagedChatReplacementImage] =
     useState(null);
+  /** Design reference / screenshot for next chat (Cursor multimodal; not tied to pick). */
+  const [stagedChatReferenceImage, setStagedChatReferenceImage] =
+    useState(null);
   const [previewIframeAccessible, setPreviewIframeAccessible] = useState(null);
   /** Version selected for iframe preview (may differ from live active). */
   const [previewMeta, setPreviewMeta] = useState(null);
@@ -384,6 +387,7 @@ export const ClientLink = () => {
 
   const handleReplacementStagedForRepo = useCallback((payload) => {
     setStagedChatReplacementImage(payload);
+    setStagedChatReferenceImage(null);
   }, []);
 
   const handlePreviewReplaceImageResult = useCallback((r) => {
@@ -407,6 +411,7 @@ export const ClientLink = () => {
       setVisualPickMode(false);
       setPickedElementContext(null);
       setStagedChatReplacementImage(null);
+      setStagedChatReferenceImage(null);
     }
   }, [chatOpen]);
 
@@ -425,6 +430,7 @@ export const ClientLink = () => {
     setVisualPickMode(false);
     setPreviewIframeAccessible(null);
     setStagedChatReplacementImage(null);
+    setStagedChatReferenceImage(null);
   }, [iframeSrc]);
 
   useEffect(() => {
@@ -968,6 +974,8 @@ export const ClientLink = () => {
               onPreviewReplaceImageResult={handlePreviewReplaceImageResult}
               stagedChatReplacementImage={stagedChatReplacementImage}
               onStagedChatReplacementImageChange={setStagedChatReplacementImage}
+              stagedChatReferenceImage={stagedChatReferenceImage}
+              onStagedChatReferenceImageChange={setStagedChatReferenceImage}
               onReplacementStagedForRepo={handleReplacementStagedForRepo}
             />
           </ResizablePanel>

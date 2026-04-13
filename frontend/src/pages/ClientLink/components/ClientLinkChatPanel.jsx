@@ -35,6 +35,7 @@ import {
   ArrowUp,
   Check,
   Crosshair,
+  ImagePlus,
   RefreshCw,
   SquareMousePointer,
   Undo2,
@@ -52,13 +53,52 @@ import {
   parseContextBlockToInspectorCtx,
   splitFollowupWithElementContext,
 } from "./ClientLinkPreviewPicker";
-import { parseDataUrlParts } from "@/lib/previewImageReplace";
+import {
+  parseDataUrlParts,
+  PREVIEW_REPLACE_IMAGE_MAX_BYTES,
+} from "@/lib/previewImageReplace";
 import { PreviewReplaceImageButton } from "./PreviewReplaceImageButton";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import Lottie from "lottie-react";
 import logo from "../../../assets/fevicon.png";
 import websiteChangesAnimation from "../../../assets/animations/website-changes-animations.json";
+
+/**
+ * @param {File} file
+ * @returns {Promise<{ previewDataUrl: string; mimeType: string; width: number; height: number }>}
+ */
+async function readImageFileAsChatStaging(file) {
+  if (!file?.type?.startsWith("image/")) {
+    throw new Error("Drop a PNG, JPG, WebP, or other image file.");
+  }
+  if (file.size > PREVIEW_REPLACE_IMAGE_MAX_BYTES) {
+    throw new Error("Image is too large (max 5 MB).");
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const previewDataUrl = reader.result;
+      if (typeof previewDataUrl !== "string") {
+        reject(new Error("Could not read image."));
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        resolve({
+          previewDataUrl,
+          mimeType: file.type || "image/png",
+          width: img.naturalWidth || 512,
+          height: img.naturalHeight || 512,
+        });
+      };
+      img.onerror = () => reject(new Error("Could not read image."));
+      img.src = previewDataUrl;
+    };
+    reader.onerror = () => reject(new Error("Could not read file."));
+    reader.readAsDataURL(file);
+  });
+}
 
 const USER_BUBBLE_CLASS =
   "ml-6 rounded-lg rounded-br-xs bg-primary px-3 py-2 text-sm text-primary-foreground shadow-xs";
@@ -441,9 +481,12 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   onPreviewReplaceImageResult = () => {},
   stagedChatReplacementImage = null,
   onStagedChatReplacementImageChange = () => {},
+  stagedChatReferenceImage = null,
+  onStagedChatReferenceImageChange = () => {},
   onReplacementStagedForRepo = () => {},
 }) {
   const [chatInput, setChatInput] = useState("");
+  const [composerDragOver, setComposerDragOver] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatSending, setChatSending] = useState(false);
   const [chatPolling, setChatPolling] = useState(false);
@@ -460,6 +503,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const [composerEmailError, setComposerEmailError] = useState("");
   const [releaseAgentBusy, setReleaseAgentBusy] = useState(false);
 
+  const chatImageFileInputRef = useRef(null);
   const lastAgentSnapshotRef = useRef({
     releaseId: null,
     status: null,
@@ -643,6 +687,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
         isReverted: Boolean(row.isReverted),
         revertCommitSha: row.revertCommitSha || null,
         figmaConversionId: row.figmaConversionId ?? null,
+        attachmentPreviewUrl: row.attachmentPreviewUrl || null,
       })),
     [],
   );
@@ -869,6 +914,46 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     waitForClientLinkAutoMerge,
   ]);
 
+  const stageReferenceImageFromFile = useCallback(
+    async (file) => {
+      if (composerDisabled) return;
+      try {
+        const staged = await readImageFileAsChatStaging(file);
+        onStagedChatReferenceImageChange(staged);
+        onStagedChatReplacementImageChange(null);
+      } catch (err) {
+        toast.error(err?.message || "Could not attach image.");
+      }
+    },
+    [
+      composerDisabled,
+      onStagedChatReferenceImageChange,
+      onStagedChatReplacementImageChange,
+    ],
+  );
+
+  const handleComposerDrop = useCallback(
+    async (e) => {
+      e.preventDefault();
+      setComposerDragOver(false);
+      if (composerDisabled) return;
+      const file = Array.from(e.dataTransfer?.files || []).find((f) =>
+        f.type?.startsWith("image/"),
+      );
+      if (file) await stageReferenceImageFromFile(file);
+    },
+    [composerDisabled, stageReferenceImageFromFile],
+  );
+
+  const handleChatImageFileChange = useCallback(
+    (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (file) void stageReferenceImageFromFile(file);
+    },
+    [stageReferenceImageFromFile],
+  );
+
   const handleSendChat = useCallback(async () => {
     const replacementPayload =
       stagedChatReplacementImage &&
@@ -891,6 +976,31 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           })()
         : null;
 
+    const referencePayload =
+      stagedChatReferenceImage &&
+      !replacementPayload &&
+      (() => {
+        const raw = stagedChatReferenceImage.previewDataUrl;
+        const parts = typeof raw === "string" ? parseDataUrlParts(raw) : null;
+        if (!parts?.base64) return null;
+        return {
+          data: parts.base64,
+          mimeType:
+            stagedChatReferenceImage.mimeType ||
+            parts.mimeType ||
+            "image/png",
+          width: stagedChatReferenceImage.width,
+          height: stagedChatReferenceImage.height,
+        };
+      })();
+
+    if (replacementPayload && stagedChatReferenceImage?.previewDataUrl) {
+      toast.error(
+        "Remove the design reference or the element replacement image — only one attachment per message.",
+      );
+      return;
+    }
+
     let userPart = chatInput.trim();
     if (
       !userPart &&
@@ -900,7 +1010,17 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       userPart =
         "Replace the selected asset with the attached reference image. Save it under src/assets/ (e.g. src/assets/images/) and update imports or references in code.";
     }
-    if (!userPart || !projectSlug?.trim()) {
+    if (referencePayload && !userPart.trim()) {
+      toast.error(
+        "Add a message describing what you want for the attached image.",
+      );
+      return;
+    }
+    if (!userPart && !replacementPayload && !referencePayload) {
+      toast.error("Enter a message or attach an image.");
+      return;
+    }
+    if (!projectSlug?.trim()) {
       toast.error("Enter a message.");
       return;
     }
@@ -920,7 +1040,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     const attachmentPreviewUrl =
       replacementPayload && stagedChatReplacementImage?.previewDataUrl
         ? stagedChatReplacementImage.previewDataUrl
-        : null;
+        : referencePayload && stagedChatReferenceImage?.previewDataUrl
+          ? stagedChatReferenceImage.previewDataUrl
+          : null;
 
     const rid = Number(effectiveChatReleaseId);
     setChatSending(true);
@@ -936,12 +1058,14 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       setChatInput("");
       onPickedElementContextChange(null);
       onStagedChatReplacementImageChange(null);
+      onStagedChatReferenceImageChange(null);
       await clientLinkSendFollowup(
         projectSlug,
         rid,
         text,
         identityEmail,
         replacementPayload,
+        replacementPayload ? null : referencePayload,
       );
       lastAgentSnapshotRef.current = {
         releaseId: rid,
@@ -994,11 +1118,13 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     identityEmail,
     isLocked,
     onPickedElementContextChange,
+    onStagedChatReferenceImageChange,
     onStagedChatReplacementImageChange,
     pickedElementContext,
     pollUntilAgentSettles,
     projectSlug,
     refreshChatMessages,
+    stagedChatReferenceImage,
     stagedChatReplacementImage,
   ]);
 
@@ -1332,8 +1458,31 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
               </div>
 
               <div className="shrink-0 space-y-2 border-t border-border bg-card px-4 py-3">
-                <div className="rounded-lg border border-slate-200/90 bg-white shadow-sm dark:border-border dark:bg-card">
-                  <div className="flex flex-col min-h-[48px] items-start gap-0 px-2 py-2">
+                <div
+                  className={cn(
+                    "rounded-lg border border-slate-200/90 bg-white shadow-sm transition-shadow dark:border-border dark:bg-card",
+                    composerDragOver &&
+                      !composerDisabled &&
+                      "ring-2 ring-primary/40 ring-offset-2 ring-offset-card",
+                  )}
+                  onDragOver={(e) => {
+                    if (composerDisabled) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "copy";
+                    setComposerDragOver(true);
+                  }}
+                  onDragLeave={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget)) {
+                      setComposerDragOver(false);
+                    }
+                  }}
+                  onDrop={handleComposerDrop}
+                >
+                  <div
+                    className="flex flex-col min-h-[48px] items-start gap-0 px-2 py-2"
+                    role="group"
+                    aria-label="Chat message composer. Drop an image here to attach a design reference."
+                  >
                     {pickedElementContext ? (
                       <div className="flex w-full flex-col gap-1.5 self-stretch">
                         <div className="flex w-full flex-wrap items-center gap-2">
@@ -1400,12 +1549,68 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                         ) : null}
                       </div>
                     ) : null}
+                    {stagedChatReferenceImage?.previewDataUrl ? (
+                      <div className="flex w-full flex-wrap items-start gap-2 px-0.5 pt-0.5">
+                        <div className="group relative shrink-0">
+                          <div
+                            className="overflow-hidden rounded-xl border border-slate-200/90 bg-linear-to-br from-slate-50 to-sky-50/80 p-0.5 shadow-sm ring-1 ring-sky-500/25 dark:border-border dark:from-sky-950/40 dark:to-indigo-950/30 dark:ring-sky-400/20"
+                            title="Design reference — sends with your next message"
+                          >
+                            <img
+                              src={stagedChatReferenceImage.previewDataUrl}
+                              alt=""
+                              className="size-16 rounded-[10px] object-cover"
+                              draggable={false}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-slate-200/90 bg-white text-slate-600 shadow-md transition hover:bg-red-50 hover:text-red-600 dark:border-border dark:bg-card dark:hover:bg-red-950/50 dark:hover:text-red-300"
+                            aria-label="Remove design reference image"
+                            disabled={composerDisabled}
+                            onClick={() => onStagedChatReferenceImageChange(null)}
+                          >
+                            <X className="size-3.5" aria-hidden />
+                          </button>
+                        </div>
+                        <p className="min-w-0 max-w-[14rem] pt-1 text-[10px] font-medium leading-snug text-sky-900 dark:text-sky-200/95">
+                          Design reference attached — drop another image to
+                          replace. Paste from clipboard also works.
+                        </p>
+                      </div>
+                    ) : null}
                     <Textarea
                       placeholder="Type here to reflect changes..."
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
                       disabled={composerDisabled}
                       className="min-h-[40px] flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-sm shadow-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0 dark:placeholder:text-muted-foreground"
+                      onPaste={(e) => {
+                        if (composerDisabled) return;
+                        const cd = e.clipboardData;
+                        if (!cd) return;
+                        let img =
+                          Array.from(cd.files || []).find((f) =>
+                            f.type?.startsWith("image/"),
+                          ) || null;
+                        if (!img && cd.items?.length) {
+                          for (const item of Array.from(cd.items)) {
+                            if (
+                              item.kind === "file" &&
+                              item.type?.startsWith("image/")
+                            ) {
+                              const f = item.getAsFile();
+                              if (f) {
+                                img = f;
+                                break;
+                              }
+                            }
+                          }
+                        }
+                        if (!img) return;
+                        e.preventDefault();
+                        void stageReferenceImageFromFile(img);
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
@@ -1520,6 +1725,37 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                           {visualPickSupported
                             ? "Turn this on and select the part of the UI you'd like to edit"
                             : visualPickDisabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                      <input
+                        ref={chatImageFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
+                        tabIndex={-1}
+                        aria-hidden
+                        onChange={handleChatImageFileChange}
+                      />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="secondary"
+                              disabled={!canMutateChat || composerDisabled}
+                              className="h-9 w-9 shrink-0 rounded-full disabled:opacity-40"
+                              aria-label="Attach design reference image"
+                              onClick={() =>
+                                chatImageFileInputRef.current?.click()
+                              }
+                            >
+                              <ImagePlus className="size-4" aria-hidden />
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-[260px] text-xs">
+                          Attach a screenshot or mockup (same as drag-and-drop)
                         </TooltipContent>
                       </Tooltip>
                       <Button

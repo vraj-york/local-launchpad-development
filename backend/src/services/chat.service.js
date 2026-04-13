@@ -37,7 +37,12 @@ import {
   deployVersionArtifactsToProjectFolder,
 } from "./project.service.js";
 import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
-import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
+import {
+  waitForAgentBranchTipSha,
+  pollBranchTipUntilAdvancesBeyond,
+  pollBranchTipTail,
+  AGENT_BRANCH_TIP_POLL_MS,
+} from "../utils/agentBranchTipWait.js";
 
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
 
@@ -55,7 +60,7 @@ You must:
 5) Remove stale srcset entries if you replace a raster image.
 `;
 
-function sanitizeClientLinkReplacementImage(raw) {
+function sanitizeChatImagePayload(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   let data = typeof raw.data === "string" ? raw.data.trim() : "";
   if (data.includes(",")) data = data.split(",").pop() || "";
@@ -77,7 +82,15 @@ function sanitizeClientLinkReplacementImage(raw) {
   return { data, mimeType: mime, width: w, height: h };
 }
 
-function replacementToCursorImages(sanitized) {
+/**
+ * Maps a sanitized chat image to Cursor Cloud Agents `prompt.images[]` entries.
+ * Matches POST https://api.cursor.com/v0/agents (and follow-up) shape:
+ * `{ data: "<base64>", dimension: { width, height } }` — see Cursor API docs.
+ * Used for both flows below; the API does not distinguish image “kind”, only our text instructions differ.
+ * @param {{ data: string, width: number, height: number } | null} sanitized
+ * @returns {Array<{ data: string, dimension: { width: number, height: number } }>}
+ */
+function buildCursorAgentPromptImages(sanitized) {
   if (!sanitized) return [];
   return [
     {
@@ -423,6 +436,108 @@ async function resolveClientChatRepository(project) {
 }
 
 /**
+ * If `tipSha` still matches the prior user message’s applied commit, Git has not yet moved for
+ * this turn — keep polling, then take a short tail window for trailing pushes.
+ */
+async function refineBranchTipWhenMatchesPreviousApplied(
+  project,
+  releaseId,
+  chatHistoryId,
+  repo,
+  branch,
+  tipSha,
+) {
+  if (!tipSha) {
+    return null;
+  }
+  const rid = Number(releaseId);
+  const mid = Number(chatHistoryId);
+  if (!Number.isInteger(rid) || rid < 1 || !Number.isInteger(mid) || mid < 1) {
+    return tipSha;
+  }
+  const prevUser = await prisma.chatHistory.findFirst({
+    where: {
+      projectId: project.id,
+      releaseId: rid,
+      role: "user",
+      isActiveChat: true,
+      id: { lt: mid },
+      appliedCommitSha: { not: null },
+    },
+    orderBy: { id: "desc" },
+    select: { appliedCommitSha: true },
+  });
+  const prevApplied = (prevUser?.appliedCommitSha || "").trim();
+  if (!prevApplied || tipSha.toLowerCase() !== prevApplied.toLowerCase()) {
+    return tipSha;
+  }
+  let out = tipSha;
+  const advanced = await pollBranchTipUntilAdvancesBeyond({ ...repo, branch }, prevApplied);
+  if (advanced) {
+    out = advanced;
+  }
+  const tail = await pollBranchTipTail({ ...repo, branch }, 8);
+  if (tail) {
+    out = tail;
+  }
+  return out;
+}
+
+/**
+ * If Git reports the agent branch still ahead of our captured SHA, keep snapping to the branch tip
+ * until compare is identical (handles intermediate commits without relying only on poll timing).
+ */
+async function advanceCapturedShaToAgentBranchTip(repo, branch, tipSha) {
+  if (!tipSha || !GIT_SHA_RE.test(tipSha)) {
+    return tipSha;
+  }
+  const b = typeof branch === "string" ? branch.trim() : "";
+  if (!b) {
+    return tipSha;
+  }
+  let out = tipSha.trim();
+  for (let i = 0; i < 18; i++) {
+    const cmp = await scmCompareRefs(
+      repo.provider,
+      repo.owner,
+      repo.repo,
+      out,
+      b,
+      repo.token,
+    );
+    if (!cmp.ok) {
+      break;
+    }
+    const st = String(cmp.data?.status || "").toLowerCase();
+    if (st === "identical") {
+      break;
+    }
+    if (st === "ahead") {
+      const head = await scmGetBranchSha(
+        repo.provider,
+        repo.owner,
+        repo.repo,
+        b,
+        repo.token,
+      );
+      if (!head?.sha) {
+        await new Promise((r) => setTimeout(r, AGENT_BRANCH_TIP_POLL_MS));
+        continue;
+      }
+      if (head.sha.toLowerCase() === out.toLowerCase()) {
+        await new Promise((r) => setTimeout(r, AGENT_BRANCH_TIP_POLL_MS));
+        continue;
+      }
+      out = head.sha;
+      await new Promise((r) => setTimeout(r, AGENT_BRANCH_TIP_POLL_MS));
+      continue;
+    }
+    break;
+  }
+  return out;
+}
+
+/**
  * Set ChatHistory.appliedCommitSha from the remote branch tip where Cursor actually commits.
  * Branch name is taken from Cursor GET agent `target.branchName` first, then DB `targetBranchName`.
  * Resolves FigmaConversion by ChatHistory id === pendingClientChatMessageId.
@@ -444,6 +559,7 @@ async function syncPendingMessageCommitSha(project, conv) {
       releaseId,
       pendingClientChatMessageId: chatHistoryId,
     },
+    orderBy: { id: "desc" },
     select: { id: true, targetBranchName: true, agentId: true },
   });
   if (!figmaRow) {
@@ -495,10 +611,20 @@ async function syncPendingMessageCommitSha(project, conv) {
     if (!head?.sha) {
       return null;
     }
-    const tipSha = await waitForAgentBranchTipSha({ ...repo, branch });
+    let tipSha = await waitForAgentBranchTipSha({ ...repo, branch });
     if (!tipSha) {
       return null;
     }
+    tipSha = await refineBranchTipWhenMatchesPreviousApplied(
+      project,
+      releaseId,
+      chatHistoryId,
+      repo,
+      branch,
+      tipSha,
+    );
+    tipSha = await advanceCapturedShaToAgentBranchTip(repo, branch, tipSha);
+
     await prisma.$transaction([
       prisma.chatHistory.updateMany({
         where: {
@@ -706,6 +832,7 @@ export async function clientLinkFollowup({
   promptText,
   clientEmail,
   replacementImage: replacementImageRaw = null,
+  referenceImage: referenceImageRaw = null,
 }) {
   const project = await resolveProjectBySlug(slug);
   assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
@@ -714,8 +841,16 @@ export async function clientLinkFollowup({
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
-  const sanitizedReplacement =
-    sanitizeClientLinkReplacementImage(replacementImageRaw);
+  const sanitizedReplacement = sanitizeChatImagePayload(replacementImageRaw);
+  const sanitizedReference = sanitizeChatImagePayload(referenceImageRaw);
+
+  if (sanitizedReplacement && sanitizedReference) {
+    throw new ApiError(
+      400,
+      "Send only one attachment per message: either an element replacement image or a design reference image.",
+    );
+  }
+
   let storedText = typeof promptText === "string" ? promptText.trim() : "";
   if (!storedText && sanitizedReplacement) {
     storedText =
@@ -739,10 +874,18 @@ export async function clientLinkFollowup({
     );
   }
 
-  let textForCursor = sanitizedReplacement
-    ? `${storedText}${CLIENT_REPO_IMAGE_INSTRUCTION}`
-    : storedText;
-  const cursorImages = replacementToCursorImages(sanitizedReplacement);
+  // Cursor wire format is the same for both; behavior is split by instructions + replacement-only Git commit.
+  // 1) Element asset replacement: body.replacementImage → commit to branch + CLIENT_REPO_IMAGE_INSTRUCTION.
+  // 2) Design reference: body.referenceImage → no repo commit; user message alone is the prompt text (no extra instruction block).
+  // Never send both (validated above). Images are passed as prompt.images per Cursor v0/agents API.
+  let textForCursor = storedText;
+  let cursorImages = [];
+  if (sanitizedReplacement) {
+    textForCursor = `${storedText}${CLIENT_REPO_IMAGE_INSTRUCTION}`;
+    cursorImages = buildCursorAgentPromptImages(sanitizedReplacement);
+  } else if (sanitizedReference) {
+    cursorImages = buildCursorAgentPromptImages(sanitizedReference);
+  }
 
   const userMessage = await prisma.chatHistory.create({
     data: {
@@ -1672,6 +1815,19 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
         const repo = await resolveClientChatRepository(project);
         requestedSha = await waitForAgentBranchTipSha({ ...repo, branch: branchForHead });
         if (requestedSha && pendingOk) {
+          requestedSha = await refineBranchTipWhenMatchesPreviousApplied(
+            project,
+            conv.releaseId,
+            pendingMid,
+            repo,
+            branchForHead,
+            requestedSha,
+          );
+          requestedSha = await advanceCapturedShaToAgentBranchTip(
+            repo,
+            branchForHead,
+            requestedSha,
+          );
           await prisma.chatHistory.updateMany({
             where: {
               id: pendingMid,

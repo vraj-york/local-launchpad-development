@@ -31,17 +31,24 @@ export function SelectClientLinkVersion({
   const [switching, setSwitching] = useState(false);
   const [selectedValue, setSelectedValue] = useState("");
 
+  const hiddenReleaseStatuses = new Set(["draft", "skip"]);
+
+  const isHiddenReleaseStatus = (r) =>
+    hiddenReleaseStatuses.has(String(r?.status ?? "").toLowerCase());
+
+  /** Client link: never list draft or skipped lifecycle releases. */
+  const visibleReleases = releases.filter((r) => !isHiddenReleaseStatus(r));
+
   const getVersionById = (versionId) =>
-    releases
+    visibleReleases
       .flatMap((r) => r.versions || [])
       .find((v) => String(v.id) === String(versionId));
-
   const getReleaseByVersionId = (versionId) =>
-    releases.find((r) =>
+    visibleReleases.find((r) =>
       (r.versions || []).some((v) => String(v.id) === String(versionId)),
     );
 
-  const activeVersionId = releases
+  const activeVersionId = visibleReleases
     .flatMap((r) => r.versions || [])
     .find((v) => v.isActive)?.id;
 
@@ -112,7 +119,7 @@ export function SelectClientLinkVersion({
     }
   };
 
-  const hasAnyVersions = releases.some(
+  const hasAnyVersions = visibleReleases.some(
     (r) => Array.isArray(r.versions) && r.versions.length > 0,
   );
 
@@ -177,7 +184,7 @@ export function SelectClientLinkVersion({
             "select-viewport-scrollbar max-h-[min(18rem,var(--radix-select-content-available-height))] min-h-0 max-w-[min(28rem,calc(100vw-1.5rem))]",
           )}
         >
-          {releases.map((release) => {
+          {visibleReleases.map((release) => {
             const versions = release.versions || [];
             if (versions.length === 0) return null;
             return (
