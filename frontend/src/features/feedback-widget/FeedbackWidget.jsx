@@ -27,8 +27,8 @@ import {
 import {
   startChunkedScreenRecording,
 } from "./services/screenRecording.service";
-import successAnimation from "@/assets/success.json";
-import errorAnimation from "@/assets/error.json";
+import successAnimation from "@/assets/animations/success.json";
+import errorAnimation from "@/assets/animations/error.json";
 import { cn } from "@/lib/utils";
 
 const lottieRenderer = { preserveAspectRatio: "xMidYMid meet" };

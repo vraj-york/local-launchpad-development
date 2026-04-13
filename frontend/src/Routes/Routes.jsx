@@ -5,17 +5,17 @@ import {
   Routes as RouterRoutes,
 } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import LoginPage from "../pages/LoginPage";
-import AuthCallbackPage from "../pages/AuthCallbackPage";
+import LoginPage from "@/pages/Authentication/LoginPage";
+import AuthCallbackPage from "@/pages/Authentication/AuthCallbackPage";
 import { MainLayout } from "@/layouts/MainLayout";
-import ProjectDetails from "@/pages/ProjectDetails";
+import ProjectDetails from "@/pages/Project/ProjectDetails";
 import Dashboard from "@/pages/Dashboard";
-import Projects from "@/pages/Projects";
-import CreateProject from "@/pages/CreateProject";
-import IntegrationsCallbackPage from "@/pages/IntegrationsCallbackPage";
-import IntegrationsSettingsPage from "@/pages/IntegrationsSettingsPage";
+import Projects from "@/pages/Project/Projects";
+import CreateProject from "@/pages/Project/CreateProject";
+import IntegrationsCallbackPage from "@/pages/Integrations/IntegrationsCallbackPage";
+import IntegrationsSettingsPage from "@/pages/Integrations/IntegrationsSettingsPage";
 import { ClientLink } from "@/pages/ClientLink";
-import ReleaseRoadmapPage from "@/pages/ReleaseRoadmapPage";
+import ReleaseRoadmapPage from "@/pages/ReleaseRoadmap";
 
 export const Routes = () => {
   const { user, loading } = useAuth();
