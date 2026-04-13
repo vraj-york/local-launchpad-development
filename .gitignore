@@ -1,3 +1,6 @@
+# macOS Finder metadata (not needed in the repo)
+.DS_Store
+
 # Root env (secrets) – use .env.example as template
 .env
 .env.local
