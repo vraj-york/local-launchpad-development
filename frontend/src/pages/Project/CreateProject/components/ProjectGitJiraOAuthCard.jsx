@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import githubMarkSvg from "@/assets/apps/GitHub.svg";
-import bitbucketMarkSvg from "@/assets/apps/Bitbucket.svg";
+import bitbucketMarkSvg from "@/assets/apps/BitBucket.svg";
 import jiraMarkSvg from "@/assets/apps/Jira.svg";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";

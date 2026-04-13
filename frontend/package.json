@@ -17,7 +17,7 @@
     "logs": "pm2 logs launchpad-frontend",
     "monit": "pm2 monit",
     "status": "pm2 status",
-    "prepare": "husky",
+    "prepare": "cd .. && husky",
     "lint": {
       "*.{js,ts,jsx,tsx}": [
         "eslint --fix",
