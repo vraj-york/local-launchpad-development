@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -e
+echo "husky(pre-push): running frontend production build..."
+cd frontend && npm run build
