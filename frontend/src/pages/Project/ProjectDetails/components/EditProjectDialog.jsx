@@ -29,7 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -544,90 +544,89 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-5xl max-h-[min(90vh,880px)] overflow-y-auto border-border bg-background shadow-xl p-0 gap-0"
+        className="max-w-[calc(100%-2rem)] sm:max-w-4xl max-h-[90vh] overflow-y-auto border-border bg-background shadow-xl p-0 gap-0"
         showCloseButton
       >
-        <div className="px-6 pt-6 pb-2 border-b border-border bg-primary/10">
+        <div className="px-6 pt-6 pb-3 border-b border-border">
           <DialogHeader className="text-left space-y-1">
-            <DialogTitle>
+            <DialogTitle className="text-xl font-semibold tracking-tight text-foreground">
               Edit project
             </DialogTitle>
+            <p className="text-sm text-muted-foreground font-normal">
+              Update workspace details and integrations. OAuth projects use the same
+              code host and Jira layout as create project.
+            </p>
           </DialogHeader>
         </div>
 
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
-          <Card className="border-border shadow-sm overflow-hidden">
-            <CardHeader className="py-0 px-4 bg-muted/50 border-b border-border">
-              <CardTitle className="text-sm font-medium text-foreground">
-                Project info
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-4">
-              <div className="space-y-2">
-                <Label>Project name</Label>
-                <Input
-                  value={project.name ?? ""}
-                  disabled
-                  className="bg-muted/60 text-muted-foreground"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="edit-description">Description</Label>
-                <Textarea
-                  id="edit-description"
-                  placeholder="What is this project about?"
-                  value={projectDescription}
-                  onChange={(e) => setProjectDescription(e.target.value)}
-                  rows={4}
-                  className="resize-y min-h-[100px]"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <form onSubmit={handleSubmit} className="px-6 py-6 space-y-6">
+          <Card className="border-border shadow-sm">
+            <CardContent className="space-y-6 pt-6">
+              <div className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="edit-assigned-user-emails">
-                    Assigned users (optional)
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    Hub emails for this workspace&apos;s linked project, or
-                    type addresses manually.
-                  </p>
-                  <EmailMultiSelect
-                    id="edit-assigned-user-emails"
-                    value={assignedUserEmailTags}
-                    onChange={setAssignedUserEmailTags}
-                    suggestions={assignedHubSuggestions}
-                    error={validationErrors.assignedUserEmails}
-                    placeholder="Email, then Enter"
+                  <Label>Project name</Label>
+                  <Input
+                    value={project.name ?? ""}
+                    disabled
+                    className="bg-muted/60 text-muted-foreground"
                   />
-                  {validationErrors.assignedUserEmails && (
-                    <p className="text-sm text-destructive">
-                      {validationErrors.assignedUserEmails}
-                    </p>
-                  )}
                 </div>
+
                 <div className="space-y-2">
-                  <Label htmlFor="edit-stakeholder-emails">
-                    Stakeholders (optional)
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    Add manually. Only these emails can confirm a public release
-                    lock.
-                  </p>
-                  <EmailMultiSelect
-                    id="edit-stakeholder-emails"
-                    value={stakeholderEmailTags}
-                    onChange={setStakeholderEmailTags}
-                    suggestions={[]}
-                    error={validationErrors.stakeholderEmails}
-                    placeholder="Email, then Enter"
+                  <Label htmlFor="edit-description">Description</Label>
+                  <Textarea
+                    id="edit-description"
+                    placeholder="What is this project about?"
+                    value={projectDescription}
+                    onChange={(e) => setProjectDescription(e.target.value)}
+                    rows={4}
+                    className="resize-y min-h-[100px]"
                   />
-                  {validationErrors.stakeholderEmails && (
-                    <p className="text-sm text-destructive">
-                      {validationErrors.stakeholderEmails}
+                </div>
+
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-assigned-user-emails">
+                      Assigned users (optional)
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Pick team emails or type addresses manually.
                     </p>
-                  )}
+                    <EmailMultiSelect
+                      id="edit-assigned-user-emails"
+                      value={assignedUserEmailTags}
+                      onChange={setAssignedUserEmailTags}
+                      suggestions={assignedHubSuggestions}
+                      error={validationErrors.assignedUserEmails}
+                      placeholder="Email, then Enter"
+                    />
+                    {validationErrors.assignedUserEmails && (
+                      <p className="text-sm text-destructive mt-1">
+                        {validationErrors.assignedUserEmails}
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-stakeholder-emails">
+                      Stakeholders (optional)
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Only these emails can use lock release, report issues and AI chat feature.
+                    </p>
+                    <EmailMultiSelect
+                      id="edit-stakeholder-emails"
+                      value={stakeholderEmailTags}
+                      onChange={setStakeholderEmailTags}
+                      suggestions={[]}
+                      error={validationErrors.stakeholderEmails}
+                      placeholder="Email, then Enter"
+                    />
+                    {validationErrors.stakeholderEmails && (
+                      <p className="text-sm text-destructive mt-1">
+                        {validationErrors.stakeholderEmails}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </CardContent>
@@ -646,17 +645,20 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
             />
           ) : (
           <>
-          <Card className="border-border shadow-sm overflow-hidden">
-            <CardHeader className="py-3 px-4 bg-muted/50 border-b border-border">
-              <div className="flex items-center justify-between gap-4">
-                <CardTitle className="text-sm font-medium text-foreground">
-                  GitHub configuration
-                </CardTitle>
+          <Card className="border-border shadow-sm">
+            <CardContent className="space-y-6 pt-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-foreground">GitHub configuration</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Manual token mode when this project was not linked via OAuth.
+                  </p>
+                </div>
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
-                  className="text-muted-foreground hover:text-foreground shrink-0 h-8"
+                  className="shrink-0 self-start"
                   onClick={() => setShowGithubGuide((v) => !v)}
                 >
                   <HelpCircle className="h-4 w-4 mr-1.5" />
@@ -668,10 +670,9 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   )}
                 </Button>
               </div>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-4">
+              <div className="space-y-4">
               {useOAuthGithub && (
-                <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground space-y-2">
+                <div className="rounded-lg border border-border bg-muted/20 p-4 text-sm text-muted-foreground space-y-2 transition-colors">
                   <p>
                     <span className="font-medium text-foreground">GitHub via OAuth.</span>{" "}
                     Tokens stay on the server. Update the linked account under{" "}
@@ -789,7 +790,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   </ol>
                 </div>
               )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="edit-githubUsername">GitHub username</Label>
                   <Input
@@ -905,20 +906,24 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   </div>
                 )}
               </div>
+              </div>
             </CardContent>
           </Card>
 
-          <Card className="border-border shadow-sm overflow-hidden">
-            <CardHeader className="py-3 px-4 bg-muted/50 border-b border-border">
-              <div className="flex items-center justify-between gap-4">
-                <CardTitle className="text-sm font-medium text-foreground">
-                  Jira configuration
-                </CardTitle>
+          <Card className="border-border shadow-sm">
+            <CardContent className="space-y-6 pt-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-foreground">Jira configuration</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Manual API token mode when this project was not linked via OAuth.
+                  </p>
+                </div>
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
-                  className="text-muted-foreground hover:text-foreground shrink-0 h-8"
+                  className="shrink-0 self-start"
                   onClick={() => setShowJiraGuide((v) => !v)}
                 >
                   <HelpCircle className="h-4 w-4 mr-1.5" />
@@ -930,10 +935,9 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   )}
                 </Button>
               </div>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-4">
+              <div className="space-y-4">
               {useOAuthJira && (
-                <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground space-y-2">
+                <div className="rounded-lg border border-border bg-muted/20 p-4 text-sm text-muted-foreground space-y-2 transition-colors">
                   <p>
                     <span className="font-medium text-foreground">Jira via OAuth.</span>{" "}
                     Manage the Atlassian link under{" "}
@@ -1048,7 +1052,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   </ol>
                 </div>
               )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="edit-jiraBaseUrl">Jira site URL</Label>
                   <Input
@@ -1132,6 +1136,7 @@ const EditProjectDialog = ({ open, onOpenChange, project, onSaved }) => {
                   )}
                 </div>
               )}
+              </div>
             </CardContent>
           </Card>
           </>
