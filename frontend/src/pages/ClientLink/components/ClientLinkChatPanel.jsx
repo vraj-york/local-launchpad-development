@@ -35,6 +35,7 @@ import {
   ArrowUp,
   Check,
   Crosshair,
+  ImagePlus,
   RefreshCw,
   SquareMousePointer,
   Undo2,
@@ -52,13 +53,59 @@ import {
   parseContextBlockToInspectorCtx,
   splitFollowupWithElementContext,
 } from "./ClientLinkPreviewPicker";
-import { parseDataUrlParts } from "@/lib/previewImageReplace";
+import {
+  parseDataUrlParts,
+  PREVIEW_REPLACE_IMAGE_MAX_BYTES,
+} from "@/lib/previewImageReplace";
 import { PreviewReplaceImageButton } from "./PreviewReplaceImageButton";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import Lottie from "lottie-react";
 import logo from "../../../assets/fevicon.png";
 import websiteChangesAnimation from "../../../assets/animations/website-changes-animations.json";
+
+/**
+ * @param {File} file
+ * @returns {Promise<{ previewDataUrl: string; mimeType: string; width: number; height: number }>}
+ */
+async function readImageFileAsChatStaging(file) {
+  if (!file?.type?.startsWith("image/")) {
+    throw new Error("Drop a PNG, JPG, WebP, or other image file.");
+  }
+  if (file.size > PREVIEW_REPLACE_IMAGE_MAX_BYTES) {
+    throw new Error("Image is too large (max 5 MB).");
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const previewDataUrl = reader.result;
+      if (typeof previewDataUrl !== "string") {
+        reject(new Error("Could not read image."));
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        resolve({
+          previewDataUrl,
+          mimeType: file.type || "image/png",
+          width: img.naturalWidth || 512,
+          height: img.naturalHeight || 512,
+        });
+      };
+      img.onerror = () => reject(new Error("Could not read image."));
+      img.src = previewDataUrl;
+    };
+    reader.onerror = () => reject(new Error("Could not read file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Matches backend `MAX_REFERENCE_IMAGES_PER_MESSAGE`. */
+const MAX_STAGED_REFERENCE_IMAGES = 6;
+
+/** Small inline thumb for chat / composer attachments; click opens full preview. */
+const CHAT_ATTACHMENT_THUMB_CLASS =
+  "h-9 w-9 shrink-0 rounded-md object-cover pointer-events-none";
 
 const USER_BUBBLE_CLASS =
   "ml-6 rounded-lg rounded-br-xs bg-primary px-3 py-2 text-sm text-primary-foreground shadow-xs";
@@ -292,6 +339,33 @@ function isCursorAgentSuccessTerminal(status) {
   );
 }
 
+function UserMessageAttachmentThumbs({ urls, onOpen }) {
+  const list = Array.isArray(urls)
+    ? urls.filter((u) => typeof u === "string" && u.trim())
+    : [];
+  if (!list.length) return null;
+  return (
+    <div className="mb-2 flex w-full flex-wrap justify-start gap-1.5">
+      {list.map((url, i) => (
+        <button
+          key={`att-${i}`}
+          type="button"
+          className="overflow-hidden rounded-lg border border-white/25 bg-white/10 p-0.5 shadow-sm ring-1 ring-white/20 cursor-pointer transition hover:bg-white/15 hover:ring-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          aria-label={`View attached image ${i + 1} of ${list.length}`}
+          onClick={() => onOpen?.(url)}
+        >
+          <img
+            src={url}
+            alt=""
+            className={CHAT_ATTACHMENT_THUMB_CLASS}
+            draggable={false}
+          />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const ChatMessageRow = React.memo(function ChatMessageRow({
   msg,
   index,
@@ -301,6 +375,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   revertLoadingKey,
   chatMayMutate,
   onRequestRevertConfirm,
+  onOpenImagePreview,
 }) {
   const rowKey = msg.id ?? msg.key ?? null;
   const isMerged = Boolean(msg?.isMerged);
@@ -337,6 +412,15 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   const elementSplit =
     msg.role === "user" ? splitFollowupWithElementContext(msg.text) : null;
 
+  const attachmentUrls = useMemo(() => {
+    const u = msg?.attachmentPreviewUrls;
+    if (Array.isArray(u) && u.length) {
+      return u.filter((x) => typeof x === "string" && x.trim());
+    }
+    if (msg?.attachmentPreviewUrl) return [msg.attachmentPreviewUrl];
+    return [];
+  }, [msg?.attachmentPreviewUrls, msg?.attachmentPreviewUrl]);
+
   return (
     <div
       key={msg.id ?? msg.key ?? `m-${index}`}
@@ -351,17 +435,11 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
               variant="onPrimary"
             />
           </div>
-          {msg.attachmentPreviewUrl ? (
-            <div className="flex w-full justify-start">
-              <div className="overflow-hidden rounded-xl border border-white/25 bg-white/10 p-0.5 shadow-sm ring-1 ring-white/20">
-                <img
-                  src={msg.attachmentPreviewUrl}
-                  alt=""
-                  className="size-16 rounded-[10px] object-cover"
-                  draggable={false}
-                />
-              </div>
-            </div>
+          {attachmentUrls.length ? (
+            <UserMessageAttachmentThumbs
+              urls={attachmentUrls}
+              onOpen={onOpenImagePreview}
+            />
           ) : null}
           <p className="w-full whitespace-pre-wrap break-words text-sm leading-relaxed">
             {elementSplit.userText}
@@ -369,17 +447,11 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
         </div>
       ) : (
         <>
-          {msg.role === "user" && msg.attachmentPreviewUrl ? (
-            <div className="mb-2 flex w-full justify-start">
-              <div className="overflow-hidden rounded-xl border border-white/25 bg-white/10 p-0.5 shadow-sm ring-1 ring-white/20">
-                <img
-                  src={msg.attachmentPreviewUrl}
-                  alt=""
-                  className="size-16 rounded-[10px] object-cover"
-                  draggable={false}
-                />
-              </div>
-            </div>
+          {msg.role === "user" && attachmentUrls.length ? (
+            <UserMessageAttachmentThumbs
+              urls={attachmentUrls}
+              onOpen={onOpenImagePreview}
+            />
           ) : null}
           {msg.text}
         </>
@@ -441,9 +513,12 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   onPreviewReplaceImageResult = () => {},
   stagedChatReplacementImage = null,
   onStagedChatReplacementImageChange = () => {},
+  stagedChatReferenceImages = [],
+  onStagedChatReferenceImagesChange = () => {},
   onReplacementStagedForRepo = () => {},
 }) {
   const [chatInput, setChatInput] = useState("");
+  const [composerDragOver, setComposerDragOver] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatSending, setChatSending] = useState(false);
   const [chatPolling, setChatPolling] = useState(false);
@@ -459,7 +534,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   const [composerEmailDraft, setComposerEmailDraft] = useState("");
   const [composerEmailError, setComposerEmailError] = useState("");
   const [releaseAgentBusy, setReleaseAgentBusy] = useState(false);
+  const [chatImagePreviewUrl, setChatImagePreviewUrl] = useState(null);
 
+  const chatImageFileInputRef = useRef(null);
   const lastAgentSnapshotRef = useRef({
     releaseId: null,
     status: null,
@@ -467,6 +544,11 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   });
   const settlePollLockRef = useRef(false);
   const busyAutoPollStartedRef = useRef(false);
+
+  const openChatImagePreview = useCallback((url) => {
+    const u = typeof url === "string" ? url.trim() : "";
+    if (u) setChatImagePreviewUrl(u);
+  }, []);
 
   const identityEmail = useMemo(
     () => getClientLinkVerifiedEmail(),
@@ -643,6 +725,17 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
         isReverted: Boolean(row.isReverted),
         revertCommitSha: row.revertCommitSha || null,
         figmaConversionId: row.figmaConversionId ?? null,
+        attachmentPreviewUrls: (() => {
+          const arr = row.attachmentImageUrls;
+          if (Array.isArray(arr) && arr.length) {
+            return arr.filter((u) => typeof u === "string" && u.trim());
+          }
+          return [];
+        })(),
+        attachmentPreviewUrl:
+          (Array.isArray(row.attachmentImageUrls) && row.attachmentImageUrls[0]) ||
+          row.attachmentPreviewUrl ||
+          null,
       })),
     [],
   );
@@ -869,6 +962,67 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     waitForClientLinkAutoMerge,
   ]);
 
+  const appendReferenceStagingFromFiles = useCallback(
+    async (fileList) => {
+      if (composerDisabled) return;
+      const files = Array.from(fileList || []).filter((f) =>
+        f?.type?.startsWith("image/"),
+      );
+      for (const file of files) {
+        let wasFull = false;
+        let appended = false;
+        try {
+          const staged = await readImageFileAsChatStaging(file);
+          onStagedChatReferenceImagesChange((prev) => {
+            const p = Array.isArray(prev) ? prev : [];
+            if (p.length >= MAX_STAGED_REFERENCE_IMAGES) {
+              wasFull = true;
+              return p;
+            }
+            appended = true;
+            return [...p, staged];
+          });
+        } catch (err) {
+          toast.error(err?.message || "Could not attach image.");
+        }
+        if (wasFull) {
+          toast.error(
+            `At most ${MAX_STAGED_REFERENCE_IMAGES} reference images per message.`,
+          );
+          break;
+        }
+        if (appended) onStagedChatReplacementImageChange(null);
+      }
+    },
+    [
+      composerDisabled,
+      onStagedChatReferenceImagesChange,
+      onStagedChatReplacementImageChange,
+    ],
+  );
+
+  const handleComposerDrop = useCallback(
+    async (e) => {
+      e.preventDefault();
+      setComposerDragOver(false);
+      if (composerDisabled) return;
+      const files = Array.from(e.dataTransfer?.files || []).filter((f) =>
+        f.type?.startsWith("image/"),
+      );
+      if (files.length) await appendReferenceStagingFromFiles(files);
+    },
+    [appendReferenceStagingFromFiles, composerDisabled],
+  );
+
+  const handleChatImageFileChange = useCallback(
+    (e) => {
+      const files = Array.from(e.target.files || []);
+      e.target.value = "";
+      void appendReferenceStagingFromFiles(files);
+    },
+    [appendReferenceStagingFromFiles],
+  );
+
   const handleSendChat = useCallback(async () => {
     const replacementPayload =
       stagedChatReplacementImage &&
@@ -891,6 +1045,42 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
           })()
         : null;
 
+    const refList = Array.isArray(stagedChatReferenceImages)
+      ? stagedChatReferenceImages
+      : [];
+    const referencePayloads =
+      !replacementPayload && refList.length
+        ? refList
+            .map((img) => {
+              const raw = img?.previewDataUrl;
+              const parts = typeof raw === "string" ? parseDataUrlParts(raw) : null;
+              if (!parts?.base64) return null;
+              return {
+                data: parts.base64,
+                mimeType: img.mimeType || parts.mimeType || "image/png",
+                width: img.width,
+                height: img.height,
+              };
+            })
+            .filter(Boolean)
+        : null;
+
+    if (replacementPayload && refList.length) {
+      toast.error(
+        "Remove the design reference or the element replacement image — only one attachment per message.",
+      );
+      return;
+    }
+
+    if (
+      !replacementPayload &&
+      refList.length &&
+      (!referencePayloads || !referencePayloads.length)
+    ) {
+      toast.error("Could not read one or more attached images.");
+      return;
+    }
+
     let userPart = chatInput.trim();
     if (
       !userPart &&
@@ -900,7 +1090,17 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       userPart =
         "Replace the selected asset with the attached reference image. Save it under src/assets/ (e.g. src/assets/images/) and update imports or references in code.";
     }
-    if (!userPart || !projectSlug?.trim()) {
+    if (referencePayloads?.length && !userPart.trim()) {
+      toast.error(
+        "Add a message describing what you want for the attached image(s).",
+      );
+      return;
+    }
+    if (!userPart && !replacementPayload && !referencePayloads?.length) {
+      toast.error("Enter a message or attach an image.");
+      return;
+    }
+    if (!projectSlug?.trim()) {
       toast.error("Enter a message.");
       return;
     }
@@ -917,10 +1117,12 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
       ? `${formatPickedElementForPrompt(pickedElementContext)}\n\n${userPart}`
       : userPart;
 
-    const attachmentPreviewUrl =
+    const attachmentPreviewUrls =
       replacementPayload && stagedChatReplacementImage?.previewDataUrl
-        ? stagedChatReplacementImage.previewDataUrl
-        : null;
+        ? null
+        : referencePayloads?.length
+          ? refList.map((i) => i?.previewDataUrl).filter(Boolean)
+          : null;
 
     const rid = Number(effectiveChatReleaseId);
     setChatSending(true);
@@ -930,18 +1132,33 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
         {
           role: "user",
           text,
-          ...(attachmentPreviewUrl ? { attachmentPreviewUrl } : {}),
+          ...(replacementPayload && stagedChatReplacementImage?.previewDataUrl
+            ? {
+                attachmentPreviewUrl:
+                  stagedChatReplacementImage.previewDataUrl,
+              }
+            : attachmentPreviewUrls?.length
+              ? {
+                  attachmentPreviewUrls,
+                  attachmentPreviewUrl: attachmentPreviewUrls[0],
+                }
+              : {}),
         },
       ]);
       setChatInput("");
       onPickedElementContextChange(null);
       onStagedChatReplacementImageChange(null);
+      onStagedChatReferenceImagesChange([]);
       await clientLinkSendFollowup(
         projectSlug,
         rid,
         text,
         identityEmail,
         replacementPayload,
+        null,
+        !replacementPayload && referencePayloads?.length
+          ? referencePayloads
+          : null,
       );
       lastAgentSnapshotRef.current = {
         releaseId: rid,
@@ -994,11 +1211,13 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
     identityEmail,
     isLocked,
     onPickedElementContextChange,
+    onStagedChatReferenceImagesChange,
     onStagedChatReplacementImageChange,
     pickedElementContext,
     pollUntilAgentSettles,
     projectSlug,
     refreshChatMessages,
+    stagedChatReferenceImages,
     stagedChatReplacementImage,
   ]);
 
@@ -1297,6 +1516,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                     revertLoadingKey={revertLoadingKey}
                     chatMayMutate={canMutateChat && !releaseAgentBusy}
                     onRequestRevertConfirm={handleOpenRevertConfirm}
+                    onOpenImagePreview={openChatImagePreview}
                   />
                 ))}
                 {(chatSending || chatPolling) && (
@@ -1332,72 +1552,139 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
               </div>
 
               <div className="shrink-0 space-y-2 border-t border-border bg-card px-4 py-3">
-                <div className="rounded-lg border border-slate-200/90 bg-white shadow-sm dark:border-border dark:bg-card">
-                  <div className="flex flex-col min-h-[48px] items-start gap-0 px-2 py-2">
-                    {pickedElementContext ? (
-                      <div className="flex w-full flex-col gap-1.5 self-stretch">
-                        <div className="flex w-full flex-wrap items-center gap-2">
-                          <ElementContextChip
-                            tag={pickedElementContext.tag}
-                            inspectorCtx={pickedElementContext}
-                            onRemove={() => onPickedElementContextChange(null)}
-                            variant="composer"
-                            className="self-start"
-                          />
-                          {pickedElementContext.replacementKind &&
-                          previewIframeAccessible === true &&
-                          previewIframeRef ? (
-                            <PreviewReplaceImageButton
-                              iframeRef={previewIframeRef}
-                              context={pickedElementContext}
-                              disabled={composerDisabled}
-                              onResult={onPreviewReplaceImageResult}
-                              onStagedForRepo={onReplacementStagedForRepo}
-                              buttonClassName="h-8 rounded-full px-3"
+                <div
+                  className={cn(
+                    "rounded-lg border border-slate-200/90 bg-white shadow-sm transition-shadow dark:border-border dark:bg-card",
+                    composerDragOver &&
+                      !composerDisabled &&
+                      "ring-2 ring-primary/40 ring-offset-2 ring-offset-card",
+                  )}
+                  onDragOver={(e) => {
+                    if (composerDisabled) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "copy";
+                    setComposerDragOver(true);
+                  }}
+                  onDragLeave={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget)) {
+                      setComposerDragOver(false);
+                    }
+                  }}
+                  onDrop={handleComposerDrop}
+                >
+                  <div
+                    className="flex flex-col min-h-[48px] items-start gap-0 px-2 py-2"
+                    role="group"
+                    aria-label="Chat message composer. Drop images here to attach design references."
+                  >
+                    {pickedElementContext ||
+                    (Array.isArray(stagedChatReferenceImages) &&
+                      stagedChatReferenceImages.length > 0) ? (
+                      <div className="flex w-full flex-wrap items-center gap-2 px-0.5 pt-0.5">
+                        {pickedElementContext ? (
+                          <>
+                            <ElementContextChip
+                              tag={pickedElementContext.tag}
+                              inspectorCtx={pickedElementContext}
+                              onRemove={() => onPickedElementContextChange(null)}
+                              variant="composer"
+                              className="shrink-0"
                             />
-                          ) : null}
-                        </div>
-                        {stagedChatReplacementImage &&
-                        stagedChatReplacementImage.selector ===
-                          pickedElementContext.selector &&
-                        stagedChatReplacementImage.previewDataUrl ? (
-                          <div className="flex flex-wrap items-start gap-2 px-0.5 pt-0.5">
-                            <div className="group relative shrink-0">
-                              <div
-                                className="overflow-hidden rounded-xl border border-slate-200/90 bg-linear-to-br from-slate-50 to-violet-50/80 p-0.5 shadow-sm ring-1 ring-violet-500/25 dark:border-border dark:from-violet-950/40 dark:to-indigo-950/30 dark:ring-violet-400/20"
-                                title="Queued for this message"
+                            {pickedElementContext.replacementKind &&
+                            previewIframeAccessible === true &&
+                            previewIframeRef ? (
+                              <PreviewReplaceImageButton
+                                iframeRef={previewIframeRef}
+                                context={pickedElementContext}
+                                disabled={composerDisabled}
+                                onResult={onPreviewReplaceImageResult}
+                                onStagedForRepo={onReplacementStagedForRepo}
+                                buttonClassName="h-8 shrink-0 rounded-full px-3"
+                              />
+                            ) : null}
+                            {stagedChatReplacementImage &&
+                            stagedChatReplacementImage.selector ===
+                              pickedElementContext.selector &&
+                            stagedChatReplacementImage.previewDataUrl ? (
+                              <div className="group relative shrink-0">
+                                <button
+                                  type="button"
+                                  className="overflow-hidden rounded-lg border border-slate-200/90 bg-linear-to-br from-slate-50 to-violet-50/80 p-0.5 shadow-sm ring-1 ring-violet-500/25 cursor-pointer transition hover:ring-violet-500/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:border-border dark:from-violet-950/40 dark:to-indigo-950/30 dark:ring-violet-400/20"
+                                  title="Queued for this message — click to enlarge"
+                                  aria-label="View queued replacement image"
+                                  onClick={() =>
+                                    openChatImagePreview(
+                                      stagedChatReplacementImage.previewDataUrl,
+                                    )
+                                  }
+                                >
+                                  <img
+                                    src={
+                                      stagedChatReplacementImage.previewDataUrl
+                                    }
+                                    alt=""
+                                    className={CHAT_ATTACHMENT_THUMB_CLASS}
+                                    draggable={false}
+                                  />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-slate-200/90 bg-white text-slate-600 shadow-md transition hover:bg-red-50 hover:text-red-600 dark:border-border dark:bg-card dark:hover:bg-red-950/50 dark:hover:text-red-300"
+                                  aria-label="Remove queued image"
+                                  disabled={composerDisabled}
+                                  onClick={() =>
+                                    onStagedChatReplacementImageChange(null)
+                                  }
+                                >
+                                  <X className="size-3.5" aria-hidden />
+                                </button>
+                              </div>
+                            ) : null}
+                          </>
+                        ) : null}
+                        {(Array.isArray(stagedChatReferenceImages)
+                          ? stagedChatReferenceImages
+                          : []
+                        ).map((refImg, refIdx) =>
+                          refImg?.previewDataUrl ? (
+                            <div
+                              key={`ref-${refIdx}`}
+                              className="group relative shrink-0"
+                            >
+                              <button
+                                type="button"
+                                className="overflow-hidden rounded-lg border border-slate-200/90 bg-linear-to-br from-slate-50 to-sky-50/80 p-0.5 shadow-sm ring-1 ring-sky-500/25 cursor-pointer transition hover:ring-sky-500/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 dark:border-border dark:from-sky-950/40 dark:to-indigo-950/30 dark:ring-sky-400/20"
+                                title="Design reference — click to enlarge"
+                                aria-label={`View design reference image ${refIdx + 1}`}
+                                onClick={() =>
+                                  openChatImagePreview(refImg.previewDataUrl)
+                                }
                               >
                                 <img
-                                  src={
-                                    stagedChatReplacementImage.previewDataUrl
-                                  }
+                                  src={refImg.previewDataUrl}
                                   alt=""
-                                  className="size-16 rounded-[10px] object-cover"
+                                  className={CHAT_ATTACHMENT_THUMB_CLASS}
                                   draggable={false}
                                 />
-                              </div>
+                              </button>
                               <button
                                 type="button"
                                 className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-slate-200/90 bg-white text-slate-600 shadow-md transition hover:bg-red-50 hover:text-red-600 dark:border-border dark:bg-card dark:hover:bg-red-950/50 dark:hover:text-red-300"
-                                aria-label="Remove queued image"
+                                aria-label={`Remove design reference image ${refIdx + 1}`}
                                 disabled={composerDisabled}
                                 onClick={() =>
-                                  onStagedChatReplacementImageChange(null)
+                                  onStagedChatReferenceImagesChange((prev) =>
+                                    (Array.isArray(prev) ? prev : []).filter(
+                                      (_, i) => i !== refIdx,
+                                    ),
+                                  )
                                 }
                               >
                                 <X className="size-3.5" aria-hidden />
                               </button>
                             </div>
-                            <p className="min-w-0 max-w-[14rem] pt-1 text-[10px] font-medium leading-snug text-emerald-800 dark:text-emerald-300/95">
-                              Attached — will send with your next message. Agent
-                              saves under{" "}
-                              <span className="font-mono text-[9px]">
-                                src/assets/
-                              </span>
-                              .
-                            </p>
-                          </div>
-                        ) : null}
+                          ) : null,
+                        )}
                       </div>
                     ) : null}
                     <Textarea
@@ -1406,6 +1693,29 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                       onChange={(e) => setChatInput(e.target.value)}
                       disabled={composerDisabled}
                       className="min-h-[40px] flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-sm shadow-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0 dark:placeholder:text-muted-foreground"
+                      onPaste={(e) => {
+                        if (composerDisabled) return;
+                        const cd = e.clipboardData;
+                        if (!cd) return;
+                        const fromFiles = Array.from(cd.files || []).filter((f) =>
+                          f.type?.startsWith("image/"),
+                        );
+                        const pasteFiles = [...fromFiles];
+                        if (!pasteFiles.length && cd.items?.length) {
+                          for (const item of Array.from(cd.items)) {
+                            if (
+                              item.kind === "file" &&
+                              item.type?.startsWith("image/")
+                            ) {
+                              const f = item.getAsFile();
+                              if (f) pasteFiles.push(f);
+                            }
+                          }
+                        }
+                        if (!pasteFiles.length) return;
+                        e.preventDefault();
+                        void appendReferenceStagingFromFiles(pasteFiles);
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
@@ -1416,9 +1726,9 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                       }}
                     />
                   </div>
-                  <div className="flex items-end justify-between gap-2 px-2 pb-2 pt-0">
+                  <div className="flex flex-wrap items-end justify-between gap-2 px-2 pb-2 pt-0">
                     <div
-                      className={`flex min-w-0 items-end gap-2 ${composerEmailEditorOpen ? "flex-1" : ""}`}
+                      className={`flex min-w-0 flex-wrap items-end gap-2 ${composerEmailEditorOpen ? "flex-1" : ""}`}
                     >
                       <Button
                         type="button"
@@ -1522,6 +1832,40 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                             : visualPickDisabledReason}
                         </TooltipContent>
                       </Tooltip>
+                      <input
+                        ref={chatImageFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="sr-only"
+                        tabIndex={-1}
+                        aria-hidden
+                        onChange={handleChatImageFileChange}
+                      />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="secondary"
+                              disabled={!canMutateChat || composerDisabled}
+                              className="h-9 w-9 shrink-0 rounded-full disabled:opacity-40"
+                              aria-label="Attach design reference images"
+                              onClick={() =>
+                                chatImageFileInputRef.current?.click()
+                              }
+                            >
+                              <ImagePlus className="size-4" aria-hidden />
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-[260px] text-xs">
+                          Attach one or more screenshots or mockups (same as
+                          drag-and-drop). Up to {MAX_STAGED_REFERENCE_IMAGES} per
+                          message.
+                        </TooltipContent>
+                      </Tooltip>
                       <Button
                         type="button"
                         size="icon"
@@ -1585,6 +1929,29 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
               Revert
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={chatImagePreviewUrl != null}
+        onOpenChange={(open) => {
+          if (!open) setChatImagePreviewUrl(null);
+        }}
+      >
+        <DialogContent
+          showCloseButton
+          className="max-h-[90vh] w-[min(96vw,1200px)] max-w-[min(96vw,1200px)] overflow-y-auto overflow-x-hidden border-neutral-800 bg-neutral-950 p-2 sm:p-4"
+        >
+          <DialogHeader className="sr-only">
+            <DialogTitle>Image preview</DialogTitle>
+          </DialogHeader>
+          {chatImagePreviewUrl ? (
+            <img
+              src={chatImagePreviewUrl}
+              alt=""
+              className="mx-auto max-h-[min(85vh,900px)] w-auto max-w-full object-contain"
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
     </>

@@ -163,7 +163,8 @@ export async function getCursorAgentById(agentId) {
 /**
  * POST /v0/agents/:id/followup — same behavior as POST /api/cursor/agents/:id/followup.
  * @param {string} agentId
- * @param {object} prompt — { text, images? } per Cursor API
+ * @param {{ text: string, images?: Array<{ data: string, dimension: { width: number, height: number } }> }} prompt
+ *        Same `prompt` shape as POST /v0/agents (Cursor API): optional `images` with base64 `data` + `dimension`).
  * @returns {Promise<{ status: number, data: object }>}
  */
 export async function postCursorAgentFollowup(agentId, prompt) {
@@ -444,7 +445,7 @@ export function resolveCursorRepositoryUrl(project) {
  *   projectId: number,
  *   releaseId: number,
  *   attemptedById: number,
- *   prompt: object,
+ *   prompt: { text: string, images?: Array<{ data: string, dimension: { width: number, height: number } }> },
  *   nodeCount?: number|null,
  *   source?: { repository?: string, prUrl?: string, ref?: string }|null,
  *   model?: unknown,

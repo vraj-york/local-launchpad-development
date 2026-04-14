@@ -5,6 +5,8 @@
 .env
 .env.local
 .env.*.local
+.cursorignore
+.cursor/rules/concise.mdc
 
 # Dependencies and build outputs
 /node_modules/

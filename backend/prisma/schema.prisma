@@ -312,6 +312,8 @@ model ChatHistory {
   isActiveChat     Boolean  @default(true)
   /// Stable link to the FigmaConversion / Cursor agent run for this user turn (persists after pendingClientChatMessageId is cleared on the conversion row).
   figmaConversionId Int?
+  /// S3 URLs for reference (or replacement) chat images in one message (PostgreSQL text array).
+  attachmentImageUrls String[] @default([])
   createdAt DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

@@ -37,9 +37,20 @@ import {
   deployVersionArtifactsToProjectFolder,
 } from "./project.service.js";
 import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
-import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
+import {
+  waitForAgentBranchTipSha,
+  pollBranchTipUntilAdvancesBeyond,
+  pollBranchTipTail,
+  AGENT_BRANCH_TIP_POLL_MS,
+} from "../utils/agentBranchTipWait.js";
+import {
+  buildClientLinkChatImageS3Key,
+  uploadBufferToS3Inline,
+} from "../utils/uploadChatImageToS3.js";
 
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
+/** Design-reference images per client-link message (Cursor multimodal + S3). */
+const MAX_REFERENCE_IMAGES_PER_MESSAGE = 6;
 
 /** Appended to Cursor prompt only (not stored in ChatHistory). Max 5MB base64 payload. */
 const CLIENT_REPO_IMAGE_INSTRUCTION = `
@@ -55,7 +66,7 @@ You must:
 5) Remove stale srcset entries if you replace a raster image.
 `;
 
-function sanitizeClientLinkReplacementImage(raw) {
+function sanitizeChatImagePayload(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   let data = typeof raw.data === "string" ? raw.data.trim() : "";
   if (data.includes(",")) data = data.split(",").pop() || "";
@@ -77,7 +88,15 @@ function sanitizeClientLinkReplacementImage(raw) {
   return { data, mimeType: mime, width: w, height: h };
 }
 
-function replacementToCursorImages(sanitized) {
+/**
+ * Maps a sanitized chat image to Cursor Cloud Agents `prompt.images[]` entries.
+ * Matches POST https://api.cursor.com/v0/agents (and follow-up) shape:
+ * `{ data: "<base64>", dimension: { width, height } }` — see Cursor API docs.
+ * Used for both flows below; the API does not distinguish image “kind”, only our text instructions differ.
+ * @param {{ data: string, width: number, height: number } | null} sanitized
+ * @returns {Array<{ data: string, dimension: { width: number, height: number } }>}
+ */
+function buildCursorAgentPromptImages(sanitized) {
   if (!sanitized) return [];
   return [
     {
@@ -85,6 +104,78 @@ function replacementToCursorImages(sanitized) {
       dimension: { width: sanitized.width, height: sanitized.height },
     },
   ];
+}
+
+/**
+ * Uploads client-link chat image(s) to S3 and saves public URL(s) on the row.
+ * Best-effort: failures are logged; chat + Cursor flow continue without URLs.
+ */
+async function persistClientLinkChatImagesToS3({
+  project,
+  release,
+  releaseId,
+  userMessageId,
+  sanitizedList,
+  kind,
+}) {
+  if (!Array.isArray(sanitizedList) || sanitizedList.length === 0) {
+    return;
+  }
+  if (!process.env.AWS_S3_BUCKET?.trim()) {
+    return;
+  }
+  const pv = await prisma.projectVersion.findFirst({
+    where: { projectId: project.id, releaseId },
+    orderBy: [{ isActive: "desc" }, { id: "desc" }],
+    select: { version: true },
+  });
+  const versionLabel = (pv?.version || "").trim() || "no-version";
+  const urls = [];
+  for (let i = 0; i < sanitizedList.length; i++) {
+    const sanitized = sanitizedList[i];
+    if (!sanitized?.data) continue;
+    let buf;
+    try {
+      buf = Buffer.from(String(sanitized.data).replace(/\s/g, ""), "base64");
+    } catch {
+      continue;
+    }
+    if (buf.length < 8 || buf.length > 5 * 1024 * 1024) {
+      continue;
+    }
+    const key = buildClientLinkChatImageS3Key({
+      kind,
+      projectSlug: project.slug,
+      projectName: project.name,
+      releaseName: release.name,
+      versionLabel,
+      chatId: userMessageId,
+      partIndex: sanitizedList.length > 1 ? i : null,
+      ext: replacementMimeToExt(sanitized.mimeType),
+    });
+    const up = await uploadBufferToS3Inline({
+      key,
+      body: buf,
+      contentType: sanitized.mimeType,
+    });
+    if (up.ok && up.url) {
+      urls.push(up.url);
+    }
+  }
+  if (!urls.length) {
+    return;
+  }
+  await prisma.chatHistory.updateMany({
+    where: {
+      id: userMessageId,
+      projectId: project.id,
+      releaseId,
+      role: "user",
+    },
+    data: {
+      attachmentImageUrls: urls,
+    },
+  });
 }
 
 function replacementMimeToExt(mimeType) {
@@ -194,7 +285,7 @@ async function assertReleaseBelongs(releaseId, projectId) {
   }
   const release = await prisma.release.findFirst({
     where: { id: rid, projectId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, name: true },
   });
   if (!release) {
     throw new ApiError(404, "Release not found");
@@ -423,6 +514,108 @@ async function resolveClientChatRepository(project) {
 }
 
 /**
+ * If `tipSha` still matches the prior user message’s applied commit, Git has not yet moved for
+ * this turn — keep polling, then take a short tail window for trailing pushes.
+ */
+async function refineBranchTipWhenMatchesPreviousApplied(
+  project,
+  releaseId,
+  chatHistoryId,
+  repo,
+  branch,
+  tipSha,
+) {
+  if (!tipSha) {
+    return null;
+  }
+  const rid = Number(releaseId);
+  const mid = Number(chatHistoryId);
+  if (!Number.isInteger(rid) || rid < 1 || !Number.isInteger(mid) || mid < 1) {
+    return tipSha;
+  }
+  const prevUser = await prisma.chatHistory.findFirst({
+    where: {
+      projectId: project.id,
+      releaseId: rid,
+      role: "user",
+      isActiveChat: true,
+      id: { lt: mid },
+      appliedCommitSha: { not: null },
+    },
+    orderBy: { id: "desc" },
+    select: { appliedCommitSha: true },
+  });
+  const prevApplied = (prevUser?.appliedCommitSha || "").trim();
+  if (!prevApplied || tipSha.toLowerCase() !== prevApplied.toLowerCase()) {
+    return tipSha;
+  }
+  let out = tipSha;
+  const advanced = await pollBranchTipUntilAdvancesBeyond({ ...repo, branch }, prevApplied);
+  if (advanced) {
+    out = advanced;
+  }
+  const tail = await pollBranchTipTail({ ...repo, branch }, 8);
+  if (tail) {
+    out = tail;
+  }
+  return out;
+}
+
+/**
+ * If Git reports the agent branch still ahead of our captured SHA, keep snapping to the branch tip
+ * until compare is identical (handles intermediate commits without relying only on poll timing).
+ */
+async function advanceCapturedShaToAgentBranchTip(repo, branch, tipSha) {
+  if (!tipSha || !GIT_SHA_RE.test(tipSha)) {
+    return tipSha;
+  }
+  const b = typeof branch === "string" ? branch.trim() : "";
+  if (!b) {
+    return tipSha;
+  }
+  let out = tipSha.trim();
+  for (let i = 0; i < 18; i++) {
+    const cmp = await scmCompareRefs(
+      repo.provider,
+      repo.owner,
+      repo.repo,
+      out,
+      b,
+      repo.token,
+    );
+    if (!cmp.ok) {
+      break;
+    }
+    const st = String(cmp.data?.status || "").toLowerCase();
+    if (st === "identical") {
+      break;
+    }
+    if (st === "ahead") {
+      const head = await scmGetBranchSha(
+        repo.provider,
+        repo.owner,
+        repo.repo,
+        b,
+        repo.token,
+      );
+      if (!head?.sha) {
+        await new Promise((r) => setTimeout(r, AGENT_BRANCH_TIP_POLL_MS));
+        continue;
+      }
+      if (head.sha.toLowerCase() === out.toLowerCase()) {
+        await new Promise((r) => setTimeout(r, AGENT_BRANCH_TIP_POLL_MS));
+        continue;
+      }
+      out = head.sha;
+      await new Promise((r) => setTimeout(r, AGENT_BRANCH_TIP_POLL_MS));
+      continue;
+    }
+    break;
+  }
+  return out;
+}
+
+/**
  * Set ChatHistory.appliedCommitSha from the remote branch tip where Cursor actually commits.
  * Branch name is taken from Cursor GET agent `target.branchName` first, then DB `targetBranchName`.
  * Resolves FigmaConversion by ChatHistory id === pendingClientChatMessageId.
@@ -444,6 +637,7 @@ async function syncPendingMessageCommitSha(project, conv) {
       releaseId,
       pendingClientChatMessageId: chatHistoryId,
     },
+    orderBy: { id: "desc" },
     select: { id: true, targetBranchName: true, agentId: true },
   });
   if (!figmaRow) {
@@ -495,10 +689,20 @@ async function syncPendingMessageCommitSha(project, conv) {
     if (!head?.sha) {
       return null;
     }
-    const tipSha = await waitForAgentBranchTipSha({ ...repo, branch });
+    let tipSha = await waitForAgentBranchTipSha({ ...repo, branch });
     if (!tipSha) {
       return null;
     }
+    tipSha = await refineBranchTipWhenMatchesPreviousApplied(
+      project,
+      releaseId,
+      chatHistoryId,
+      repo,
+      branch,
+      tipSha,
+    );
+    tipSha = await advanceCapturedShaToAgentBranchTip(repo, branch, tipSha);
+
     await prisma.$transaction([
       prisma.chatHistory.updateMany({
         where: {
@@ -706,6 +910,8 @@ export async function clientLinkFollowup({
   promptText,
   clientEmail,
   replacementImage: replacementImageRaw = null,
+  referenceImage: referenceImageRaw = null,
+  referenceImages: referenceImagesRaw = null,
 }) {
   const project = await resolveProjectBySlug(slug);
   assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
@@ -714,12 +920,51 @@ export async function clientLinkFollowup({
   const release = await assertReleaseBelongs(releaseId, project.id);
   assertReleaseNotLocked(release);
 
-  const sanitizedReplacement =
-    sanitizeClientLinkReplacementImage(replacementImageRaw);
+  const sanitizedReplacement = sanitizeChatImagePayload(replacementImageRaw);
+
+  const referenceCandidates = [];
+  if (Array.isArray(referenceImagesRaw)) {
+    for (const item of referenceImagesRaw) {
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        referenceCandidates.push(item);
+      }
+    }
+  }
+  if (
+    referenceImageRaw &&
+    typeof referenceImageRaw === "object" &&
+    !Array.isArray(referenceImageRaw)
+  ) {
+    referenceCandidates.push(referenceImageRaw);
+  }
+  const sanitizedReferenceList = referenceCandidates
+    .map((raw) => sanitizeChatImagePayload(raw))
+    .filter(Boolean);
+
+  if (sanitizedReferenceList.length > MAX_REFERENCE_IMAGES_PER_MESSAGE) {
+    throw new ApiError(
+      400,
+      `At most ${MAX_REFERENCE_IMAGES_PER_MESSAGE} reference images per message.`,
+    );
+  }
+
+  if (sanitizedReplacement && sanitizedReferenceList.length > 0) {
+    throw new ApiError(
+      400,
+      "Send either an element replacement image or design reference image(s), not both.",
+    );
+  }
+
   let storedText = typeof promptText === "string" ? promptText.trim() : "";
   if (!storedText && sanitizedReplacement) {
     storedText =
       "Replace the selected asset with the attached reference image. Save it under src/assets/ (e.g. src/assets/images/) and update imports or references in code.";
+  }
+  if (sanitizedReferenceList.length > 0 && !storedText) {
+    throw new ApiError(
+      400,
+      "Add a message describing what you want for the attached image(s).",
+    );
   }
   if (!storedText) {
     throw new ApiError(400, "Message required");
@@ -739,10 +984,19 @@ export async function clientLinkFollowup({
     );
   }
 
-  let textForCursor = sanitizedReplacement
-    ? `${storedText}${CLIENT_REPO_IMAGE_INSTRUCTION}`
-    : storedText;
-  const cursorImages = replacementToCursorImages(sanitizedReplacement);
+  // Cursor wire format is the same for both; behavior is split by instructions + replacement-only Git commit.
+  // 1) Element asset replacement: body.replacementImage → commit to branch + CLIENT_REPO_IMAGE_INSTRUCTION.
+  // 2) Design reference: body.referenceImage(s) → no repo commit; images as prompt.images per Cursor API.
+  let textForCursor = storedText;
+  let cursorImages = [];
+  if (sanitizedReplacement) {
+    textForCursor = `${storedText}${CLIENT_REPO_IMAGE_INSTRUCTION}`;
+    cursorImages = buildCursorAgentPromptImages(sanitizedReplacement);
+  } else if (sanitizedReferenceList.length > 0) {
+    for (const ref of sanitizedReferenceList) {
+      cursorImages.push(...buildCursorAgentPromptImages(ref));
+    }
+  }
 
   const userMessage = await prisma.chatHistory.create({
     data: {
@@ -752,6 +1006,25 @@ export async function clientLinkFollowup({
       text: storedText,
     },
   });
+
+  if (sanitizedReplacement || sanitizedReferenceList.length > 0) {
+    const imgKind = sanitizedReplacement ? "replacement" : "reference";
+    const list = sanitizedReplacement
+      ? [sanitizedReplacement]
+      : sanitizedReferenceList;
+    try {
+      await persistClientLinkChatImagesToS3({
+        project,
+        release,
+        releaseId: rid,
+        userMessageId: userMessage.id,
+        sanitizedList: list,
+        kind: imgKind,
+      });
+    } catch (err) {
+      console.error("[client-link] chat image S3 persist failed", err?.message || err);
+    }
+  }
 
   const [priorVersionedConversion, priorMergedChat] = await Promise.all([
     prisma.figmaConversion.findFirst({
@@ -1346,6 +1619,12 @@ export async function clientLinkExecutionSummary({ slug, releaseId }) {
   };
 }
 
+function mergedAttachmentImageUrls(row) {
+  return Array.isArray(row?.attachmentImageUrls)
+    ? row.attachmentImageUrls.filter((u) => typeof u === "string" && u.trim())
+    : [];
+}
+
 /** Public: persisted chat for client link (per release). */
 export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 }) {
   const project = await resolveProjectBySlug(slug);
@@ -1386,24 +1665,29 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
       revertedAt: true,
       revertCommitSha: true,
       figmaConversionId: true,
+      attachmentImageUrls: true,
       createdAt: true,
     },
   });
 
   return {
-    messages: rows.map((r) => ({
-      id: r.id,
-      role: r.role,
-      text: r.text,
-      appliedCommitSha: r.appliedCommitSha || null,
-      isMerged: r.role === "user" && Boolean(r.mergedAt),
-      mergedAt: r.mergedAt,
-      revertedAt: r.revertedAt || null,
-      revertCommitSha: r.revertCommitSha || null,
-      isReverted: r.role === "user" && Boolean(r.revertedAt),
-      figmaConversionId: r.figmaConversionId ?? null,
-      createdAt: r.createdAt,
-    })),
+    messages: rows.map((r) => {
+      const imageUrls = mergedAttachmentImageUrls(r);
+      return {
+        id: r.id,
+        role: r.role,
+        text: r.text,
+        appliedCommitSha: r.appliedCommitSha || null,
+        isMerged: r.role === "user" && Boolean(r.mergedAt),
+        mergedAt: r.mergedAt,
+        revertedAt: r.revertedAt || null,
+        revertCommitSha: r.revertCommitSha || null,
+        isReverted: r.role === "user" && Boolean(r.revertedAt),
+        figmaConversionId: r.figmaConversionId ?? null,
+        attachmentImageUrls: imageUrls,
+        createdAt: r.createdAt,
+      };
+    }),
   };
 }
 
@@ -1672,6 +1956,19 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
         const repo = await resolveClientChatRepository(project);
         requestedSha = await waitForAgentBranchTipSha({ ...repo, branch: branchForHead });
         if (requestedSha && pendingOk) {
+          requestedSha = await refineBranchTipWhenMatchesPreviousApplied(
+            project,
+            conv.releaseId,
+            pendingMid,
+            repo,
+            branchForHead,
+            requestedSha,
+          );
+          requestedSha = await advanceCapturedShaToAgentBranchTip(
+            repo,
+            branchForHead,
+            requestedSha,
+          );
           await prisma.chatHistory.updateMany({
             where: {
               id: pendingMid,
