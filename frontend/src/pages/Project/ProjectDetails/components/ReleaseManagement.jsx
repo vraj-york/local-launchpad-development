@@ -5,6 +5,7 @@ import {
   createRelease,
   updateReleaseStatus,
   uploadToRelease,
+  revertActiveReleaseToBaseline,
   patchRelease,
   fetchReleaseChangelog,
   regenerateReleaseReviewSummary,
@@ -34,6 +35,7 @@ import {
   FileCode,
   PenLine,
   Library,
+  RotateCcw,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -311,6 +313,10 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
   const [statusConfirm, setStatusConfirm] = useState(null);
   const [statusConfirmSubmitting, setStatusConfirmSubmitting] = useState(false);
 
+  const [revertBaselineDialog, setRevertBaselineDialog] = useState(null);
+  const [revertBaselineReason, setRevertBaselineReason] = useState("");
+  const [revertBaselineSubmitting, setRevertBaselineSubmitting] = useState(false);
+
   const [newRelease, setNewRelease] = useState({
     name: "",
     description: "",
@@ -356,6 +362,11 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
 
   const suggestedPatchReleaseName = useMemo(
     () => getSuggestedPatchReleaseNameFromList(releases),
+    [releases],
+  );
+
+  const activeRelease = useMemo(
+    () => releases.find((r) => normalizeReleaseStatus(r) === "active") ?? null,
     [releases],
   );
 
@@ -536,6 +547,49 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     }
   }, [projectId]);
 
+  const submitRevertActiveToBaseline = useCallback(async () => {
+    if (!revertBaselineDialog || !activeRelease) return;
+    const reason = revertBaselineReason.trim();
+    if (reason.length < 3) {
+      toast.error("Enter a short reason (at least 3 characters).");
+      return;
+    }
+    setRevertBaselineSubmitting(true);
+    try {
+      const result = await revertActiveReleaseToBaseline(
+        projectId,
+        activeRelease.id,
+        {
+          baselineProjectVersionId: revertBaselineDialog.version.id,
+          reason,
+        },
+      );
+      const label = formatProjectVersionLabel(result?.version);
+      toast.success(
+        label
+          ? `New revision ${label} is building and will go live when ready.`
+          : "Revert completed; active release updated.",
+      );
+      setRevertBaselineDialog(null);
+      setRevertBaselineReason("");
+      await loadReleases();
+    } catch (err) {
+      const msg =
+        (typeof err === "object" && err && err.error) ||
+        err?.message ||
+        "Revert failed";
+      toast.error(String(msg));
+    } finally {
+      setRevertBaselineSubmitting(false);
+    }
+  }, [
+    revertBaselineDialog,
+    activeRelease,
+    revertBaselineReason,
+    projectId,
+    loadReleases,
+  ]);
+
   const loadRoadmaps = useCallback(async () => {
     try {
       setRoadmapsLoading(true);
@@ -566,6 +620,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     if (!canManageReleases) {
       setShowCreateForm(false);
       setEditDialog(null);
+      setRevertBaselineDialog(null);
     }
   }, [canManageReleases]);
 
@@ -1489,7 +1544,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                                 {release.versions.map((version) => (
                                   <div
                                     key={version.id}
-                                    className={`flex justify-between items-center p-3 ${version.isActive ? "bg-primary/10 border border-primary" : "bg-white border border-slate-100"} rounded-lg hover:border-primary transition-colors`}
+                                    className={`flex justify-between items-center gap-3 p-3 ${version.isActive ? "bg-primary/10 border border-primary" : "bg-white border border-slate-100"} rounded-lg hover:border-primary transition-colors`}
                                   >
                                     <div className="flex flex-col gap-2">
                                       <div className="flex items-center gap-3">
@@ -1520,7 +1575,85 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                                         </div>
                                       </div> */}
                                     </div>
-                                    <div className="flex flex-col gap-3">
+                                    <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+                                      {canManageReleases &&
+                                        String(version.gitTag || "").trim() !==
+                                          "" && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span className="inline-flex">
+                                                <Button
+                                                  type="button"
+                                                  variant="outline"
+                                                  size="sm"
+                                                  className="gap-1.5"
+                                                  disabled={
+                                                    !activeRelease ||
+                                                    revertBaselineSubmitting ||
+                                                    (normalizeReleaseStatus(
+                                                      release,
+                                                    ) === "active" &&
+                                                      version.isActive)
+                                                  }
+                                                  onClick={() => {
+                                                    if (!activeRelease) return;
+                                                    setRevertBaselineReason("");
+                                                    setRevertBaselineDialog({
+                                                      version,
+                                                      baselineSourceReleaseName:
+                                                        release.name,
+                                                    });
+                                                  }}
+                                                >
+                                                  <RotateCcw
+                                                    className="size-3.5"
+                                                    aria-hidden
+                                                  />
+                                                  Revert to Revision
+                                                </Button>
+                                              </span>
+                                            </TooltipTrigger>
+                                            {normalizeReleaseStatus(release) ===
+                                              "active" && version.isActive ? (
+                                              <TooltipContent
+                                                side="top"
+                                                className="max-w-[260px]"
+                                              >
+                                                The live build already matches
+                                                this revision. Pick an earlier
+                                                revision to roll back.
+                                              </TooltipContent>
+                                            ) : !activeRelease ? (
+                                              <TooltipContent
+                                                side="top"
+                                                className="max-w-[260px]"
+                                              >
+                                                Set a release to{" "}
+                                                <strong>Active</strong> first.
+                                                New commits are created on{" "}
+                                                <code className="text-xs">
+                                                  main
+                                                </code>{" "}
+                                                and a new revision is added only
+                                                to the active release.
+                                              </TooltipContent>
+                                            ) : (
+                                              <TooltipContent
+                                                side="top"
+                                                className="max-w-[280px]"
+                                              >
+                                                Revert commits on the platform
+                                                branch so the tree matches this
+                                                revision, then tag a new revision
+                                                on{" "}
+                                                <strong>
+                                                  {activeRelease.name}
+                                                </strong>
+                                                .
+                                              </TooltipContent>
+                                            )}
+                                          </Tooltip>
+                                        )}
                                       {version.isActive && (
                                         <Badge className="bg-primary text-primary-foreground">
                                           <CheckCircle size={14} /> Active
@@ -1542,7 +1675,78 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
           </div>
         </div>
       </div>
-      
+
+      <Dialog
+        open={Boolean(revertBaselineDialog)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRevertBaselineDialog(null);
+            setRevertBaselineReason("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Align active release to this revision?</DialogTitle>
+            <DialogDescription className="text-left leading-relaxed">
+              This creates a new revision on{" "}
+              <strong>{activeRelease?.name ?? "the active release"}</strong> by
+              applying sequential <code className="text-xs">git revert</code>{" "}
+              commits on the platform repository so the tree matches{" "}
+              <strong>
+                {revertBaselineDialog?.baselineSourceReleaseName ?? "—"}
+              </strong>{" "}
+              {revertBaselineDialog?.version
+                ? formatProjectVersionLabel(
+                    revertBaselineDialog.version.version,
+                  )
+                : ""}
+              . Existing tags are not moved; new commits reference the same
+              history with explicit reverts.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 py-2">
+            <Label htmlFor="revert-baseline-reason">Reason (required)</Label>
+            <Textarea
+              id="revert-baseline-reason"
+              value={revertBaselineReason}
+              onChange={(e) => setRevertBaselineReason(e.target.value)}
+              placeholder="e.g. Restore customer-approved build after regression in later revisions"
+              rows={3}
+              disabled={revertBaselineSubmitting}
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setRevertBaselineDialog(null);
+                setRevertBaselineReason("");
+              }}
+              disabled={revertBaselineSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void submitRevertActiveToBaseline()}
+              disabled={revertBaselineSubmitting}
+            >
+              {revertBaselineSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  Reverting…
+                </>
+              ) : (
+                "Confirm revert"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={cursorRulesOpen}
         onOpenChange={(open) => {

@@ -511,6 +511,12 @@ router.post(
   projectController.setReleaseStatus
 );
 
+router.post(
+  "/:id/releases/:releaseId/revert-to-baseline",
+  authenticateToken,
+  projectController.revertActiveReleaseToBaseline
+);
+
 /**
  * @swagger
  * /projects/public/{slug}:

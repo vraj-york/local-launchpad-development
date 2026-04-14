@@ -8,6 +8,7 @@ import {
     getProjectByIdService,
     getJiraTicketsService,
     activateProjectVersionService,
+    revertActiveReleaseToBaselineProjectVersionService,
     updateProjectDetailsService,
     deleteProjectService,
     switchProjectVersion,
@@ -83,6 +84,23 @@ export const projectController = {
         const result = await activateProjectVersionService({
             projectId,
             versionId,
+            user: req.user,
+        });
+
+        res.json(result);
+    }),
+
+    revertActiveReleaseToBaseline: asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.id);
+        const releaseId = Number(req.params.releaseId);
+        const baselineProjectVersionId = Number(req.body?.baselineProjectVersionId);
+        const { reason } = req.body || {};
+
+        const result = await revertActiveReleaseToBaselineProjectVersionService({
+            projectId,
+            activeReleaseId: releaseId,
+            baselineProjectVersionId,
+            reason,
             user: req.user,
         });
 

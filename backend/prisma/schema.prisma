@@ -194,15 +194,11 @@ model ProjectVersion {
   uploadedBy  Int
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   release     Release? @relation(fields: [releaseId], references: [id], onDelete: Cascade)
   uploader    User     @relation("VersionUploader", fields: [uploadedBy], references: [id])
   figmaConversions FigmaConversion[]
-
-
 }
-
 
 
 enum ReleaseStatus {
