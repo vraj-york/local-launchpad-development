@@ -53,6 +53,9 @@ router.post("/:slug/followup", async (req, res) => {
       !Array.isArray(req.body.referenceImage)
         ? req.body.referenceImage
         : null;
+    const referenceImages = Array.isArray(req.body?.referenceImages)
+      ? req.body.referenceImages
+      : null;
 
     const result = await clientLinkFollowup({
       slug,
@@ -61,6 +64,7 @@ router.post("/:slug/followup", async (req, res) => {
       clientEmail: readClientEmail(req.body),
       replacementImage,
       referenceImage,
+      referenceImages,
     });
     return res.json(result);
   } catch (err) {

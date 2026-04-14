@@ -43,8 +43,14 @@ import {
   pollBranchTipTail,
   AGENT_BRANCH_TIP_POLL_MS,
 } from "../utils/agentBranchTipWait.js";
+import {
+  buildClientLinkChatImageS3Key,
+  uploadBufferToS3Inline,
+} from "../utils/uploadChatImageToS3.js";
 
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
+/** Design-reference images per client-link message (Cursor multimodal + S3). */
+const MAX_REFERENCE_IMAGES_PER_MESSAGE = 6;
 
 /** Appended to Cursor prompt only (not stored in ChatHistory). Max 5MB base64 payload. */
 const CLIENT_REPO_IMAGE_INSTRUCTION = `
@@ -98,6 +104,78 @@ function buildCursorAgentPromptImages(sanitized) {
       dimension: { width: sanitized.width, height: sanitized.height },
     },
   ];
+}
+
+/**
+ * Uploads client-link chat image(s) to S3 and saves public URL(s) on the row.
+ * Best-effort: failures are logged; chat + Cursor flow continue without URLs.
+ */
+async function persistClientLinkChatImagesToS3({
+  project,
+  release,
+  releaseId,
+  userMessageId,
+  sanitizedList,
+  kind,
+}) {
+  if (!Array.isArray(sanitizedList) || sanitizedList.length === 0) {
+    return;
+  }
+  if (!process.env.AWS_S3_BUCKET?.trim()) {
+    return;
+  }
+  const pv = await prisma.projectVersion.findFirst({
+    where: { projectId: project.id, releaseId },
+    orderBy: [{ isActive: "desc" }, { id: "desc" }],
+    select: { version: true },
+  });
+  const versionLabel = (pv?.version || "").trim() || "no-version";
+  const urls = [];
+  for (let i = 0; i < sanitizedList.length; i++) {
+    const sanitized = sanitizedList[i];
+    if (!sanitized?.data) continue;
+    let buf;
+    try {
+      buf = Buffer.from(String(sanitized.data).replace(/\s/g, ""), "base64");
+    } catch {
+      continue;
+    }
+    if (buf.length < 8 || buf.length > 5 * 1024 * 1024) {
+      continue;
+    }
+    const key = buildClientLinkChatImageS3Key({
+      kind,
+      projectSlug: project.slug,
+      projectName: project.name,
+      releaseName: release.name,
+      versionLabel,
+      chatId: userMessageId,
+      partIndex: sanitizedList.length > 1 ? i : null,
+      ext: replacementMimeToExt(sanitized.mimeType),
+    });
+    const up = await uploadBufferToS3Inline({
+      key,
+      body: buf,
+      contentType: sanitized.mimeType,
+    });
+    if (up.ok && up.url) {
+      urls.push(up.url);
+    }
+  }
+  if (!urls.length) {
+    return;
+  }
+  await prisma.chatHistory.updateMany({
+    where: {
+      id: userMessageId,
+      projectId: project.id,
+      releaseId,
+      role: "user",
+    },
+    data: {
+      attachmentImageUrls: urls,
+    },
+  });
 }
 
 function replacementMimeToExt(mimeType) {
@@ -207,7 +285,7 @@ async function assertReleaseBelongs(releaseId, projectId) {
   }
   const release = await prisma.release.findFirst({
     where: { id: rid, projectId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, name: true },
   });
   if (!release) {
     throw new ApiError(404, "Release not found");
@@ -833,6 +911,7 @@ export async function clientLinkFollowup({
   clientEmail,
   replacementImage: replacementImageRaw = null,
   referenceImage: referenceImageRaw = null,
+  referenceImages: referenceImagesRaw = null,
 }) {
   const project = await resolveProjectBySlug(slug);
   assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
@@ -842,12 +921,37 @@ export async function clientLinkFollowup({
   assertReleaseNotLocked(release);
 
   const sanitizedReplacement = sanitizeChatImagePayload(replacementImageRaw);
-  const sanitizedReference = sanitizeChatImagePayload(referenceImageRaw);
 
-  if (sanitizedReplacement && sanitizedReference) {
+  const referenceCandidates = [];
+  if (Array.isArray(referenceImagesRaw)) {
+    for (const item of referenceImagesRaw) {
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        referenceCandidates.push(item);
+      }
+    }
+  }
+  if (
+    referenceImageRaw &&
+    typeof referenceImageRaw === "object" &&
+    !Array.isArray(referenceImageRaw)
+  ) {
+    referenceCandidates.push(referenceImageRaw);
+  }
+  const sanitizedReferenceList = referenceCandidates
+    .map((raw) => sanitizeChatImagePayload(raw))
+    .filter(Boolean);
+
+  if (sanitizedReferenceList.length > MAX_REFERENCE_IMAGES_PER_MESSAGE) {
     throw new ApiError(
       400,
-      "Send only one attachment per message: either an element replacement image or a design reference image.",
+      `At most ${MAX_REFERENCE_IMAGES_PER_MESSAGE} reference images per message.`,
+    );
+  }
+
+  if (sanitizedReplacement && sanitizedReferenceList.length > 0) {
+    throw new ApiError(
+      400,
+      "Send either an element replacement image or design reference image(s), not both.",
     );
   }
 
@@ -855,6 +959,12 @@ export async function clientLinkFollowup({
   if (!storedText && sanitizedReplacement) {
     storedText =
       "Replace the selected asset with the attached reference image. Save it under src/assets/ (e.g. src/assets/images/) and update imports or references in code.";
+  }
+  if (sanitizedReferenceList.length > 0 && !storedText) {
+    throw new ApiError(
+      400,
+      "Add a message describing what you want for the attached image(s).",
+    );
   }
   if (!storedText) {
     throw new ApiError(400, "Message required");
@@ -876,15 +986,16 @@ export async function clientLinkFollowup({
 
   // Cursor wire format is the same for both; behavior is split by instructions + replacement-only Git commit.
   // 1) Element asset replacement: body.replacementImage → commit to branch + CLIENT_REPO_IMAGE_INSTRUCTION.
-  // 2) Design reference: body.referenceImage → no repo commit; user message alone is the prompt text (no extra instruction block).
-  // Never send both (validated above). Images are passed as prompt.images per Cursor v0/agents API.
+  // 2) Design reference: body.referenceImage(s) → no repo commit; images as prompt.images per Cursor API.
   let textForCursor = storedText;
   let cursorImages = [];
   if (sanitizedReplacement) {
     textForCursor = `${storedText}${CLIENT_REPO_IMAGE_INSTRUCTION}`;
     cursorImages = buildCursorAgentPromptImages(sanitizedReplacement);
-  } else if (sanitizedReference) {
-    cursorImages = buildCursorAgentPromptImages(sanitizedReference);
+  } else if (sanitizedReferenceList.length > 0) {
+    for (const ref of sanitizedReferenceList) {
+      cursorImages.push(...buildCursorAgentPromptImages(ref));
+    }
   }
 
   const userMessage = await prisma.chatHistory.create({
@@ -895,6 +1006,25 @@ export async function clientLinkFollowup({
       text: storedText,
     },
   });
+
+  if (sanitizedReplacement || sanitizedReferenceList.length > 0) {
+    const imgKind = sanitizedReplacement ? "replacement" : "reference";
+    const list = sanitizedReplacement
+      ? [sanitizedReplacement]
+      : sanitizedReferenceList;
+    try {
+      await persistClientLinkChatImagesToS3({
+        project,
+        release,
+        releaseId: rid,
+        userMessageId: userMessage.id,
+        sanitizedList: list,
+        kind: imgKind,
+      });
+    } catch (err) {
+      console.error("[client-link] chat image S3 persist failed", err?.message || err);
+    }
+  }
 
   const [priorVersionedConversion, priorMergedChat] = await Promise.all([
     prisma.figmaConversion.findFirst({
@@ -1489,6 +1619,12 @@ export async function clientLinkExecutionSummary({ slug, releaseId }) {
   };
 }
 
+function mergedAttachmentImageUrls(row) {
+  return Array.isArray(row?.attachmentImageUrls)
+    ? row.attachmentImageUrls.filter((u) => typeof u === "string" && u.trim())
+    : [];
+}
+
 /** Public: persisted chat for client link (per release). */
 export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 }) {
   const project = await resolveProjectBySlug(slug);
@@ -1529,24 +1665,29 @@ export async function clientLinkListChatMessages({ slug, releaseId, limit = 200 
       revertedAt: true,
       revertCommitSha: true,
       figmaConversionId: true,
+      attachmentImageUrls: true,
       createdAt: true,
     },
   });
 
   return {
-    messages: rows.map((r) => ({
-      id: r.id,
-      role: r.role,
-      text: r.text,
-      appliedCommitSha: r.appliedCommitSha || null,
-      isMerged: r.role === "user" && Boolean(r.mergedAt),
-      mergedAt: r.mergedAt,
-      revertedAt: r.revertedAt || null,
-      revertCommitSha: r.revertCommitSha || null,
-      isReverted: r.role === "user" && Boolean(r.revertedAt),
-      figmaConversionId: r.figmaConversionId ?? null,
-      createdAt: r.createdAt,
-    })),
+    messages: rows.map((r) => {
+      const imageUrls = mergedAttachmentImageUrls(r);
+      return {
+        id: r.id,
+        role: r.role,
+        text: r.text,
+        appliedCommitSha: r.appliedCommitSha || null,
+        isMerged: r.role === "user" && Boolean(r.mergedAt),
+        mergedAt: r.mergedAt,
+        revertedAt: r.revertedAt || null,
+        revertCommitSha: r.revertCommitSha || null,
+        isReverted: r.role === "user" && Boolean(r.revertedAt),
+        figmaConversionId: r.figmaConversionId ?? null,
+        attachmentImageUrls: imageUrls,
+        createdAt: r.createdAt,
+      };
+    }),
   };
 }
 

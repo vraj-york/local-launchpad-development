@@ -507,6 +507,7 @@ export const clientLinkSendFollowup = async (
   clientEmail,
   replacementImage = null,
   referenceImage = null,
+  referenceImages = null,
 ) => {
   const enc = encodeURIComponent(String(slug).trim());
   const body = {
@@ -527,6 +528,25 @@ export const clientLinkSendFollowup = async (
     };
   }
   if (
+    Array.isArray(referenceImages) &&
+    referenceImages.length > 0 &&
+    !replacementImage
+  ) {
+    body.referenceImages = referenceImages
+      .filter(
+        (img) =>
+          img &&
+          typeof img === "object" &&
+          typeof img.data === "string" &&
+          img.data.trim(),
+      )
+      .map((img) => ({
+        data: img.data,
+        mimeType: img.mimeType || "image/png",
+        width: Number(img.width) || 512,
+        height: Number(img.height) || 512,
+      }));
+  } else if (
     referenceImage &&
     typeof referenceImage === "object" &&
     typeof referenceImage.data === "string"
