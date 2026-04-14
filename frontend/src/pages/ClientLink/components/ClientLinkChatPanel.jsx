@@ -1155,7 +1155,6 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
         text,
         identityEmail,
         replacementPayload,
-        null,
         !replacementPayload && referencePayloads?.length
           ? referencePayloads
           : null,

@@ -212,9 +212,13 @@ function releaseStatusPresentation(release) {
     };
   }
   if (s === "skip") {
+    const reason =
+      typeof release?.skipReason === "string" ? release.skipReason.trim() : "";
     return {
       label: "Skip",
-      hint: "Marked as not shipping this cycle — change status anytime if plans change",
+      hint:
+        reason ||
+        "No skip reason on file — change status anytime if plans change.",
       pillClass:
         "bg-gradient-to-r from-violet-50 to-indigo-50 text-indigo-950 ring-1 ring-violet-200/70 shadow-sm shadow-violet-500/5",
       dotClass: "bg-violet-500 shadow-[0_0_0_3px_rgba(139,92,246,0.25)]",
@@ -668,6 +672,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       clientReviewAiGenerationContext:
         release.clientReviewAiGenerationContext ?? "",
       isLocked: isReleaseLocked(release),
+      isSkipped: normalizeReleaseStatus(release) === "skip",
       reason: "",
     });
   };
@@ -723,31 +728,39 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       showClientReviewSummary: editDialog.showClientReviewSummary === true,
       clientReviewAiGenerationContext: aiContextTrimmed,
     };
-    const payload = editDialog.isLocked
-      ? clientLinkPayload
+    const shipPayload = editDialog.isSkipped
+      ? {}
       : {
-        description: editDialog.description.trim() || null,
-        isMvp: editDialog.isMvp,
-        startDate: editDialog.startDate
-          ? format(editDialog.startDate, "yyyy-MM-dd")
-          : null,
-        releaseDate: editDialog.releaseDate
-          ? format(editDialog.releaseDate, "yyyy-MM-dd")
-          : null,
-        actualReleaseDate: editDialog.actualReleaseDate
-          ? format(editDialog.actualReleaseDate, "yyyy-MM-dd")
-          : null,
-        actualReleaseNotes:
-          editDialog.actualReleaseNotes.trim() || null,
-        ...clientLinkPayload,
-        reason: editDialog.reason.trim(),
-      };
+          actualReleaseDate: editDialog.actualReleaseDate
+            ? format(editDialog.actualReleaseDate, "yyyy-MM-dd")
+            : null,
+          actualReleaseNotes:
+            editDialog.actualReleaseNotes.trim() || null,
+        };
+    /** Locked saves: only client-link + ship fields — never description / schedule / MVP / reason. */
+    const payload = editDialog.isLocked
+      ? { ...clientLinkPayload, ...shipPayload }
+      : {
+          description: editDialog.description.trim() || null,
+          isMvp: editDialog.isMvp,
+          startDate: editDialog.startDate
+            ? format(editDialog.startDate, "yyyy-MM-dd")
+            : null,
+          releaseDate: editDialog.releaseDate
+            ? format(editDialog.releaseDate, "yyyy-MM-dd")
+            : null,
+          ...shipPayload,
+          ...clientLinkPayload,
+          reason: editDialog.reason.trim(),
+        };
     try {
       setEditSaving(true);
       await patchRelease(editDialog.id, payload);
       toast.success(
         editDialog.isLocked
-          ? "Client link notes saved"
+          ? editDialog.isSkipped
+            ? "Client link notes saved"
+            : "Release updated (client link and/or ship fields)"
           : "Release updated",
       );
       const rid = editDialog.id;
@@ -2386,11 +2399,19 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
           <DialogHeader>
             <DialogTitle>Edit release</DialogTitle>
             <DialogDescription>
-              {editDialog?.isLocked ? (
+              {editDialog?.isSkipped ? (
                 <>
-                  This release is <strong>locked</strong>. You can only update
-                  notes shown on the public client link. Git change summary on
-                  that page still comes from the repo automatically.
+                  This release is <strong>skipped</strong>. Actual release date
+                  and notes cannot be set here. You can still update client link
+                  content and other fields that stay enabled.
+                </>
+              ) : editDialog?.isLocked ? (
+                <>
+                  This release is <strong>locked</strong>. Name, description,
+                  MVP, and schedule cannot change. You can update the public
+                  client link notes and the <strong>actual ship date / notes</strong>{" "}
+                  for the roadmap. Git change summary on the client link still
+                  comes from the repo automatically.
                 </>
               ) : (
                 <>
@@ -2498,21 +2519,29 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                     Clear schedule
                   </Button>
                 )}
-                <div className="space-y-2 pt-2 border-t border-slate-100 mt-2">
+              </div>
+              <div
+                className={
+                  editDialog.isSkipped
+                    ? "pointer-events-none space-y-2 opacity-60"
+                    : "space-y-2"
+                }
+              >
+                <div className="space-y-2 border-t border-slate-100 pt-2">
                   <Label>Actual release date (optional)</Label>
                   <p className="text-xs text-slate-500">
                     When the release actually shipped. Used on the release
-                    roadmap.
+                    roadmap. Not available for skipped releases.
                   </p>
                   <DatePickerSingle
                     className="h-10 w-full max-w-md border-slate-200 bg-white hover:bg-slate-50/90"
                     date={editDialog.actualReleaseDate}
-                    disabled={editDialog.isLocked}
+                    disabled={editDialog.isSkipped}
                     onDateChange={(d) => {
                       setEditDialog((prev) => {
                         if (!prev) return prev;
                         if (
-                          !prev.isLocked &&
+                          !prev.isSkipped &&
                           actualShipDateChanged(prev.actualReleaseDate, d) &&
                           d
                         ) {
@@ -2526,7 +2555,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                     }}
                     placeholder="Not set"
                   />
-                  {editDialog.actualReleaseDate && !editDialog.isLocked && (
+                  {editDialog.actualReleaseDate && !editDialog.isSkipped && (
                     <>
                       <div className="space-y-2 pt-2">
                         <Label htmlFor="edit-actual-release-notes">
@@ -2537,6 +2566,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                           rows={3}
                           placeholder="e.g. What shipped, caveats, or rollout notes."
                           value={editDialog.actualReleaseNotes}
+                          disabled={editDialog.isSkipped}
                           onChange={(e) =>
                             setEditDialog((prev) =>
                               prev
@@ -2555,6 +2585,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                         variant="ghost"
                         size="sm"
                         className="h-8 px-2 text-xs text-slate-500"
+                        disabled={editDialog.isSkipped}
                         onClick={() =>
                           setEditDialog((prev) =>
                             prev

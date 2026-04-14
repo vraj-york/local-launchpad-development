@@ -506,7 +506,6 @@ export const clientLinkSendFollowup = async (
   text,
   clientEmail,
   replacementImage = null,
-  referenceImage = null,
   referenceImages = null,
 ) => {
   const enc = encodeURIComponent(String(slug).trim());
@@ -546,17 +545,6 @@ export const clientLinkSendFollowup = async (
         width: Number(img.width) || 512,
         height: Number(img.height) || 512,
       }));
-  } else if (
-    referenceImage &&
-    typeof referenceImage === "object" &&
-    typeof referenceImage.data === "string"
-  ) {
-    body.referenceImage = {
-      data: referenceImage.data,
-      mimeType: referenceImage.mimeType || "image/png",
-      width: Number(referenceImage.width) || 512,
-      height: Number(referenceImage.height) || 512,
-    };
   }
   const response = await api.post(`/api/chat/${enc}/followup`, body);
   return response.data;
