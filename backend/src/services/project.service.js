@@ -2764,6 +2764,31 @@ function gitMergeBaseIsAncestor(cwd, ancestor, descendant) {
   return r.status === 0;
 }
 
+/** Fetch and checkout a remote branch; returns false if the branch is missing or checkout fails. */
+function tryFetchAndCheckoutBranch(workDir, branch) {
+  const b = typeof branch === "string" ? branch.trim() : "";
+  if (!b) return false;
+  const fetchRef = spawnSync(
+    "git",
+    ["fetch", "origin", `${b}:refs/heads/${b}`],
+    { cwd: workDir, encoding: "utf8", maxBuffer: 50 * 1024 * 1024 },
+  );
+  if (fetchRef.status !== 0) {
+    const fetchLoose = spawnSync(
+      "git",
+      ["fetch", "origin", b],
+      { cwd: workDir, encoding: "utf8", maxBuffer: 50 * 1024 * 1024 },
+    );
+    if (fetchLoose.status !== 0) return false;
+  }
+  const co = spawnSync("git", ["checkout", b], {
+    cwd: workDir,
+    encoding: "utf8",
+    maxBuffer: 50 * 1024 * 1024,
+  });
+  return co.status === 0;
+}
+
 function gitDiffQuiet(cwd, a, b) {
   const r = spawnSync("git", ["diff", "--quiet", a, b], { cwd });
   return r.status === 0;
@@ -2783,9 +2808,10 @@ function revertOneCommitInClone(cwd, sha) {
 }
 
 /**
- * Non-destructive restore: revert each commit from baseline..HEAD on the same branch
- * as client-link agents (`launchpad` vs default branch per `resolveGitSourceForNewClientChatAgent`),
- * push that branch + new tag for the active release, create ProjectVersion, activate (deploy).
+ * Non-destructive restore: revert each commit from baseline..HEAD on a branch where the
+ * baseline is an ancestor of HEAD. Tries the client-link line first (`resolveGitSourceForNewClientChatAgent`,
+ * e.g. launchpad), then `main` (ZIP uploads), so mixed Figma + ZIP history can still revert.
+ * Pushes that branch + new tag for the active release, creates ProjectVersion, activates (deploy).
  *
  * @param {{ projectId: number, activeReleaseId: number, baselineProjectVersionId: number, reason: string, user: object }} opts
  */
@@ -2873,7 +2899,7 @@ export async function revertActiveReleaseToBaselineProjectVersionService({
     throw new ApiError(500, msg);
   }
 
-  const workflowBranch =
+  const preferredBranch =
     String(gitLine.sourceRef || "").trim() || "main";
   const parsed = gitLine.parsed;
   if (!parsed) {
@@ -2915,15 +2941,6 @@ export async function revertActiveReleaseToBaselineProjectVersionService({
     execGit(["config", "user.name", gitName], workDir);
     execGit(["config", "user.email", gitEmail], workDir);
     execGit(["fetch", "origin", "--tags"], workDir);
-    try {
-      execGit(
-        ["fetch", "origin", `${workflowBranch}:refs/heads/${workflowBranch}`],
-        workDir,
-      );
-    } catch {
-      execGit(["fetch", "origin", workflowBranch], workDir);
-    }
-    execGit(["checkout", workflowBranch], workDir);
 
     const revParseBase = spawnSync(
       "git",
@@ -2938,17 +2955,33 @@ export async function revertActiveReleaseToBaselineProjectVersionService({
     }
     const baseCommit = (revParseBase.stdout || "").trim();
 
-    const headCommit = execGit(["rev-parse", "HEAD"], workDir).trim();
-    if (headCommit === baseCommit) {
-      throw new ApiError(
-        400,
-        `Current branch "${workflowBranch}" already matches the baseline revision; no revert needed.`,
-      );
+    const branchCandidates = [
+      ...new Set(
+        [preferredBranch, "main"].filter(
+          (b) => typeof b === "string" && b.trim().length > 0,
+        ),
+      ),
+    ];
+    let revertBranch = null;
+    for (const b of branchCandidates) {
+      if (!tryFetchAndCheckoutBranch(workDir, b)) continue;
+      const headCommit = execGit(["rev-parse", "HEAD"], workDir).trim();
+      if (headCommit === baseCommit) {
+        throw new ApiError(
+          400,
+          `Branch "${b}" already matches the baseline revision; no revert needed.`,
+        );
+      }
+      if (gitMergeBaseIsAncestor(workDir, baseCommit, "HEAD")) {
+        revertBranch = b;
+        break;
+      }
     }
-    if (!gitMergeBaseIsAncestor(workDir, baseCommit, "HEAD")) {
+    if (!revertBranch) {
       throw new ApiError(
         400,
-        `Baseline is not an ancestor of "${workflowBranch}". Resolve branch history manually before using this action.`,
+        `Baseline is not an ancestor of the tip of any of: ${branchCandidates.join(", ")}. ` +
+          "ZIP uploads update main; client-link work may use launchpad — merge or sync those branches so the baseline commit is on the branch you need, then retry.",
       );
     }
 
@@ -2989,7 +3022,7 @@ export async function revertActiveReleaseToBaselineProjectVersionService({
       workDir,
     );
 
-    execGit(["push", "origin", `HEAD:${workflowBranch}`], workDir);
+    execGit(["push", "origin", `HEAD:${revertBranch}`], workDir);
     execGit(["push", "origin", newTag], workDir);
 
     const domain = config.getBuildUrlHost();
@@ -3013,7 +3046,8 @@ export async function revertActiveReleaseToBaselineProjectVersionService({
             baselineGitTag: baselineTag,
             newGitTag: newTag,
             newVersionLabel,
-            workflowBranch,
+            workflowBranch: revertBranch,
+            preferredWorkflowBranch: preferredBranch,
           },
         },
       });
