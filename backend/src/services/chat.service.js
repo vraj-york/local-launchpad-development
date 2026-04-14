@@ -21,6 +21,7 @@ import {
   scmGetRepositoryMetadata,
   scmPutRepositoryContents,
 } from "./scmFacade.service.js";
+import { resolveGitSourceForNewClientChatAgent } from "./platformGitLine.service.js";
 
 import {
   compareRefs,
@@ -94,85 +95,6 @@ function replacementMimeToExt(mimeType) {
   if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
   if (m.includes("gif")) return "gif";
   return "png";
-}
-
-/**
- * Base Git ref for client-link Cursor agents (persist git path; launchpad vs default branch).
- * @throws {Error} with .code REPO_UNRESOLVED | SCM_NOT_CONFIGURED
- */
-async function resolveClientChatGitSource(project, forceLaunchpadBase = false) {
-  const resolved = resolveCursorRepositoryUrl(project);
-  if (!resolved.repositoryUrl) {
-    const err = new Error(
-      "Could not resolve repository for this project. Set gitRepoPath or connect GitHub/Bitbucket.",
-    );
-    err.code = "REPO_UNRESOLVED";
-    throw err;
-  }
-  if (resolved.gitRepoPathToPersist) {
-    await prisma.project.update({
-      where: { id: project.id },
-      data: { gitRepoPath: resolved.gitRepoPathToPersist },
-    });
-    project.gitRepoPath = resolved.gitRepoPathToPersist;
-  }
-  let parsed = parseScmRepoPath(project.gitRepoPath || "");
-  if (!parsed && resolved.repositoryUrl) {
-    parsed = parseScmRepoPath(resolved.repositoryUrl);
-  }
-  if (!parsed) {
-    const err = new Error(
-      "Could not resolve repository owner/slug for this project.",
-    );
-    err.code = "REPO_UNRESOLVED";
-    throw err;
-  }
-  let scm;
-  try {
-    scm = await resolveScmCredentialsFromProject(project);
-  } catch (e) {
-    const err = new Error(
-      typeof e?.message === "string"
-        ? e.message
-        : "Repository credentials are not configured for this project.",
-    );
-    err.code = "SCM_NOT_CONFIGURED";
-    throw err;
-  }
-  const token = scm.token?.trim() || "";
-  if (!token) {
-    const err = new Error("Repository token is not configured for this project.");
-    err.code = "SCM_NOT_CONFIGURED";
-    throw err;
-  }
-  if (scm.provider !== parsed.provider) {
-    const err = new Error(
-      `gitRepoPath points to ${parsed.provider} but project credentials are for ${scm.provider}.`,
-    );
-    err.code = "REPO_UNRESOLVED";
-    throw err;
-  }
-
-  let sourceRef = "launchpad";
-  const lp = await scmGetBranchSha(parsed.provider, parsed.owner, parsed.repo, "launchpad", token);
-  const launchpadMissing = !lp?.sha;
-  if (launchpadMissing && !forceLaunchpadBase) {
-    const meta = await scmGetRepositoryMetadata(
-      parsed.provider,
-      parsed.owner,
-      parsed.repo,
-      token,
-    );
-    if (meta.ok) {
-      sourceRef = meta.defaultBranch || "main";
-    }
-  }
-  return {
-    repositoryUrl: resolved.repositoryUrl,
-    sourceRef,
-    parsed,
-    token,
-  };
 }
 
 async function resolveAgentTargetBranchForFollowup(conv) {
@@ -711,51 +633,6 @@ async function assertShaOnTrackedAgentBranch(project, releaseId, sha, chatHistor
       ? `Commit is not on any tracked targetBranchName for this release (last compare: ${lastCompareError}).`
       : "Commit is not on any tracked targetBranchName for this release.",
   );
-}
-
-/**
- * True when a `FigmaConversion` exists for this project+release with a linked `ProjectVersion`
- * whose `projectId` and `releaseId` match (version identity via `projectVersionId`).
- */
-async function hasVersionedFigmaConversionForRelease(projectId, releaseId) {
-  const rid = Number(releaseId);
-  if (!Number.isInteger(rid) || rid < 1) return false;
-  const row = await prisma.figmaConversion.findFirst({
-    where: {
-      projectId,
-      releaseId: rid,
-      projectVersionId: { not: null },
-      projectVersion: {
-        projectId,
-        releaseId: rid,
-      },
-    },
-    select: { id: true },
-  });
-  return Boolean(row);
-}
-
-/**
- * Git clone ref for the first client-link Cursor agent: `launchpad` when a versioned
- * `FigmaConversion` exists for this project+release; otherwise the repository default branch.
- */
-async function resolveGitSourceForNewClientChatAgent(project, forceLaunchpadBase, releaseId) {
-  const useLaunchpad = await hasVersionedFigmaConversionForRelease(project.id, releaseId);
-  const resolved = await resolveClientChatGitSource(project, forceLaunchpadBase);
-  if (useLaunchpad) {
-    return resolved;
-  }
-  const meta = await scmGetRepositoryMetadata(
-    resolved.parsed.provider,
-    resolved.parsed.owner,
-    resolved.parsed.repo,
-    resolved.token,
-  );
-  const def = meta.ok ? String(meta.defaultBranch || "").trim() : "";
-  return {
-    ...resolved,
-    sourceRef: def || "main",
-  };
 }
 
 /**

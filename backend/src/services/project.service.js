@@ -8,7 +8,7 @@ import axios from "axios";
 import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { execSync, execFileSync } from "child_process";
+import { execSync, execFileSync, spawnSync } from "child_process";
 import fsExtra from "fs-extra";
 import os from 'os';
 import fs from "fs-extra";
@@ -22,11 +22,13 @@ import {
   findProjectRoot,
   setReleaseStatusService as applyReleaseStatus,
   createReleaseService,
+  autoGenerateVersion,
 } from "./release.service.js";
 import { createAgentForProjectRelease } from "./cursor.service.js";
 import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
 import { parseScmRepoPath } from "../utils/scmPath.js";
 import {
+  addBitbucketRepositoryCollaborator,
   createBitbucketRepository,
   getBitbucketRepositoryMetadata,
   getDefaultBitbucketWorkspace,
@@ -50,6 +52,8 @@ import {
   ensureFreshJiraConnection,
   getIntegrationsStatus,
 } from "./oauthConnection.service.js";
+import { scheduleRegenerateClientReviewSummary } from "./releaseReviewSummary.service.js";
+import { resolveGitSourceForNewClientChatAgent } from "./platformGitLine.service.js";
 
 /**
  * Allocate a unique slug for Project.slug (DB unique). Tries base, then base-2, base-3, ...
@@ -112,6 +116,50 @@ function listProjectVersionTags(rows) {
         .filter(Boolean),
     ),
   );
+}
+
+/**
+ * Invite GITHUB_DEFAULT_COLLABORATOR to a GitHub or Bitbucket repo (best-effort; logs on failure).
+ * @param {string|null|undefined} normalizedRepoPath - e.g. github.com/o/r or bitbucket.org/w/s
+ * @param {string|null|undefined} hostToken - OAuth or PAT for the same host as the path
+ */
+async function inviteDefaultCollaboratorToPath(normalizedRepoPath, hostToken) {
+  const token = hostToken?.trim();
+  if (!normalizedRepoPath || !token) return;
+  const parsed = parseScmRepoPath(normalizedRepoPath);
+  if (!parsed) return;
+  const defaultCollaborator =
+    process.env.GITHUB_DEFAULT_COLLABORATOR || "kalrav@york.ie";
+  try {
+    if (parsed.provider === "github") {
+      const invited = await addGithubCollaborator(
+        parsed.owner,
+        parsed.repo,
+        defaultCollaborator,
+        token,
+        "push",
+      );
+      if (!invited) {
+        console.warn(
+          `[default collaborator] GitHub invite skipped or failed for ${normalizedRepoPath}. Set GITHUB_DEFAULT_COLLABORATOR to a valid GitHub username.`,
+        );
+      }
+    } else {
+      const invited = await addBitbucketRepositoryCollaborator(
+        parsed.owner,
+        parsed.repo,
+        defaultCollaborator,
+        token,
+      );
+      if (!invited) {
+        console.warn(
+          `[default collaborator] Bitbucket invite skipped or failed for ${normalizedRepoPath}. Set GITHUB_DEFAULT_COLLABORATOR to a valid Bitbucket username.`,
+        );
+      }
+    }
+  } catch (e) {
+    console.warn(`[default collaborator] ${e?.message || e}`);
+  }
 }
 
 function ensureTagExistsInRemote(remoteUrl, tag, cwd) {
@@ -726,11 +774,27 @@ export const createProjectService = async ({ userId, body }) => {
       ? Number(body.bitbucketConnectionId)
       : null;
 
+  const creatorRow = await prisma.user.findUnique({
+    where: { id: Number(userId) },
+    select: { email: true },
+  });
+  const creatorEmailTrimmed = (creatorRow?.email && String(creatorRow.email).trim()) || "";
+  const bodyStakeholderRaw = body.stakeholderEmails;
+  const bodyStakeholderTrimmed =
+    typeof bodyStakeholderRaw === "string" && bodyStakeholderRaw.trim()
+      ? bodyStakeholderRaw.trim()
+      : "";
+
   let assignedUserEmailsDb = null;
   let stakeholderEmailsDb = null;
   try {
     assignedUserEmailsDb = normalizeOptionalEmailListString(body.assignedUserEmails);
-    stakeholderEmailsDb = normalizeOptionalEmailListString(body.stakeholderEmails);
+    const mergedStakeholderInput = [creatorEmailTrimmed, bodyStakeholderTrimmed]
+      .filter(Boolean)
+      .join(",");
+    stakeholderEmailsDb = mergedStakeholderInput
+      ? normalizeOptionalEmailListString(mergedStakeholderInput)
+      : null;
   } catch (e) {
     throw new ApiError(400, e.message);
   }
@@ -917,6 +981,10 @@ export const createProjectService = async ({ userId, body }) => {
           persistedGitRepoPath = `bitbucket.org/${ws}/${slug}`;
           gitRepoUrl = `https://bitbucket.org/${ws}/${slug}`;
         }
+        await inviteDefaultCollaboratorToPath(
+          persistedGitRepoPath,
+          effBitbucketToken,
+        );
       } catch (e) {
         console.warn("[createProject] Bitbucket repo:", e.message);
         throw new ApiError(
@@ -950,23 +1018,10 @@ export const createProjectService = async ({ userId, body }) => {
           gitRepoUrl = `https://github.com/${githubCreds.githubUsername}/${slug}`;
         }
 
-        const collaboratorRepo = parseGitRepoPath(persistedGitRepoPath);
-        const defaultCollaborator =
-          process.env.GITHUB_DEFAULT_COLLABORATOR || "kalrav@york.ie";
-        if (collaboratorRepo) {
-          const invited = await addGithubCollaborator(
-            collaboratorRepo.owner,
-            collaboratorRepo.repo,
-            defaultCollaborator,
-            githubCreds.githubToken,
-            "push",
-          );
-          if (!invited) {
-            console.warn(
-              "[createProject] Collaborator invite skipped or failed. Set GITHUB_DEFAULT_COLLABORATOR to a valid GitHub username.",
-            );
-          }
-        }
+        await inviteDefaultCollaboratorToPath(
+          persistedGitRepoPath,
+          githubCreds.githubToken,
+        );
       } catch (e) {
         console.warn("[createProject] GitHub repo/collaborator:", e.message);
         throw new ApiError(
@@ -990,6 +1045,22 @@ export const createProjectService = async ({ userId, body }) => {
         );
       }
       persistedDeveloperRepoUrl = requestedDeveloperRepo;
+    }
+
+    if (persistedDeveloperRepoUrl) {
+      const devProv = parseScmRepoPath(persistedDeveloperRepoUrl)?.provider;
+      if (devProv === "github" && effGithubToken?.trim() && !bitbucketConnectionId) {
+        await inviteDefaultCollaboratorToPath(
+          persistedDeveloperRepoUrl,
+          effGithubToken,
+        );
+      }
+      if (devProv === "bitbucket" && effBitbucketToken?.trim() && bitbucketConnectionId) {
+        await inviteDefaultCollaboratorToPath(
+          persistedDeveloperRepoUrl,
+          effBitbucketToken,
+        );
+      }
     }
 
     // 4. Directory Prep
@@ -2176,6 +2247,36 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     }
   }
 
+  let inviteScm = null;
+  try {
+    inviteScm = await resolveScmCredentialsFromProject(merged);
+  } catch {
+    inviteScm = null;
+  }
+  const inviteToken = inviteScm?.token?.trim() || null;
+  const inviteProvider = inviteScm?.provider || null;
+  if (inviteToken && inviteProvider) {
+    if (
+      data.gitRepoPath !== undefined &&
+      nextNormalizedGitRepoPath &&
+      parseScmRepoPath(nextNormalizedGitRepoPath)?.provider === inviteProvider &&
+      oldGitRepoPath !== nextNormalizedGitRepoPath
+    ) {
+      await inviteDefaultCollaboratorToPath(
+        nextNormalizedGitRepoPath,
+        inviteToken,
+      );
+    }
+    if (
+      data.developmentRepoUrl !== undefined &&
+      nextDevNorm &&
+      parseScmRepoPath(nextDevNorm)?.provider === inviteProvider &&
+      String(oldDevNorm || "") !== String(nextDevNorm || "")
+    ) {
+      await inviteDefaultCollaboratorToPath(nextDevNorm, inviteToken);
+    }
+  }
+
   const updatedProject = await prisma.project.update({
     where: { id: Number(projectId) },
     data,
@@ -2636,4 +2737,325 @@ export async function buildProjectPreviewFromGitRef({ projectId, gitRef, label =
   });
 }
 
+function execGit(args, cwd) {
+  const r = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 50 * 1024 * 1024,
+  });
+  if (r.error) {
+    throw new ApiError(500, r.error.message || "Git failed");
+  }
+  if (r.status !== 0) {
+    const err = [r.stderr, r.stdout].filter(Boolean).join("\n").trim();
+    throw new ApiError(
+      502,
+      err || `Git exited with status ${r.status}: git ${args.join(" ")}`,
+    );
+  }
+  return r.stdout || "";
+}
 
+function gitMergeBaseIsAncestor(cwd, ancestor, descendant) {
+  const r = spawnSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+    cwd,
+    encoding: "utf8",
+  });
+  return r.status === 0;
+}
+
+function gitDiffQuiet(cwd, a, b) {
+  const r = spawnSync("git", ["diff", "--quiet", a, b], { cwd });
+  return r.status === 0;
+}
+
+function revertOneCommitInClone(cwd, sha) {
+  const line = execGit(["rev-list", "--parents", "-n", "1", sha], cwd).trim();
+  const parts = line.split(/\s+/).filter(Boolean);
+  const parentCount = parts.length - 1;
+  if (parentCount > 1) {
+    execGit(["revert", "-m", "1", "--no-edit", sha], cwd);
+  } else if (parentCount === 1) {
+    execGit(["revert", "--no-edit", sha], cwd);
+  } else {
+    throw new ApiError(500, "Unexpected commit without parent in revert range.");
+  }
+}
+
+/**
+ * Non-destructive restore: revert each commit from baseline..HEAD on the same branch
+ * as client-link agents (`launchpad` vs default branch per `resolveGitSourceForNewClientChatAgent`),
+ * push that branch + new tag for the active release, create ProjectVersion, activate (deploy).
+ *
+ * @param {{ projectId: number, activeReleaseId: number, baselineProjectVersionId: number, reason: string, user: object }} opts
+ */
+export async function revertActiveReleaseToBaselineProjectVersionService({
+  projectId,
+  activeReleaseId,
+  baselineProjectVersionId,
+  reason,
+  user,
+}) {
+  await assertProjectAccess(projectId, user);
+  const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+  if (!trimmedReason) {
+    throw new ApiError(400, "reason is required.");
+  }
+  const pid = Number(projectId);
+  const activeRid = Number(activeReleaseId);
+  const baselineVid = Number(baselineProjectVersionId);
+  if (!Number.isFinite(pid) || !Number.isFinite(activeRid) || !Number.isFinite(baselineVid)) {
+    throw new ApiError(400, "Invalid project or version id.");
+  }
+
+  const activeRelease = await prisma.release.findFirst({
+    where: { id: activeRid, projectId: pid, status: ReleaseStatus.active },
+    select: { id: true, name: true },
+  });
+  if (!activeRelease) {
+    throw new ApiError(
+      400,
+      "Release must be the project's active release to apply a revert-based revision.",
+    );
+  }
+
+  const baseline = await prisma.projectVersion.findFirst({
+    where: { id: baselineVid, projectId: pid },
+    include: {
+      release: { select: { id: true, name: true, status: true, projectId: true } },
+    },
+  });
+  if (!baseline?.release) {
+    throw new ApiError(404, "Baseline revision not found for this project.");
+  }
+  if (baseline.release.projectId !== pid) {
+    throw new ApiError(400, "Baseline revision does not belong to this project.");
+  }
+  const baselineTag = (baseline.gitTag || "").trim();
+  if (!baselineTag) {
+    throw new ApiError(400, "Baseline revision has no git tag.");
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id: pid },
+    select: {
+      id: true,
+      name: true,
+      projectPath: true,
+      port: true,
+      gitRepoPath: true,
+      createdById: true,
+      githubConnectionId: true,
+      bitbucketConnectionId: true,
+      githubUsername: true,
+      githubToken: true,
+      bitbucketUsername: true,
+      bitbucketToken: true,
+    },
+  });
+  if (!project) {
+    throw new ApiError(404, "Project not found.");
+  }
+
+  let gitLine;
+  try {
+    gitLine = await resolveGitSourceForNewClientChatAgent(project, false, activeRid);
+  } catch (e) {
+    const code = e?.code;
+    const msg =
+      typeof e?.message === "string"
+        ? e.message
+        : "Could not resolve Git line for this project.";
+    if (code === "REPO_UNRESOLVED" || code === "SCM_NOT_CONFIGURED") {
+      throw new ApiError(400, msg);
+    }
+    if (e instanceof ApiError) throw e;
+    throw new ApiError(500, msg);
+  }
+
+  const workflowBranch =
+    String(gitLine.sourceRef || "").trim() || "main";
+  const parsed = gitLine.parsed;
+  if (!parsed) {
+    throw new ApiError(400, "Could not resolve repository owner/slug for this project.");
+  }
+
+  const scm = await resolveScmCredentialsFromProject(project);
+  if (parsed.provider !== scm.provider) {
+    throw new ApiError(
+      400,
+      "gitRepoPath must match the connected SCM host (GitHub vs Bitbucket).",
+    );
+  }
+  const validatedProjectName = projectRepoSlugFromDisplayName(project.name);
+  const remoteOwner = parsed.owner || scm.username;
+  const remoteRepo = parsed.repo || validatedProjectName;
+  const cloneUrl =
+    scm.provider === "github"
+      ? `https://x-access-token:${scm.token}@github.com/${remoteOwner}/${remoteRepo}.git`
+      : `https://x-token-auth:${scm.token}@bitbucket.org/${remoteOwner}/${remoteRepo}.git`;
+
+  const lock = await prisma.project.updateMany({
+    where: { id: pid, isUploading: false },
+    data: { isUploading: true },
+  });
+  if (lock.count === 0) {
+    throw new ApiError(409, "Upload or another git operation is already in progress for this project.");
+  }
+
+  const workDir = await fs.mkdtemp(path.join(os.tmpdir(), `revert_${pid}_`));
+  let newTag;
+  let newVersionLabel;
+  let newVersionId = null;
+
+  try {
+    execGit(["clone", cloneUrl, "."], workDir);
+    const gitName = (scm.username || "Platform").replace(/"/g, "").slice(0, 60);
+    const gitEmail = `${(scm.username || "worker").replace(/@/g, ".")}@${scm.provider === "bitbucket" ? "bitbucket" : "github"}-revert.local`;
+    execGit(["config", "user.name", gitName], workDir);
+    execGit(["config", "user.email", gitEmail], workDir);
+    execGit(["fetch", "origin", "--tags"], workDir);
+    try {
+      execGit(
+        ["fetch", "origin", `${workflowBranch}:refs/heads/${workflowBranch}`],
+        workDir,
+      );
+    } catch {
+      execGit(["fetch", "origin", workflowBranch], workDir);
+    }
+    execGit(["checkout", workflowBranch], workDir);
+
+    const revParseBase = spawnSync(
+      "git",
+      ["rev-parse", `${baselineTag}^{commit}`],
+      { cwd: workDir, encoding: "utf8" },
+    );
+    if (revParseBase.status !== 0) {
+      throw new ApiError(
+        400,
+        `Baseline tag "${baselineTag}" was not found on the remote repository.`,
+      );
+    }
+    const baseCommit = (revParseBase.stdout || "").trim();
+
+    const headCommit = execGit(["rev-parse", "HEAD"], workDir).trim();
+    if (headCommit === baseCommit) {
+      throw new ApiError(
+        400,
+        `Current branch "${workflowBranch}" already matches the baseline revision; no revert needed.`,
+      );
+    }
+    if (!gitMergeBaseIsAncestor(workDir, baseCommit, "HEAD")) {
+      throw new ApiError(
+        400,
+        `Baseline is not an ancestor of "${workflowBranch}". Resolve branch history manually before using this action.`,
+      );
+    }
+
+    const revListOut = execGit(
+      ["rev-list", "--topo-order", `${baseCommit}..HEAD`],
+      workDir,
+    ).trim();
+    const shas = revListOut ? revListOut.split("\n").filter(Boolean) : [];
+    if (shas.length === 0) {
+      if (!gitDiffQuiet(workDir, baseCommit, "HEAD")) {
+        throw new ApiError(
+          400,
+          "History has no commits in range but the tree differs from baseline; inspect the repository.",
+        );
+      }
+    } else {
+      for (const sha of shas) {
+        revertOneCommitInClone(workDir, sha);
+      }
+      if (!gitDiffQuiet(workDir, baseCommit, "HEAD")) {
+        throw new ApiError(
+          500,
+          "After reverting, the working tree still differs from the baseline. Resolve conflicts manually in a clone.",
+        );
+      }
+    }
+
+    newVersionLabel = await autoGenerateVersion(activeRid);
+    newTag = `proj-${pid}-rel-${activeRid}-${newVersionLabel}`;
+    execGit(
+      [
+        "tag",
+        "-a",
+        newTag,
+        "-m",
+        `Revert chain to match release "${baseline.release.name}" revision ${baseline.version}`,
+      ],
+      workDir,
+    );
+
+    execGit(["push", "origin", `HEAD:${workflowBranch}`], workDir);
+    execGit(["push", "origin", newTag], workDir);
+
+    const domain = config.getBuildUrlHost();
+    const protocol = config.getBuildUrlProtocol();
+    const buildUrlPlaceholder =
+      project.port != null ? `${protocol}://${domain}:${project.port}` : "";
+
+    const changedByEmail = await resolveUserEmail(user);
+    const created = await prisma.$transaction(async (tx) => {
+      await tx.releaseChangeLog.create({
+        data: {
+          releaseId: activeRid,
+          reason: trimmedReason,
+          changedById: user?.id ?? null,
+          changedByEmail: changedByEmail || null,
+          changes: {
+            action: "revert_active_to_baseline",
+            baselineProjectVersionId: baselineVid,
+            baselineReleaseName: baseline.release.name,
+            baselineVersionLabel: baseline.version,
+            baselineGitTag: baselineTag,
+            newGitTag: newTag,
+            newVersionLabel,
+            workflowBranch,
+          },
+        },
+      });
+      return tx.projectVersion.create({
+        data: {
+          projectId: pid,
+          releaseId: activeRid,
+          version: newVersionLabel,
+          gitTag: newTag,
+          buildUrl: buildUrlPlaceholder || "pending",
+          isActive: false,
+          uploadedBy: user.id,
+        },
+      });
+    });
+    newVersionId = created.id;
+  } finally {
+    await fs.remove(workDir).catch(() => { });
+    await prisma.project.update({
+      where: { id: pid },
+      data: { isUploading: false },
+    });
+  }
+
+  if (newVersionId == null) {
+    throw new ApiError(500, "Revert did not complete; no revision was created.");
+  }
+
+  const activated = await activateProjectVersionService({
+    projectId: pid,
+    versionId: newVersionId,
+    user,
+  });
+
+  scheduleRegenerateClientReviewSummary(activeRid);
+
+  return {
+    message: "Active release updated with a new revision from revert commits.",
+    version: activated.version,
+    buildUrl: activated.buildUrl,
+    tag: activated.tag,
+    gitTag: newTag,
+    versionLabel: newVersionLabel,
+  };
+}

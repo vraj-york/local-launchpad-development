@@ -608,6 +608,34 @@ export const uploadToRelease = async (releaseId, file) => {
   }
 };
 
+/**
+ * Revert commits on platform `main` from a locked baseline tag through HEAD, push,
+ * tag a new revision on the active release, deploy, and activate.
+ */
+export const revertActiveReleaseToBaseline = async (
+  projectId,
+  activeReleaseId,
+  { baselineProjectVersionId, reason },
+) => {
+  try {
+    const response = await api.post(
+      `/api/projects/${projectId}/releases/${activeReleaseId}/revert-to-baseline`,
+      {
+        baselineProjectVersionId: Number(baselineProjectVersionId),
+        reason: String(reason || "").trim(),
+      },
+      { timeout: 2 * 60 * 60 * 1000 },
+    );
+    return response.data;
+  } catch (error) {
+    throw (
+      error.response?.data || {
+        error: "Failed to revert active release to baseline",
+      }
+    );
+  }
+};
+
 // Function to generate Jira tickets from git diff summary
 export const generateJiraTickets = async (projectId) => {
   try {

@@ -43,7 +43,7 @@ jobs:
             docker compose up -d --build
 
             echo "=== Post-deploy status ==="
-            echo "(Migrations + stale feedback-recording session cleanup run in the backend entrypoint before Node starts.)"
+            echo "(Migrations run automatically in the backend container entrypoint before Node starts.)"
             docker compose ps
 
             echo "=== API health (localhost:5000) ==="
