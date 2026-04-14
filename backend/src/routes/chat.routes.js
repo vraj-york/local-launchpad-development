@@ -47,12 +47,6 @@ router.post("/:slug/followup", async (req, res) => {
       !Array.isArray(req.body.replacementImage)
         ? req.body.replacementImage
         : null;
-    const referenceImage =
-      req.body?.referenceImage != null &&
-      typeof req.body.referenceImage === "object" &&
-      !Array.isArray(req.body.referenceImage)
-        ? req.body.referenceImage
-        : null;
     const referenceImages = Array.isArray(req.body?.referenceImages)
       ? req.body.referenceImages
       : null;
@@ -63,7 +57,6 @@ router.post("/:slug/followup", async (req, res) => {
       promptText: t,
       clientEmail: readClientEmail(req.body),
       replacementImage,
-      referenceImage,
       referenceImages,
     });
     return res.json(result);

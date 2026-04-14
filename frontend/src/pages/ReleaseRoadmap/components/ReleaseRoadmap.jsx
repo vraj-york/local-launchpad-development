@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { format, startOfDay } from "date-fns";
 import {
+  Ban,
   CalendarDays,
   CheckCircle,
   ChevronDown,
@@ -111,6 +112,10 @@ function isReleaseLocked(release) {
   return normalizeReleaseStatus(release) === "locked";
 }
 
+function isReleaseSkipped(release) {
+  return normalizeReleaseStatus(release) === "skip";
+}
+
 function releaseCardAccentBarClass(release) {
   switch (normalizeReleaseStatus(release)) {
     case "locked":
@@ -144,9 +149,13 @@ function releaseStatusPresentation(release) {
     };
   }
   if (s === "skip") {
+    const reason =
+      typeof release?.skipReason === "string" ? release.skipReason.trim() : "";
     return {
       label: "Skip",
-      hint: "Marked as not shipping this cycle — change status anytime if plans change",
+      hint:
+        reason ||
+        "No skip reason on file — change status anytime if plans change.",
       pillClass:
         "bg-chart-4/15 text-foreground ring-1 ring-chart-4/30 shadow-sm",
       dotClass: "bg-chart-4 ring-2 ring-chart-4/35",
@@ -211,14 +220,14 @@ function actualCompareInnerClass(kind) {
 function actualReleaseCardAlignClass(kind) {
   if (kind === "late") return "w-full self-start md:self-end";
   if (kind === "early") return "w-full self-start";
-  return "w-full self-start md:self-cetner";
+  return "w-full self-start md:self-center";
 }
 
 /** Planned card vertical alignment in the grid row (md+). Early uses a spacer above the card so the top shifts down while actual stays top-aligned. */
 function plannedReleaseCardAlignClass(kind) {
   if (kind === "late") return "w-full self-start";
   if (kind === "early") return "w-full";
-  return "w-full self-start md:self-start";
+  return "w-full self-start md:self-center";
 }
 
 function actualShipDateSurfaceClass(kind) {
@@ -304,6 +313,9 @@ function ReleasePlannedPanel({
         <div
           className={cn(
             "flex w-full max-w-full min-w-0 flex-row flex-wrap items-center gap-2 text-xs sm:gap-2.5",
+            isReleaseSkipped(release)
+              ? "justify-start"
+              : plannedCompareRowClass(compareKind),
           )}
         >
           <div className="inline-flex min-w-0 shrink-0 items-center gap-2">
@@ -558,7 +570,48 @@ function ReleasePlannedPanel({
   );
 }
 
+function skippedReleaseSurfaceClass() {
+  return "bg-gradient-to-br from-violet-500/[0.14] via-purple-500/11 to-fuchsia-500/8 ring-1 ring-violet-400/35 shadow-sm shadow-violet-500/10 dark:from-violet-950/50 dark:via-purple-950/35 dark:to-fuchsia-950/20 dark:ring-violet-500/30";
+}
+
 function ReleaseActualPanel({ release, kind, hasActual }) {
+  if (isReleaseSkipped(release)) {
+    const skipUi = releaseStatusPresentation(release);
+    return (
+      <div className="flex min-w-0 flex-col gap-2">
+        <div className="flex min-w-0 flex-col gap-2 md:items-stretch">
+          <div
+            className={cn(
+              "flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 sm:px-2.5 sm:py-2",
+              skippedReleaseSurfaceClass(),
+            )}
+          >
+            <div
+              className="flex size-7 shrink-0 items-center justify-center rounded-md bg-background/75 shadow-inner ring-1 ring-black/5 backdrop-blur-sm dark:bg-background/50 dark:ring-white/10"
+              aria-hidden
+            >
+              <Ban
+                className="size-3.5 text-violet-700 dark:text-violet-300"
+                aria-hidden
+              />
+            </div>
+            <div className="min-w-0 flex-1 text-left">
+              <p className="text-[9px] font-semibold uppercase tracking-wider text-violet-800 dark:text-violet-200">
+                Skipped release
+              </p>
+              <p className="mt-0.5 text-sm font-semibold leading-tight tracking-tight text-foreground">
+                Not shipping this Release
+              </p>
+              <p className="mt-1 text-xs leading-snug text-muted-foreground">
+                {skipUi.hint}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const accent = actualShipDateAccentTextClass(kind);
   return (
     <div className="flex min-w-0 flex-col gap-2">
@@ -725,6 +778,8 @@ export function ReleaseRoadmap({ releases }) {
             );
             const hasActual = !!parseDate(release.actualReleaseDate);
             const isLastInList = i === visible.length - 1;
+            const isSkipped = isReleaseSkipped(release);
+            const layoutKind = isSkipped ? "ontime" : kind;
 
             return (
               <div
@@ -732,7 +787,7 @@ export function ReleaseRoadmap({ releases }) {
                 className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(4.5rem,5.5rem)_minmax(0,1fr)] md:items-stretch md:gap-3"
               >
                 <div className="flex w-full min-h-0 flex-col">
-                  {kind === "early" ? (
+                  {layoutKind === "early" ? (
                     <div
                       className="hidden shrink-0 md:block md:h-14 lg:h-[4.5rem]"
                       aria-hidden
@@ -741,7 +796,7 @@ export function ReleaseRoadmap({ releases }) {
                   <Card
                     className={cn(
                       "group relative overflow-hidden rounded-2xl border border-border/90 bg-card gap-0 py-0 shadow-sm shadow-black/[0.06] transition-all duration-200 hover:border-border hover:shadow-md dark:shadow-black/25 dark:hover:shadow-lg/15",
-                      plannedReleaseCardAlignClass(kind),
+                      plannedReleaseCardAlignClass(layoutKind),
                     )}
                   >
                     <div
@@ -754,7 +809,7 @@ export function ReleaseRoadmap({ releases }) {
                     <div className="flex flex-col px-4 py-4 sm:px-5 sm:py-5">
                       <ReleasePlannedPanel
                         release={release}
-                        compareKind={kind}
+                        compareKind={layoutKind}
                         changelogEntries={changelogByRelease[release.id]}
                         changelogLoading={changelogLoadingId === release.id}
                         onChangelogOpen={() =>
@@ -802,7 +857,9 @@ export function ReleaseRoadmap({ releases }) {
                 <Card
                   className={cn(
                     "group relative overflow-hidden rounded-xl border border-border/90 bg-card gap-0 py-0 shadow-sm shadow-black/6 transition-all duration-200 hover:border-border hover:shadow-md dark:shadow-black/25 dark:hover:shadow-lg/15",
-                    actualReleaseCardAlignClass(kind),
+                    actualReleaseCardAlignClass(layoutKind),
+                    isSkipped &&
+                      "border-violet-400/30 ring-1 ring-violet-500/15 dark:border-violet-500/25",
                   )}
                 >
                   <div className="flex flex-col px-3 py-3 sm:px-3.5 sm:py-3">

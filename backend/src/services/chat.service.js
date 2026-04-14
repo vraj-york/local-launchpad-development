@@ -910,7 +910,6 @@ export async function clientLinkFollowup({
   promptText,
   clientEmail,
   replacementImage: replacementImageRaw = null,
-  referenceImage: referenceImageRaw = null,
   referenceImages: referenceImagesRaw = null,
 }) {
   const project = await resolveProjectBySlug(slug);
@@ -929,13 +928,6 @@ export async function clientLinkFollowup({
         referenceCandidates.push(item);
       }
     }
-  }
-  if (
-    referenceImageRaw &&
-    typeof referenceImageRaw === "object" &&
-    !Array.isArray(referenceImageRaw)
-  ) {
-    referenceCandidates.push(referenceImageRaw);
   }
   const sanitizedReferenceList = referenceCandidates
     .map((raw) => sanitizeChatImagePayload(raw))
@@ -986,7 +978,7 @@ export async function clientLinkFollowup({
 
   // Cursor wire format is the same for both; behavior is split by instructions + replacement-only Git commit.
   // 1) Element asset replacement: body.replacementImage → commit to branch + CLIENT_REPO_IMAGE_INSTRUCTION.
-  // 2) Design reference: body.referenceImage(s) → no repo commit; images as prompt.images per Cursor API.
+  // 2) Design reference: body.referenceImages → no repo commit; images as prompt.images per Cursor API.
   let textForCursor = storedText;
   let cursorImages = [];
   if (sanitizedReplacement) {

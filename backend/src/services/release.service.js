@@ -91,6 +91,41 @@ async function appendReleaseChangeLog(tx, {
   });
 }
 
+/** Newest changelog row per release where `changes.status.to` is `skip` (for roadmap / UI). */
+async function latestSkipTransitionReasonByReleaseIds(releaseIds) {
+  if (!releaseIds.length) return new Map();
+  const logs = await prisma.releaseChangeLog.findMany({
+    where: { releaseId: { in: releaseIds } },
+    orderBy: { createdAt: "desc" },
+    select: { releaseId: true, reason: true, changes: true },
+  });
+  const out = new Map();
+  for (const row of logs) {
+    if (out.has(row.releaseId)) continue;
+    const ch = row.changes;
+    const to =
+      ch &&
+      typeof ch === "object" &&
+      !Array.isArray(ch) &&
+      ch.status &&
+      typeof ch.status === "object"
+        ? ch.status.to
+        : null;
+    if (String(to ?? "").toLowerCase() === ReleaseStatus.skip) {
+      out.set(row.releaseId, typeof row.reason === "string" ? row.reason : "");
+    }
+  }
+  return out;
+}
+
+function attachSkipReasonToReleases(releases, reasonById) {
+  return releases.map((r) => ({
+    ...r,
+    skipReason:
+      r.status === ReleaseStatus.skip ? reasonById.get(r.id) ?? null : null,
+  }));
+}
+
 // Project locks to prevent concurrent uploads
 const projectLocks = new Map();
 
@@ -427,7 +462,7 @@ function runCommand(command, cwd, options = {}) {
 export const listReleasesService = async (projectId, user) => {
   await assertProjectReadPermission(projectId, user);
 
-  return prisma.release.findMany({
+  const rows = await prisma.release.findMany({
     where: { projectId },
     include: {
       creator: {
@@ -444,6 +479,11 @@ export const listReleasesService = async (projectId, user) => {
     },
     orderBy: { createdAt: "desc" },
   });
+  const skippedIds = rows
+    .filter((r) => r.status === ReleaseStatus.skip)
+    .map((r) => r.id);
+  const reasonBy = await latestSkipTransitionReasonByReleaseIds(skippedIds);
+  return attachSkipReasonToReleases(rows, reasonBy);
 };
 
 /**
@@ -473,7 +513,13 @@ export const getReleaseByIdService = async (releaseId, user) => {
     throw new ApiError(404, "Release not found");
   }
   await assertProjectReadPermission(release.project.id, user);
-  return release;
+  if (release.status === ReleaseStatus.skip) {
+    const reasonBy = await latestSkipTransitionReasonByReleaseIds([
+      release.id,
+    ]);
+    return { ...release, skipReason: reasonBy.get(release.id) ?? null };
+  }
+  return { ...release, skipReason: null };
 };
 
 /**
@@ -940,10 +986,64 @@ export const lockReleaseService = async (releaseId, locked, user) => {
 };
 
 /**
+ * True if the PATCH body tries to change name, description, MVP, or schedule on a locked release
+ * (same values as stored do not count).
+ */
+function lockedForbiddenMutationAttempt(current, data) {
+  const {
+    name,
+    description,
+    isMvp,
+    releaseDate: releaseDateInput,
+    startDate: startDateInput,
+  } = data;
+
+  if (name !== undefined) {
+    const releaseNameTrimmed =
+      name && typeof name === "string" ? name.trim() : "";
+    if (releaseNameTrimmed && releaseNameTrimmed !== current.name) {
+      return true;
+    }
+  }
+
+  if (description !== undefined) {
+    const nextDesc =
+      description == null || description === ""
+        ? null
+        : String(description).trim() || null;
+    const prevDesc = current.description ?? null;
+    if (nextDesc !== prevDesc) return true;
+  }
+
+  if (isMvp !== undefined) {
+    if (Boolean(isMvp) !== current.isMvp) return true;
+  }
+
+  if (releaseDateInput !== undefined) {
+    const nextDate =
+      releaseDateInput === null || releaseDateInput === ""
+        ? null
+        : toDate(releaseDateInput, "releaseDate");
+    if (!datesEqual(nextDate, current.releaseDate)) return true;
+  }
+
+  if (startDateInput !== undefined) {
+    const nextStart =
+      startDateInput === null || startDateInput === ""
+        ? null
+        : toDate(startDateInput, "startDate");
+    if (!datesEqual(nextStart, current.startDate)) return true;
+  }
+
+  return false;
+}
+
+/**
  * Partial update: name, description, isMvp, releaseDate, actualReleaseDate, actualReleaseNotes, startDate,
  * clientReleaseNote, clientReviewAiSummary, showClientReviewSummary, clientReviewAiGenerationContext.
- * Locked releases may only update client-link fields (release note, what-to-review text, AI context, visibility).
- * Requires non-empty reason when any non–client-facing field actually changes.
+ * Locked releases may update client-link fields and actual ship date / notes; other fields stay fixed.
+ * Skipped releases cannot change actual ship date or notes.
+ * Requires non-empty reason when any other field actually changes (not for client-link-only or locked ship-only edits).
  */
 export const updateReleaseService = async (releaseId, data, user) => {
   const { id: userId } = user;
@@ -986,6 +1086,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
   await assertProjectReadPermission(current.projectId, user);
 
   const locked = current.status === ReleaseStatus.locked;
+  const isSkipped = current.status === ReleaseStatus.skip;
 
   const wantsClientNote = clientNoteInput !== undefined;
   const wantsClientReviewSummary = clientReviewAiSummaryInput !== undefined;
@@ -998,24 +1099,54 @@ export const updateReleaseService = async (releaseId, data, user) => {
     wantsShowClientReviewSummary ||
     wantsClientReviewAiGenerationContext;
 
-  const wantsOther =
+  const wantsLockedForbiddenKeys =
     name !== undefined ||
     description !== undefined ||
     isMvp !== undefined ||
     releaseDateInput !== undefined ||
-    actualReleaseDateInput !== undefined ||
-    actualReleaseNotesInput !== undefined ||
     startDateInput !== undefined;
+  const wantsActualShip =
+    actualReleaseDateInput !== undefined ||
+    actualReleaseNotesInput !== undefined;
+  const wantsOther = wantsLockedForbiddenKeys || wantsActualShip;
 
   if (!wantsClientLinkPatch && !wantsOther) {
     throw new ApiError(400, "No updatable fields provided");
   }
 
-  if (locked && wantsOther) {
+  if (locked && lockedForbiddenMutationAttempt(current, data)) {
     throw new ApiError(
       400,
-      "Cannot update a locked release except client link fields (release note, what to review, AI context, visibility).",
+      "Cannot update name, description, MVP, or schedule on a locked release. Client link fields and actual ship date / notes can still be updated.",
     );
+  }
+
+  if (isSkipped) {
+    if (actualReleaseDateInput !== undefined) {
+      const nextActual =
+        actualReleaseDateInput === null || actualReleaseDateInput === ""
+          ? null
+          : toDate(actualReleaseDateInput, "actualReleaseDate");
+      if (!datesEqual(nextActual, current.actualReleaseDate)) {
+        throw new ApiError(
+          400,
+          "Skipped releases cannot set or change the actual release date.",
+        );
+      }
+    }
+    if (actualReleaseNotesInput !== undefined) {
+      const nextNotes =
+        actualReleaseNotesInput == null || actualReleaseNotesInput === ""
+          ? null
+          : String(actualReleaseNotesInput).trim() || null;
+      const prevNotes = current.actualReleaseNotes ?? null;
+      if (nextNotes !== prevNotes) {
+        throw new ApiError(
+          400,
+          "Skipped releases cannot set or change actual release notes.",
+        );
+      }
+    }
   }
 
   const updateData = {};
@@ -1127,7 +1258,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
     }
   }
 
-  if (!locked && actualReleaseDateInput !== undefined) {
+  if (actualReleaseDateInput !== undefined) {
     const nextActual =
       actualReleaseDateInput === null || actualReleaseDateInput === ""
         ? null
@@ -1141,7 +1272,7 @@ export const updateReleaseService = async (releaseId, data, user) => {
     }
   }
 
-  if (!locked && actualReleaseNotesInput !== undefined) {
+  if (actualReleaseNotesInput !== undefined) {
     const nextNotes =
       actualReleaseNotesInput == null || actualReleaseNotesInput === ""
         ? null
@@ -1184,10 +1315,18 @@ export const updateReleaseService = async (releaseId, data, user) => {
     "showClientReviewSummary",
     "clientReviewAiGenerationContext",
   ]);
+  const shipFieldKeys = new Set(["actualReleaseDate", "actualReleaseNotes"]);
   const onlyClientChanges =
     Object.keys(changes).length > 0 &&
     Object.keys(changes).every((k) => clientLinkChangeKeys.has(k));
-  if (!onlyClientChanges && !reasonTrim) {
+  const onlyClientOrShipChanges =
+    Object.keys(changes).length > 0 &&
+    Object.keys(changes).every(
+      (k) => clientLinkChangeKeys.has(k) || shipFieldKeys.has(k),
+    );
+  const okWithoutUserReason =
+    onlyClientChanges || (locked && onlyClientOrShipChanges);
+  if (!okWithoutUserReason && !reasonTrim) {
     throw new ApiError(400, "reason is required when changing release fields.");
   }
 
@@ -1195,7 +1334,9 @@ export const updateReleaseService = async (releaseId, data, user) => {
     reasonTrim ||
     (onlyClientChanges
       ? "Updated client link fields (release note / what to review / AI context)"
-      : reasonTrim);
+      : locked && onlyClientOrShipChanges
+        ? "Updated client link and/or actual ship fields (locked release)"
+        : reasonTrim);
 
   const row = await prisma.$transaction(async (tx) => {
     const updated = await tx.release.update({
