@@ -2764,6 +2764,49 @@ function gitMergeBaseIsAncestor(cwd, ancestor, descendant) {
   return r.status === 0;
 }
 
+/** Remote short branch names whose tips contain `commitSha` (baseline is an ancestor of tip). */
+function listRemoteBranchesContainingCommit(workDir, commitSha) {
+  const sha = typeof commitSha === "string" ? commitSha.trim() : "";
+  if (!sha) return [];
+  const r = spawnSync("git", ["branch", "-r", "--contains", sha], {
+    cwd: workDir,
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  if (r.status !== 0) return [];
+  const out = (r.stdout || "").trim();
+  if (!out) return [];
+  const seen = new Set();
+  const names = [];
+  for (const line of out.split("\n")) {
+    const t = line.trim();
+    if (!t || t.includes("->")) continue;
+    const slash = t.indexOf("/");
+    if (slash < 1) continue;
+    const short = t.slice(slash + 1).trim();
+    if (!short || short === "HEAD") continue;
+    if (seen.has(short)) continue;
+    seen.add(short);
+    names.push(short);
+  }
+  return names;
+}
+
+/** Preference order for trying branches that `git branch -r --contains` reported. */
+function orderRevertBranchCandidates(containing, preferredBranch) {
+  const set = new Set(containing);
+  const pref =
+    typeof preferredBranch === "string" ? preferredBranch.trim() : "";
+  const out = [];
+  if (pref && set.has(pref)) out.push(pref);
+  if (set.has("main") && !out.includes("main")) out.push("main");
+  if (set.has("launchpad") && !out.includes("launchpad")) out.push("launchpad");
+  for (const x of [...set].sort()) {
+    if (!out.includes(x)) out.push(x);
+  }
+  return out;
+}
+
 /** Fetch and checkout a remote branch; returns false if the branch is missing or checkout fails. */
 function tryFetchAndCheckoutBranch(workDir, branch) {
   const b = typeof branch === "string" ? branch.trim() : "";
@@ -2808,10 +2851,11 @@ function revertOneCommitInClone(cwd, sha) {
 }
 
 /**
- * Non-destructive restore: revert each commit from baseline..HEAD on a branch where the
- * baseline is an ancestor of HEAD. Tries the client-link line first (`resolveGitSourceForNewClientChatAgent`,
- * e.g. launchpad), then `main` (ZIP uploads), so mixed Figma + ZIP history can still revert.
- * Pushes that branch + new tag for the active release, creates ProjectVersion, activates (deploy).
+ * Non-destructive restore: resolves baseline tag to a commit, runs `git fetch origin`, discovers
+ * remote branches whose tips contain that commit (`git branch -r --contains`), then tries
+ * branches in preference order (client line, `main`, `launchpad`, then others) and uses the
+ * first whose tip is **ahead** of the baseline (skips branches already exactly at the baseline
+ * so e.g. `main` can be reverted when `launchpad` only sits on the tag).
  *
  * @param {{ projectId: number, activeReleaseId: number, baselineProjectVersionId: number, reason: string, user: object }} opts
  */
@@ -2941,6 +2985,7 @@ export async function revertActiveReleaseToBaselineProjectVersionService({
     execGit(["config", "user.name", gitName], workDir);
     execGit(["config", "user.email", gitEmail], workDir);
     execGit(["fetch", "origin", "--tags"], workDir);
+    execGit(["fetch", "origin"], workDir);
 
     const revParseBase = spawnSync(
       "git",
@@ -2955,33 +3000,32 @@ export async function revertActiveReleaseToBaselineProjectVersionService({
     }
     const baseCommit = (revParseBase.stdout || "").trim();
 
-    const branchCandidates = [
-      ...new Set(
-        [preferredBranch, "main"].filter(
-          (b) => typeof b === "string" && b.trim().length > 0,
-        ),
-      ),
-    ];
+    const containingBranches = listRemoteBranchesContainingCommit(workDir, baseCommit);
+    if (containingBranches.length === 0) {
+      throw new ApiError(
+        400,
+        `No remote branch on origin contains baseline "${baselineTag}" (${baseCommit.slice(0, 7)}…). ` +
+          "Push the tag to this repository and ensure at least one branch tip includes that commit, then retry.",
+      );
+    }
+    const orderedCandidates = orderRevertBranchCandidates(
+      containingBranches,
+      preferredBranch,
+    );
     let revertBranch = null;
-    for (const b of branchCandidates) {
+    for (const b of orderedCandidates) {
       if (!tryFetchAndCheckoutBranch(workDir, b)) continue;
       const headCommit = execGit(["rev-parse", "HEAD"], workDir).trim();
-      if (headCommit === baseCommit) {
-        throw new ApiError(
-          400,
-          `Branch "${b}" already matches the baseline revision; no revert needed.`,
-        );
-      }
-      if (gitMergeBaseIsAncestor(workDir, baseCommit, "HEAD")) {
-        revertBranch = b;
-        break;
-      }
+      if (headCommit === baseCommit) continue;
+      if (!gitMergeBaseIsAncestor(workDir, baseCommit, "HEAD")) continue;
+      revertBranch = b;
+      break;
     }
     if (!revertBranch) {
       throw new ApiError(
         400,
-        `Baseline is not an ancestor of the tip of any of: ${branchCandidates.join(", ")}. ` +
-          "ZIP uploads update main; client-link work may use launchpad — merge or sync those branches so the baseline commit is on the branch you need, then retry.",
+        "No branch has commits after this baseline: every branch that contains the tag already points at that revision. " +
+          "Choose an older baseline, or merge so the branch you want to roll back (e.g. main) is ahead of that revision.",
       );
     }
 
@@ -3048,6 +3092,7 @@ export async function revertActiveReleaseToBaselineProjectVersionService({
             newVersionLabel,
             workflowBranch: revertBranch,
             preferredWorkflowBranch: preferredBranch,
+            branchesContainingBaseline: containingBranches,
           },
         },
       });
