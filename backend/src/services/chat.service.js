@@ -550,13 +550,29 @@ async function refineBranchTipWhenMatchesPreviousApplied(
     return tipSha;
   }
   let out = tipSha;
-  const advanced = await pollBranchTipUntilAdvancesBeyond({ ...repo, branch }, prevApplied);
+  const advanced = await pollBranchTipUntilAdvancesBeyond(
+    { ...repo, branch },
+    prevApplied,
+    { maxAttempts: 100 },
+  );
   if (advanced) {
     out = advanced;
   }
-  const tail = await pollBranchTipTail({ ...repo, branch }, 8);
+  let tail = await pollBranchTipTail({ ...repo, branch }, 12);
   if (tail) {
     out = tail;
+  }
+  if (out && out.toLowerCase() === prevApplied.toLowerCase()) {
+    const advanced2 = await pollBranchTipUntilAdvancesBeyond(
+      { ...repo, branch },
+      prevApplied,
+      { maxAttempts: 80 },
+    );
+    if (advanced2 && advanced2.toLowerCase() !== prevApplied.toLowerCase()) {
+      out = advanced2;
+      tail = await pollBranchTipTail({ ...repo, branch }, 12);
+      if (tail) out = tail;
+    }
   }
   return out;
 }
