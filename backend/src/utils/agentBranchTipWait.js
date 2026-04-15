@@ -7,9 +7,12 @@ function delay(ms) {
 /** Cursor often reports FINISHED before remote refs show the new push. */
 export const AGENT_BRANCH_TIP_INITIAL_DELAY_MS = 5500;
 export const AGENT_BRANCH_TIP_POLL_MS = 2500;
-export const AGENT_BRANCH_TIP_MAX_POLLS = 22;
+export const AGENT_BRANCH_TIP_MAX_POLLS = 28;
 /** After we see the tip move, keep polling this many times and use the last SHA (trailing pushes). */
-export const AGENT_BRANCH_TIP_POST_MOVE_POLLS = 8;
+export const AGENT_BRANCH_TIP_POST_MOVE_POLLS = 10;
+/** When the tip never moved in the main window (slow pushes, e.g. image-heavy agent), poll longer before giving up. */
+export const AGENT_BRANCH_TIP_SLOW_EXTENSION_MS = 3000;
+export const AGENT_BRANCH_TIP_SLOW_EXTENSION_POLLS = 56;
 
 /**
  * Wait, then poll until the branch tip SHA changes from the first read (or exhaust attempts).
@@ -46,6 +49,30 @@ export async function waitForAgentBranchTipSha(p) {
       return lastPeek;
     }
   }
+  // Tip never moved in the fast window — push may land much later (multimodal / large changes).
+  if (
+    baseline != null &&
+    latest != null &&
+    String(latest).toLowerCase() === String(baseline).toLowerCase()
+  ) {
+    for (let k = 0; k < AGENT_BRANCH_TIP_SLOW_EXTENSION_POLLS; k++) {
+      await delay(AGENT_BRANCH_TIP_SLOW_EXTENSION_MS);
+      const peek =
+        (await scmGetBranchSha(provider, owner, repo, branch, token))?.sha ?? null;
+      if (!peek) continue;
+      latest = peek;
+      if (peek.toLowerCase() !== String(baseline).toLowerCase()) {
+        let lastPeek = latest;
+        for (let j = 0; j < AGENT_BRANCH_TIP_POST_MOVE_POLLS; j++) {
+          await delay(AGENT_BRANCH_TIP_POLL_MS);
+          const p2 =
+            (await scmGetBranchSha(provider, owner, repo, branch, token))?.sha ?? null;
+          if (p2) lastPeek = p2;
+        }
+        return lastPeek;
+      }
+    }
+  }
   return latest;
 }
 
@@ -66,7 +93,8 @@ export async function pollBranchTipUntilAdvancesBeyond(p, staleSha, opts = {}) {
   if (!stale) return null;
 
   const { provider, owner, repo, token } = p;
-  const maxAttempts = Number.isInteger(opts.maxAttempts) && opts.maxAttempts > 0 ? opts.maxAttempts : 36;
+  const maxAttempts =
+    Number.isInteger(opts.maxAttempts) && opts.maxAttempts > 0 ? opts.maxAttempts : 96;
 
   let last = null;
   for (let i = 0; i < maxAttempts; i++) {
