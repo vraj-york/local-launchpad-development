@@ -6,7 +6,9 @@ import fs from "fs-extra";
 import extract from "extract-zip";
 import { execSync, spawn, exec } from "child_process";
 import fetch from "node-fetch";
-import { GITHUB_API } from "../constants/externalServices.js";
+import { API_BASE_URLS } from "../constants/contstants.js";
+
+const GITHUB_API = API_BASE_URLS.GITHUB;
 import ApiError from "../utils/apiError.js";
 import config from "../config/index.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";

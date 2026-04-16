@@ -17,7 +17,9 @@ import {
   normalizeGithubRepoPath,
   publicHttpsRepoUrl,
 } from "../utils/developerRepoGit.util.js";
-import { GITHUB_API } from "../constants/externalServices.js";
+import { API_BASE_URLS } from "../constants/contstants.js";
+
+const GITHUB_API = API_BASE_URLS.GITHUB;
 
 /** Fixed submodule path inside the developer repository (git submodule path / folder name). */
 const LAUNCHPAD_FRONTEND_SUBMODULE_PATH = "launchpad-frontend";

@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { prisma } from "../lib/prisma.js";
 import { applyPendingClientChatMessageShaTransaction } from "./chat.service.js";
-import { GIT_SHA_RE } from "../constants/externalServices.js";
+import { GIT_SHA_REGEX } from "../constants/contstants.js";
 
 function timingSafeEqualUtf8(a, b) {
   try {
@@ -68,7 +68,7 @@ async function applyPushForProjectBranch(project, branch, sha) {
  */
 export async function applyLaunchpadScmPushToPendingMessages(p) {
   const { provider, owner, repo, branch, sha } = p;
-  if (!GIT_SHA_RE.test(sha)) return { projects: 0, applied: 0 };
+  if (!GIT_SHA_REGEX.test(sha)) return { projects: 0, applied: 0 };
   const canonical = canonicalGitRepoPath(provider, owner, repo);
   const projects = await prisma.project.findMany({
     where: {

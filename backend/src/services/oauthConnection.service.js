@@ -3,12 +3,12 @@ import jwt from "jsonwebtoken";
 import { encryptToken, decryptToken } from "../utils/tokenVault.js";
 import ApiError from "../utils/apiError.js";
 import { prisma } from "../lib/prisma.js";
-import {
-  ATLASSIAN_API,
-  BITBUCKET_API,
-  BITBUCKET_OAUTH_TOKEN_URL,
-  GITHUB_API,
-} from "../constants/externalServices.js";
+import { API_BASE_URLS, API_ENDPOINTS } from "../constants/contstants.js";
+
+const GITHUB_API = API_BASE_URLS.GITHUB;
+const ATLASSIAN_API = API_BASE_URLS.ATLASSIAN;
+const BITBUCKET_API = API_BASE_URLS.BITBUCKET;
+const BITBUCKET_OAUTH_TOKEN_URL = API_ENDPOINTS.BITBUCKET_OAUTH_TOKEN;
 
 const EXPIRY_SKEW_MS = 60_000;
 

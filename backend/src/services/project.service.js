@@ -27,7 +27,9 @@ import {
 import { createAgentForProjectRelease } from "./cursor.service.js";
 import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
 import { parseScmRepoPath } from "../utils/scmPath.js";
-import { ATLASSIAN_API, GITHUB_API } from "../constants/externalServices.js";
+import { API_BASE_URLS } from "../constants/contstants.js";
+
+const { ATLASSIAN: ATLASSIAN_API, GITHUB: GITHUB_API } = API_BASE_URLS;
 import {
   addBitbucketRepositoryCollaborator,
   createBitbucketRepository,

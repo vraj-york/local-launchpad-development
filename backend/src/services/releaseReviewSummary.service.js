@@ -1,6 +1,6 @@
 import fetch from "node-fetch";
 import { prisma } from "../lib/prisma.js";
-import { OPENAI_CHAT_COMPLETIONS_URL } from "../constants/externalServices.js";
+import { API_ENDPOINTS } from "../constants/contstants.js";
 
 const DEBOUNCE_MS = 60_000;
 
@@ -67,7 +67,7 @@ async function callOpenAi(userContent) {
     throw new Error("OPENAI_API_KEY is not configured");
   }
   const model = getOpenAiModel();
-  const res = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
+  const res = await fetch(API_ENDPOINTS.OPENAI_CHAT_COMPLETIONS, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,

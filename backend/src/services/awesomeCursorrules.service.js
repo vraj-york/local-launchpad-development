@@ -17,7 +17,9 @@ import {
   normalizeGithubRepoPath,
   publicHttpsRepoUrl,
 } from "../utils/developerRepoGit.util.js";
-import { GITHUB_API } from "../constants/externalServices.js";
+import { API_BASE_URLS } from "../constants/contstants.js";
+
+const GITHUB_API = API_BASE_URLS.GITHUB;
 
 const OWNER = "PatrickJS";
 const REPO = "awesome-cursorrules";

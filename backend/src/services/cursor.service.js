@@ -28,7 +28,9 @@ import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils
 import ApiError from "../utils/apiError.js";
 import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
 import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
-import { CURSOR_API_BASE_URL } from "../constants/externalServices.js";
+import { API_BASE_URLS } from "../constants/contstants.js";
+
+const CURSOR_API_BASE_URL = API_BASE_URLS.CURSOR;
 
 //const prisma = new PrismaClient();
 

@@ -5,7 +5,9 @@ import path from "path";
 import fetch from "node-fetch";
 import { parseScmRepoPath } from "../utils/scmPath.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
-import { GITHUB_API } from "../constants/externalServices.js";
+import { API_BASE_URLS } from "../constants/contstants.js";
+
+const GITHUB_API = API_BASE_URLS.GITHUB;
 
 const GIT_REVERT_IDENTITY = [
   "-c",
