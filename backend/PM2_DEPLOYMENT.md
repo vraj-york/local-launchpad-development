@@ -138,6 +138,20 @@ JIRA_USERNAME="your-email@company.com"
 JIRA_API_TOKEN="your-api-token"
 JIRA_PROJECT_KEY="PROJ"
 JIRA_ISSUE_TYPE="Task"
+
+# SCM push webhooks (Launchpad gitRepoPath): public origin with no trailing slash. First match wins:
+#   NGROK_URL → FRONTEND_URL → VITE_FRONTEND_URL → BASE_URL
+# Production on one host (SPA + /api): set VITE_FRONTEND_URL (typical) or FRONTEND_URL to that HTTPS origin (same as users). Either is enough; FRONTEND_URL is optional if VITE_FRONTEND_URL is set.
+# Local tunnel: npm run dev:ngrok (sets NGROK_URL) or set NGROK_URL yourself after `ngrok http 5000`.
+# NGROK_URL="https://xxxx.ngrok-free.app"
+# NGROK_AUTHTOKEN="..."  # required for embedded tunnel only; from https://dashboard.ngrok.com/get-started/your-authtoken
+# Random secrets used when creating repo webhooks and verifying deliveries (GitHub: X-Hub-Signature-256; Bitbucket: X-Hub-Signature / X-Hub-Signature-256).
+GITHUB_PUSH_WEBHOOK_SECRET="generate-a-long-random-string"
+BITBUCKET_PUSH_WEBHOOK_SECRET="generate-a-long-random-string"
+# GitHub OAuth default scopes include `repo`, which allows managing webhooks on repos the token can access. For fine-grained tokens, include hook administration as required by GitHub.
+# GITHUB_OAUTH_SCOPES="repo read:user"
+# Bitbucket OAuth must include `webhook` (see default in oauth.routes.js) so Launchpad can create/update repository hooks after connect.
+# BITBUCKET_OAUTH_SCOPES="account repository webhook"
 ```
 
 ## Deployment Process

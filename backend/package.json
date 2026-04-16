@@ -8,6 +8,7 @@
     "format:check": "prettier --check .",
     "test": "node --test \"src/**/*.test.js\"",
     "start": "node src/server.js",
+    "dev:ngrok": "node scripts/dev-with-ngrok.mjs",
     "worker:feedback-recording": "node src/workers/feedbackRecordingMerge.worker.js",
     "cron:cleanup-feedback-sessions": "node src/scripts/cleanupStaleFeedbackRecordingSessions.js",
     "pm2:start": "pm2 start ecosystem.config.cjs",
@@ -31,7 +32,6 @@
     "aws-jwt-verify": "^5.1.1",
     "axios": "^1.13.5",
     "bcryptjs": "^3.0.2",
-    "child_process": "^1.0.2",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "execa": "^9.6.1",
@@ -55,6 +55,7 @@
     "validator": "^13.15.26"
   },
   "devDependencies": {
+    "@ngrok/ngrok": "^1.7.0",
     "nodemon": "^3.1.11",
     "prettier": "^3.8.1"
   }

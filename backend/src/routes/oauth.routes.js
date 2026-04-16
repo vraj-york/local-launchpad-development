@@ -192,7 +192,7 @@ router.get("/bitbucket/start", authenticateToken, (req, res) => {
   const reconnectId = parseReconnectId(req.query);
   const returnPath = parseReturnToQuery(req.query);
   const state = signOAuthState(req.user.id, "bitbucket", reconnectId, returnPath);
-  const scope = process.env.BITBUCKET_OAUTH_SCOPES || "account repository";
+  const scope = process.env.BITBUCKET_OAUTH_SCOPES || "account repository webhook";
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,

@@ -1,6 +1,9 @@
 import fetch from "node-fetch";
+import { getLaunchpadBitbucketPushWebhookUrl } from "../utils/apiPublicBaseUrl.js";
 
 const BB_API = "https://api.bitbucket.org/2.0";
+
+const LAUNCHPAD_BITBUCKET_HOOK_PATH = "/api/webhooks/bitbucket/push";
 
 function authHeaders(token) {
   return {
@@ -368,4 +371,101 @@ export async function createBitbucketTagIdempotent(workspace, repoSlug, tagName,
   }
 
   return first;
+}
+
+function bitbucketHookUrlMatchesLaunchpad(hookUrl, expectedUrl) {
+  const exp = String(expectedUrl || "").trim();
+  const u = String(hookUrl || "").trim();
+  if (!exp || !u) return false;
+  if (u === exp) return true;
+  try {
+    return new URL(u).pathname === LAUNCHPAD_BITBUCKET_HOOK_PATH;
+  } catch {
+    return u.replace(/\/+$/, "") === exp.replace(/\/+$/, "");
+  }
+}
+
+/**
+ * @returns {Promise<any[]>}
+ */
+export async function listBitbucketRepoHooks(workspace, repoSlug, token) {
+  const values = [];
+  let url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/hooks?pagelen=100`;
+  while (url) {
+    const res = await fetch(url, { headers: authHeaders(token) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg =
+        typeof data?.error?.message === "string"
+          ? data.error.message
+          : `Bitbucket list hooks ${res.status}`;
+      throw new Error(msg);
+    }
+    for (const v of data.values || []) values.push(v);
+    url = typeof data.next === "string" && data.next ? data.next : null;
+  }
+  return values;
+}
+
+/**
+ * @returns {Promise<{ ok: true, created?: boolean, updated?: boolean } | { ok: false, skipped: true, reason: string }>}
+ */
+export async function createOrUpdateLaunchpadBitbucketPushWebhook(workspace, repoSlug, token) {
+  const hookUrl = getLaunchpadBitbucketPushWebhookUrl();
+  const secret = (process.env.BITBUCKET_PUSH_WEBHOOK_SECRET || "").trim();
+  if (!hookUrl || !secret) {
+    return { ok: false, skipped: true, reason: "missing_api_public_base_or_secret" };
+  }
+
+  const hooks = await listBitbucketRepoHooks(workspace, repoSlug, token);
+  const existing = hooks.find((h) => bitbucketHookUrlMatchesLaunchpad(h?.url, hookUrl));
+
+  const body = {
+    description: "Launchpad client-link push",
+    url: hookUrl,
+    active: true,
+    events: ["repo:push"],
+    secret,
+  };
+
+  const base = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/hooks`;
+
+  if (existing?.uuid) {
+    const uid = encodeURIComponent(String(existing.uuid));
+    const res = await fetch(`${base}/${uid}`, {
+      method: "PUT",
+      headers: {
+        ...authHeaders(token),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok) {
+      throw new Error(
+        typeof text === "string" && text
+          ? `Bitbucket update hook ${res.status}: ${text.slice(0, 500)}`
+          : `Bitbucket update hook ${res.status}`,
+      );
+    }
+    return { ok: true, updated: true };
+  }
+
+  const res = await fetch(base, {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    throw new Error(
+      typeof text === "string" && text
+        ? `Bitbucket create hook ${res.status}: ${text.slice(0, 500)}`
+        : `Bitbucket create hook ${res.status}`,
+    );
+  }
+  return { ok: true, created: true };
 }

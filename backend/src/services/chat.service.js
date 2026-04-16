@@ -49,6 +49,42 @@ import {
 } from "../utils/uploadChatImageToS3.js";
 
 const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
+
+/**
+ * Idempotent: sets ChatHistory.appliedCommitSha and clears FigmaConversion.pendingClientChatMessageId.
+ * Used by branch-tip polling and SCM push webhooks.
+ *
+ * @param {{ projectId: number, releaseId: number, chatHistoryId: number, tipSha: string, figmaConversionId: number, source?: 'scm-webhook' | 'branch-tip-poll' }} p
+ */
+export async function applyPendingClientChatMessageShaTransaction({
+  projectId,
+  releaseId,
+  chatHistoryId,
+  tipSha,
+  figmaConversionId,
+  source = "branch-tip-poll",
+}) {
+  await prisma.$transaction([
+    prisma.chatHistory.updateMany({
+      where: {
+        id: chatHistoryId,
+        projectId,
+        releaseId,
+        role: "user",
+        isActiveChat: true,
+      },
+      data: { appliedCommitSha: tipSha },
+    }),
+    prisma.figmaConversion.update({
+      where: { id: figmaConversionId },
+      data: { pendingClientChatMessageId: null },
+    }),
+  ]);
+  const shaShort = typeof tipSha === "string" ? tipSha.slice(0, 12) : String(tipSha).slice(0, 12);
+  console.info(
+    `[client-link:commit] appliedCommitSha updated source=${source} project=${projectId} release=${releaseId} chatHistoryId=${chatHistoryId} figmaConversionId=${figmaConversionId} sha=${shaShort}`,
+  );
+}
 /** Design-reference images per client-link message (Cursor multimodal + S3). */
 const MAX_REFERENCE_IMAGES_PER_MESSAGE = 6;
 
@@ -719,22 +755,14 @@ async function syncPendingMessageCommitSha(project, conv) {
     );
     tipSha = await advanceCapturedShaToAgentBranchTip(repo, branch, tipSha);
 
-    await prisma.$transaction([
-      prisma.chatHistory.updateMany({
-        where: {
-          id: chatHistoryId,
-          projectId: project.id,
-          releaseId,
-          role: "user",
-          isActiveChat: true,
-        },
-        data: { appliedCommitSha: tipSha },
-      }),
-      prisma.figmaConversion.update({
-        where: { id: figmaRow.id },
-        data: { pendingClientChatMessageId: null },
-      }),
-    ]);
+    await applyPendingClientChatMessageShaTransaction({
+      projectId: project.id,
+      releaseId,
+      chatHistoryId,
+      tipSha,
+      figmaConversionId: figmaRow.id,
+      source: "branch-tip-poll",
+    });
     return tipSha;
   } catch {
     return null;
