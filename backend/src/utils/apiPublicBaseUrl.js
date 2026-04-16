@@ -1,3 +1,8 @@
+import {
+  LAUNCHPAD_BITBUCKET_HOOK_PATH,
+  LAUNCHPAD_GITHUB_HOOK_PATH,
+} from "../constants/externalServices.js";
+
 /**
  * Public origin used to build SCM webhook callback URLs (`{origin}/api/webhooks/...`).
  * No trailing slash.
@@ -28,11 +33,11 @@ export function getApiPublicBaseUrl() {
 /** @returns {string | null} */
 export function getLaunchpadGithubPushWebhookUrl() {
   const b = getApiPublicBaseUrl();
-  return b ? `${b}/api/webhooks/github/push` : null;
+  return b ? `${b}${LAUNCHPAD_GITHUB_HOOK_PATH}` : null;
 }
 
 /** @returns {string | null} */
 export function getLaunchpadBitbucketPushWebhookUrl() {
   const b = getApiPublicBaseUrl();
-  return b ? `${b}/api/webhooks/bitbucket/push` : null;
+  return b ? `${b}${LAUNCHPAD_BITBUCKET_HOOK_PATH}` : null;
 }

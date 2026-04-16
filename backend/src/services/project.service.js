@@ -27,6 +27,7 @@ import {
 import { createAgentForProjectRelease } from "./cursor.service.js";
 import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
 import { parseScmRepoPath } from "../utils/scmPath.js";
+import { ATLASSIAN_API, GITHUB_API } from "../constants/externalServices.js";
 import {
   addBitbucketRepositoryCollaborator,
   createBitbucketRepository,
@@ -457,7 +458,7 @@ export async function assertProjectDeleteAccess(projectId, user) {
 
 const validateGithubConnection = async (username, token) => {
   try {
-    await axios.get(`https://api.github.com/users/${encodeURIComponent(username)}`, {
+    await axios.get(`${GITHUB_API}/users/${encodeURIComponent(username)}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
     });
   } catch (error) {
@@ -497,7 +498,7 @@ const validateJiraConnection = async (
         "Jira OAuth is missing Atlassian cloud id. Reconnect Jira under Integrations, then retry.",
       );
     }
-    url = `https://api.atlassian.com/ex/jira/${encodeURIComponent(cloud)}/rest/api/3/project/${key}`;
+    url = `${ATLASSIAN_API}/ex/jira/${encodeURIComponent(cloud)}/rest/api/3/project/${key}`;
   } else {
     url = `${baseUrl.replace(/\/$/, "")}/rest/api/2/project/${key}`;
   }

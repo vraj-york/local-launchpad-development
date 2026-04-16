@@ -28,8 +28,8 @@ import { projectRepoSlugFromDisplayName } from "../utils/projectValidation.utils
 import ApiError from "../utils/apiError.js";
 import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
 import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
+import { CURSOR_API_BASE_URL } from "../constants/externalServices.js";
 
-const CURSOR_BASE_URL = "https://api.cursor.com";
 //const prisma = new PrismaClient();
 
 /**
@@ -107,7 +107,7 @@ export async function cursorRequest({ method, path, body }) {
     throw err;
   }
 
-  const url = `${CURSOR_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  const url = `${CURSOR_API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
   const basicAuth = Buffer.from(`${apiKey}:`).toString("base64");
   const headers = {
     Authorization: `Basic ${basicAuth}`,

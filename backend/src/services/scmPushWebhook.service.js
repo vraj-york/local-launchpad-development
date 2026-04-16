@@ -1,8 +1,7 @@
 import crypto from "crypto";
 import { prisma } from "../lib/prisma.js";
 import { applyPendingClientChatMessageShaTransaction } from "./chat.service.js";
-
-const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
+import { GIT_SHA_RE } from "../constants/externalServices.js";
 
 function timingSafeEqualUtf8(a, b) {
   try {

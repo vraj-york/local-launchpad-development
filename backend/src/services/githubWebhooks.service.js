@@ -1,9 +1,6 @@
 import fetch from "node-fetch";
 import { getLaunchpadGithubPushWebhookUrl } from "../utils/apiPublicBaseUrl.js";
-
-const GITHUB_API = "https://api.github.com";
-
-const LAUNCHPAD_GITHUB_HOOK_PATH = "/api/webhooks/github/push";
+import { GITHUB_API, LAUNCHPAD_GITHUB_HOOK_PATH } from "../constants/externalServices.js";
 
 function githubHookConfigUrlMatchesLaunchpad(configUrl, expectedUrl) {
   const exp = String(expectedUrl || "").trim();

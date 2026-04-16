@@ -1,9 +1,6 @@
 import fetch from "node-fetch";
 import { getLaunchpadBitbucketPushWebhookUrl } from "../utils/apiPublicBaseUrl.js";
-
-const BB_API = "https://api.bitbucket.org/2.0";
-
-const LAUNCHPAD_BITBUCKET_HOOK_PATH = "/api/webhooks/bitbucket/push";
+import { BITBUCKET_API as BB_API, LAUNCHPAD_BITBUCKET_HOOK_PATH } from "../constants/externalServices.js";
 
 function authHeaders(token) {
   return {

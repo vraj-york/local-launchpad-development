@@ -47,8 +47,7 @@ import {
   buildClientLinkChatImageS3Key,
   uploadBufferToS3Inline,
 } from "../utils/uploadChatImageToS3.js";
-
-const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
+import { GIT_SHA_RE } from "../constants/externalServices.js";
 
 /**
  * Idempotent: sets ChatHistory.appliedCommitSha and clears FigmaConversion.pendingClientChatMessageId.

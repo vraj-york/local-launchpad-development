@@ -12,6 +12,7 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import ngrok from "@ngrok/ngrok";
+import { LAUNCHPAD_GITHUB_HOOK_PATH } from "../src/constants/externalServices.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.join(__dirname, "..");
@@ -43,7 +44,7 @@ if (!ngrokUrl) {
     process.env.NGROK_URL = ngrokUrl;
     startedTunnel = true;
     console.error(`[dev-with-ngrok] Tunnel: ${ngrokUrl} → http://127.0.0.1:${port}`);
-    console.error(`[dev-with-ngrok] SCM webhooks: ${ngrokUrl}/api/webhooks/github/push`);
+    console.error(`[dev-with-ngrok] SCM webhooks: ${ngrokUrl}${LAUNCHPAD_GITHUB_HOOK_PATH}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[dev-with-ngrok] Failed to start tunnel:", msg);
