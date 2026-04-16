@@ -2,9 +2,6 @@ import fetch from "node-fetch";
 import { getLaunchpadBitbucketPushWebhookUrl } from "../utils/apiPublicBaseUrl.js";
 import { API_BASE_URLS, WEBHOOK_PATHS } from "../constants/contstants.js";
 
-const BB_API = API_BASE_URLS.BITBUCKET;
-const LAUNCHPAD_BITBUCKET_HOOK_PATH = WEBHOOK_PATHS.BITBUCKET_PUSH;
-
 function authHeaders(token) {
   return {
     Authorization: `Bearer ${token}`,
@@ -16,7 +13,7 @@ function authHeaders(token) {
  * @returns {Promise<{ ok: true, defaultBranch: string, fullName?: string } | { ok: false, status: number, message: string }>}
  */
 export async function getBitbucketRepositoryMetadata(workspace, repoSlug, token) {
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}`;
   const res = await fetch(url, { headers: authHeaders(token) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -37,7 +34,7 @@ export async function getBitbucketRepositoryMetadata(workspace, repoSlug, token)
  * Create repository under workspace (slug).
  */
 export async function createBitbucketRepository(workspace, repoSlug, token, { isPrivate = false } = {}) {
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -59,7 +56,7 @@ export async function createBitbucketRepository(workspace, repoSlug, token, { is
  * First workspace where the user is a member (for default repo creation).
  */
 export async function getDefaultBitbucketWorkspace(token) {
-  const url = `${BB_API}/workspaces?role=member&pagelen=1`;
+  const url = `${API_BASE_URLS.BITBUCKET}/workspaces?role=member&pagelen=1`;
   const res = await fetch(url, { headers: authHeaders(token) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -94,7 +91,7 @@ export async function addBitbucketRepositoryCollaborator(
   if (username.includes("@") && !username.includes(" ")) {
     username = username.split("@")[0];
   }
-  const userUrl = `${BB_API}/users/${encodeURIComponent(username)}`;
+  const userUrl = `${API_BASE_URLS.BITBUCKET}/users/${encodeURIComponent(username)}`;
   const userRes = await fetch(userUrl, { headers: authHeaders(token) });
   const userData = await userRes.json().catch(() => ({}));
   if (!userRes.ok) {
@@ -110,7 +107,7 @@ export async function addBitbucketRepositoryCollaborator(
     console.warn("[addBitbucketRepositoryCollaborator] User response missing uuid");
     return false;
   }
-  const permUrl = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(
+  const permUrl = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(
     repoSlug,
   )}/permissions-config/users/${encodeURIComponent(uuid)}`;
   const permRes = await fetch(permUrl, {
@@ -137,7 +134,7 @@ export async function addBitbucketRepositoryCollaborator(
  */
 export async function compareBitbucketRefs(workspace, repoSlug, baseRef, headRef, token) {
   const spec = `${baseRef}..${headRef}`;
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/diffstat/${encodeURIComponent(spec)}`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/diffstat/${encodeURIComponent(spec)}`;
   const res = await fetch(url, { headers: authHeaders(token) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -191,7 +188,7 @@ export async function compareBitbucketRefs(workspace, repoSlug, baseRef, headRef
  * @returns {Promise<{ sha: string } | null>}
  */
 export async function getBitbucketBranchTipSha(workspace, repoSlug, branch, token) {
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/branches/${encodeURIComponent(branch)}`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/branches/${encodeURIComponent(branch)}`;
   const res = await fetch(url, { headers: authHeaders(token) });
   if (!res.ok) return null;
   const data = await res.json().catch(() => ({}));
@@ -207,7 +204,7 @@ export async function getBitbucketBranchTipSha(workspace, repoSlug, branch, toke
  * >}
  */
 export async function getBitbucketCommitInfo(workspace, repoSlug, ref, token) {
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/commit/${encodeURIComponent(ref)}`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/commit/${encodeURIComponent(ref)}`;
   const res = await fetch(url, { headers: authHeaders(token) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -253,7 +250,7 @@ export async function putBitbucketRepositoryContents(workspace, repoSlug, filePa
   const tail = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
   const body = Buffer.concat([head, buf, tail]);
 
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/src`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/src`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -270,7 +267,7 @@ export async function putBitbucketRepositoryContents(workspace, repoSlug, filePa
 }
 
 export async function deleteBitbucketBranch(workspace, repoSlug, branchName, token) {
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/branches/${encodeURIComponent(branchName)}`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/branches/${encodeURIComponent(branchName)}`;
   const res = await fetch(url, { method: "DELETE", headers: authHeaders(token) });
   return res.ok || res.status === 404;
 }
@@ -279,7 +276,7 @@ export async function deleteBitbucketBranch(workspace, repoSlug, branchName, tok
  * @returns {Promise<{ ok: true } | { ok: false, status: number, message: string }>}
  */
 export async function createBitbucketBranchAt(workspace, repoSlug, branchName, targetHash, token) {
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/branches`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/branches`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -309,7 +306,7 @@ export async function setBitbucketBranchTip(workspace, repoSlug, branchName, tar
 }
 
 export async function getBitbucketTagTipHash(workspace, repoSlug, tagName, token) {
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/tags/${encodeURIComponent(tagName)}`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/tags/${encodeURIComponent(tagName)}`;
   const res = await fetch(url, { headers: authHeaders(token) });
   if (!res.ok) return null;
   const data = await res.json().catch(() => ({}));
@@ -318,7 +315,7 @@ export async function getBitbucketTagTipHash(workspace, repoSlug, tagName, token
 }
 
 export async function deleteBitbucketTag(workspace, repoSlug, tagName, token) {
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/tags/${encodeURIComponent(tagName)}`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/tags/${encodeURIComponent(tagName)}`;
   const res = await fetch(url, { method: "DELETE", headers: authHeaders(token) });
   return res.ok || res.status === 404;
 }
@@ -327,7 +324,7 @@ export async function deleteBitbucketTag(workspace, repoSlug, tagName, token) {
  * @returns {Promise<{ ok: true } | { ok: false, status: number, message: string }>}
  */
 export async function createBitbucketTag(workspace, repoSlug, tagName, commitHash, token) {
-  const url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/tags`;
+  const url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/refs/tags`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -379,7 +376,7 @@ function bitbucketHookUrlMatchesLaunchpad(hookUrl, expectedUrl) {
   if (!exp || !u) return false;
   if (u === exp) return true;
   try {
-    return new URL(u).pathname === LAUNCHPAD_BITBUCKET_HOOK_PATH;
+    return new URL(u).pathname === WEBHOOK_PATHS.BITBUCKET_PUSH;
   } catch {
     return u.replace(/\/+$/, "") === exp.replace(/\/+$/, "");
   }
@@ -390,7 +387,7 @@ function bitbucketHookUrlMatchesLaunchpad(hookUrl, expectedUrl) {
  */
 export async function listBitbucketRepoHooks(workspace, repoSlug, token) {
   const values = [];
-  let url = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/hooks?pagelen=100`;
+  let url = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/hooks?pagelen=100`;
   while (url) {
     const res = await fetch(url, { headers: authHeaders(token) });
     const data = await res.json().catch(() => ({}));
@@ -428,7 +425,7 @@ export async function createOrUpdateLaunchpadBitbucketPushWebhook(workspace, rep
     secret,
   };
 
-  const base = `${BB_API}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/hooks`;
+  const base = `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/hooks`;
 
   if (existing?.uuid) {
     const uid = encodeURIComponent(String(existing.uuid));

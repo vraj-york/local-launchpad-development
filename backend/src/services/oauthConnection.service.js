@@ -5,11 +5,6 @@ import ApiError from "../utils/apiError.js";
 import { prisma } from "../lib/prisma.js";
 import { API_BASE_URLS, API_ENDPOINTS } from "../constants/contstants.js";
 
-const GITHUB_API = API_BASE_URLS.GITHUB;
-const ATLASSIAN_API = API_BASE_URLS.ATLASSIAN;
-const BITBUCKET_API = API_BASE_URLS.BITBUCKET;
-const BITBUCKET_OAUTH_TOKEN_URL = API_ENDPOINTS.BITBUCKET_OAUTH_TOKEN;
-
 const EXPIRY_SKEW_MS = 60_000;
 
 function stateSecret() {
@@ -82,7 +77,7 @@ function tokenExpiryDate(expiresInSec) {
 }
 
 async function githubLoginFromToken(accessToken) {
-  const loginRes = await axios.get(`${GITHUB_API}/user`, {
+  const loginRes = await axios.get(`${API_BASE_URLS.GITHUB}/user`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/vnd.github+json",
@@ -229,14 +224,14 @@ async function refreshAtlassianTokens(refreshTokenPlain) {
 }
 
 async function fetchAtlassianProfile(accessToken) {
-  const { data } = await axios.get(`${ATLASSIAN_API}/me`, {
+  const { data } = await axios.get(`${API_BASE_URLS.ATLASSIAN}/me`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   return { email: data.email || data.name || null };
 }
 
 async function fetchAtlassianAccessibleResources(accessToken) {
-  const { data } = await axios.get(`${ATLASSIAN_API}/oauth/token/accessible-resources`, {
+  const { data } = await axios.get(`${API_BASE_URLS.ATLASSIAN}/oauth/token/accessible-resources`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!Array.isArray(data) || data.length === 0) {
@@ -306,7 +301,7 @@ export async function completeGithubOAuth(code, stateToken) {
     );
     return userId;
   }
-  const loginRes = await axios.get(`${GITHUB_API}/user`, {
+  const loginRes = await axios.get(`${API_BASE_URLS.GITHUB}/user`, {
     headers: {
       Authorization: `Bearer ${tokens.accessToken}`,
       Accept: "application/vnd.github+json",
@@ -684,7 +679,7 @@ export async function assertJiraConnectionRowForListing(requestUser, connectionI
 export async function listGithubReposPage(accessToken, { page = 1, perPage = 100 } = {}) {
   const pp = Math.min(100, Math.max(1, Number(perPage) || 100));
   const pg = Math.max(1, Number(page) || 1);
-  const url = new URL(`${GITHUB_API}/user/repos`);
+  const url = new URL(`${API_BASE_URLS.GITHUB}/user/repos`);
   url.searchParams.set("per_page", String(pp));
   url.searchParams.set("page", String(pg));
   url.searchParams.set("affiliation", "owner,collaborator,organization_member");
@@ -720,7 +715,7 @@ export async function listJiraProjectsForConnection(accessToken, cloudId) {
   if (!cloudId || String(cloudId).trim() === "") {
     throw new Error("Jira connection has no cloud id; reconnect OAuth.");
   }
-  const url = `${ATLASSIAN_API}/ex/jira/${encodeURIComponent(cloudId)}/rest/api/3/project`;
+  const url = `${API_BASE_URLS.ATLASSIAN}/ex/jira/${encodeURIComponent(cloudId)}/rest/api/3/project`;
   const { data, status } = await axios.get(url, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
     validateStatus: () => true,
@@ -772,7 +767,7 @@ async function bitbucketGetJson(accessToken, url) {
 
 async function listBitbucketMemberWorkspaceSlugs(accessToken) {
   const slugs = [];
-  let nextUrl = `${BITBUCKET_API}/workspaces?role=member&pagelen=100`;
+  let nextUrl = `${API_BASE_URLS.BITBUCKET}/workspaces?role=member&pagelen=100`;
   while (nextUrl) {
     const data = await bitbucketGetJson(accessToken, nextUrl);
     const values = Array.isArray(data.values) ? data.values : [];
@@ -788,7 +783,7 @@ async function listBitbucketMemberWorkspaceSlugs(accessToken) {
 async function listReposInBitbucketWorkspace(accessToken, workspaceSlug) {
   const rows = [];
   const base = new URL(
-    `${BITBUCKET_API}/repositories/${encodeURIComponent(workspaceSlug)}`,
+    `${API_BASE_URLS.BITBUCKET}/repositories/${encodeURIComponent(workspaceSlug)}`,
   );
   base.searchParams.set("role", "member");
   base.searchParams.set("pagelen", "100");
@@ -854,7 +849,7 @@ async function exchangeBitbucketCode(code) {
     code,
     redirect_uri: redirectUri,
   });
-  const { data } = await axios.post(BITBUCKET_OAUTH_TOKEN_URL, body.toString(), {
+  const { data } = await axios.post(API_ENDPOINTS.BITBUCKET_OAUTH_TOKEN, body.toString(), {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Authorization: auth,
@@ -879,7 +874,7 @@ async function refreshBitbucketTokens(refreshTokenPlain) {
     grant_type: "refresh_token",
     refresh_token: refreshTokenPlain,
   });
-  const { data } = await axios.post(BITBUCKET_OAUTH_TOKEN_URL, body.toString(), {
+  const { data } = await axios.post(API_ENDPOINTS.BITBUCKET_OAUTH_TOKEN, body.toString(), {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Authorization: auth,
@@ -896,7 +891,7 @@ async function refreshBitbucketTokens(refreshTokenPlain) {
 }
 
 async function bitbucketProfileFromToken(accessToken) {
-  const { data } = await axios.get(`${BITBUCKET_API}/user`, {
+  const { data } = await axios.get(`${API_BASE_URLS.BITBUCKET}/user`, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
   });
   const uuid = data.uuid ? String(data.uuid).replace(/[{}]/g, "") : null;

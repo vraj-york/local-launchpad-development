@@ -7,8 +7,6 @@ import { parseScmRepoPath } from "../utils/scmPath.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import { API_BASE_URLS } from "../constants/contstants.js";
 
-const GITHUB_API = API_BASE_URLS.GITHUB;
-
 const GIT_REVERT_IDENTITY = [
   "-c",
   "user.email=client-link-revert@noreply.local",
@@ -115,7 +113,7 @@ export function parseGitRepoPath(gitRepoPath) {
  * @returns {Promise<{ ok: true, defaultBranch: string, fullName?: string } | { ok: false, status: number, message: string }>}
  */
 export async function getRepositoryMetadata(owner, repo, token) {
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   const res = await fetch(url, {
     method: "GET",
     headers: {
@@ -148,7 +146,7 @@ export async function getRepositoryMetadata(owner, repo, token) {
  * @returns {Promise<{ ok: true, status: number, data: object } | { ok: false, status: number, message: string }>}
  */
 export async function compareRefs(owner, repo, baseRef, headRef, token) {
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/compare/${encodeURIComponent(baseRef)}...${encodeURIComponent(headRef)}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/compare/${encodeURIComponent(baseRef)}...${encodeURIComponent(headRef)}`;
   const res = await fetch(url, {
     method: "GET",
     headers: {
@@ -172,7 +170,7 @@ export async function compareRefs(owner, repo, baseRef, headRef, token) {
  * @returns {Promise<{ sha: string } | null>}
  */
 export async function getBranchSha(owner, repo, branch, token) {
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/heads/${encodeURIComponent(branch)}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/heads/${encodeURIComponent(branch)}`;
   const res = await fetch(url, {
     method: "GET",
     headers: {
@@ -192,7 +190,7 @@ export async function getBranchSha(owner, repo, branch, token) {
  * @returns {Promise<{ ok: true, sha: string, parents: string[], message?: string | null } | { ok: false, status: number, message: string }>}
  */
 export async function getCommitInfo(owner, repo, ref, token) {
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(ref)}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(ref)}`;
   const res = await fetch(url, {
     method: "GET",
     headers: {
@@ -230,7 +228,7 @@ export async function listCommitsOnRef(owner, repo, ref, token, perPage = 5) {
   const refEnc = typeof ref === "string" ? ref.trim() : "";
   if (!refEnc) return { ok: false, message: "ref required" };
   const n = Math.min(Math.max(Number(perPage) || 5, 1), 30);
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(refEnc)}&per_page=${n}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(refEnc)}&per_page=${n}`;
   const res = await fetch(url, {
     method: "GET",
     headers: {
@@ -266,7 +264,7 @@ export async function listCommitsOnRef(owner, repo, ref, token, perPage = 5) {
  * @returns {Promise<{ ok: boolean, status: number, message?: string }>}
  */
 export async function createBranch(owner, repo, branchName, sha, token) {
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -290,7 +288,7 @@ export async function createBranch(owner, repo, branchName, sha, token) {
  * @returns {Promise<{ ok: boolean, created?: boolean, error?: string }>}
  */
 export async function ensureBranchFrom(owner, repo, newBranch, fromBranch, token) {
-  const refUrl = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/heads/${encodeURIComponent(newBranch)}`;
+  const refUrl = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/heads/${encodeURIComponent(newBranch)}`;
   const refRes = await fetch(refUrl, {
     method: "GET",
     headers: {
@@ -324,7 +322,7 @@ export async function ensureBranchFrom(owner, repo, newBranch, fromBranch, token
  * @returns {Promise<{ ok: boolean, status: number, data?: object, message?: string }>}
  */
 export async function mergeBranch(owner, repo, base, head, token) {
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/merges`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/merges`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -355,7 +353,7 @@ export async function mergeBranch(owner, repo, base, head, token) {
  */
 export async function updateRef(owner, repo, ref, sha, force, token) {
   const refPath = ref.startsWith("refs/") ? ref.replace(/^refs\//, "") : ref;
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs/${refPath}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs/${refPath}`;
   const res = await fetch(url, {
     method: "PATCH",
     headers: {
@@ -384,7 +382,7 @@ export async function updateRef(owner, repo, ref, sha, force, token) {
  * @returns {Promise<{ ok: boolean, status: number, message?: string }>}
  */
 export async function createTag(owner, repo, tagName, sha, token) {
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -403,7 +401,7 @@ export async function createTag(owner, repo, tagName, sha, token) {
  * @returns {Promise<string | null>}
  */
 export async function getTagCommitSha(owner, repo, tagName, token) {
-  const refUrl = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/tags/${encodeURIComponent(tagName)}`;
+  const refUrl = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/tags/${encodeURIComponent(tagName)}`;
   const res = await fetch(refUrl, {
     method: "GET",
     headers: {
@@ -417,7 +415,7 @@ export async function getTagCommitSha(owner, repo, tagName, token) {
   if (!obj?.sha) return null;
   if (obj.type === "commit") return obj.sha;
   if (obj.type === "tag") {
-    const tagUrl = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/tags/${encodeURIComponent(obj.sha)}`;
+    const tagUrl = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/tags/${encodeURIComponent(obj.sha)}`;
     const tagRes = await fetch(tagUrl, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -455,7 +453,7 @@ export function encodeGitHubContentsPath(filePath) {
  */
 export async function getRepositoryContentSha(owner, repo, filePath, ref, token) {
   const enc = encodeGitHubContentsPath(filePath);
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${enc}?ref=${encodeURIComponent(ref)}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${enc}?ref=${encodeURIComponent(ref)}`;
   const res = await fetch(url, {
     method: "GET",
     headers: {
@@ -492,7 +490,7 @@ export async function getRepositoryContentSha(owner, repo, filePath, ref, token)
 export async function putRepositoryContents(owner, repo, filePath, opts) {
   const { message, contentBase64, branch, token, fileSha = null } = opts;
   const enc = encodeGitHubContentsPath(filePath);
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${enc}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${enc}`;
   const body = {
     message,
     content: contentBase64,

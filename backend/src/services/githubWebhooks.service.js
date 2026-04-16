@@ -2,23 +2,20 @@ import fetch from "node-fetch";
 import { getLaunchpadGithubPushWebhookUrl } from "../utils/apiPublicBaseUrl.js";
 import { API_BASE_URLS, WEBHOOK_PATHS } from "../constants/contstants.js";
 
-const GITHUB_API = API_BASE_URLS.GITHUB;
-const LAUNCHPAD_GITHUB_HOOK_PATH = WEBHOOK_PATHS.GITHUB_PUSH;
-
 function githubHookConfigUrlMatchesLaunchpad(configUrl, expectedUrl) {
   const exp = String(expectedUrl || "").trim();
   const u = String(configUrl || "").trim();
   if (!exp || !u) return false;
   if (u === exp) return true;
   try {
-    return new URL(u).pathname === LAUNCHPAD_GITHUB_HOOK_PATH;
+    return new URL(u).pathname === WEBHOOK_PATHS.GITHUB_PUSH;
   } catch {
     return u.replace(/\/+$/, "") === exp.replace(/\/+$/, "");
   }
 }
 
 async function githubJson(method, path, token, body) {
-  const res = await fetch(`${GITHUB_API}${path}`, {
+  const res = await fetch(`${API_BASE_URLS.GITHUB}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,

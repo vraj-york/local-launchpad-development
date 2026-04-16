@@ -19,8 +19,6 @@ import {
 } from "../utils/developerRepoGit.util.js";
 import { API_BASE_URLS } from "../constants/contstants.js";
 
-const GITHUB_API = API_BASE_URLS.GITHUB;
-
 const OWNER = "PatrickJS";
 const REPO = "awesome-cursorrules";
 const RULES_PREFIX = "rules";
@@ -47,7 +45,7 @@ function encodeRepoContentPath(urlPath) {
 }
 
 async function githubFetchJson(urlPath) {
-  const url = `${GITHUB_API}/repos/${OWNER}/${REPO}/contents/${encodeRepoContentPath(urlPath)}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${OWNER}/${REPO}/contents/${encodeRepoContentPath(urlPath)}`;
   const res = await fetch(url, { headers: githubHeaders() });
   const remaining = res.headers.get("x-ratelimit-remaining");
   if (res.status === 403 && remaining === "0") {

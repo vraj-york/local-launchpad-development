@@ -30,8 +30,6 @@ import { resolveScmCredentialsFromProject } from "./integrationCredential.servic
 import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 import { API_BASE_URLS } from "../constants/contstants.js";
 
-const CURSOR_API_BASE_URL = API_BASE_URLS.CURSOR;
-
 //const prisma = new PrismaClient();
 
 /**
@@ -109,7 +107,7 @@ export async function cursorRequest({ method, path, body }) {
     throw err;
   }
 
-  const url = `${CURSOR_API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  const url = `${API_BASE_URLS.CURSOR}${path.startsWith("/") ? path : `/${path}`}`;
   const basicAuth = Buffer.from(`${apiKey}:`).toString("base64");
   const headers = {
     Authorization: `Basic ${basicAuth}`,

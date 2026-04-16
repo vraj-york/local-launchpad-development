@@ -7,8 +7,6 @@ import extract from "extract-zip";
 import { execSync, spawn, exec } from "child_process";
 import fetch from "node-fetch";
 import { API_BASE_URLS } from "../constants/contstants.js";
-
-const GITHUB_API = API_BASE_URLS.GITHUB;
 import ApiError from "../utils/apiError.js";
 import config from "../config/index.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
@@ -260,7 +258,7 @@ export async function createGithubRepo(repoName, credentials = {}) {
     );
   }
 
-  const response = await fetch(`${GITHUB_API}/user/repos`, {
+  const response = await fetch(`${API_BASE_URLS.GITHUB}/user/repos`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -365,7 +363,7 @@ export async function addGithubCollaborator(
     username = username.split("@")[0];
   }
   checkRateLimit();
-  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/collaborators/${encodeURIComponent(username)}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/collaborators/${encodeURIComponent(username)}`;
   const response = await fetch(url, {
     method: "PUT",
     headers: {
@@ -405,7 +403,7 @@ export async function checkRepoExists(repoName, credentials = {}) {
   const token = credentials.githubToken?.trim();
 
   const response = await fetch(
-    `${GITHUB_API}/repos/${username}/${repoName}`,
+    `${API_BASE_URLS.GITHUB}/repos/${username}/${repoName}`,
     {
       headers: {
         Authorization: `Bearer ${token}`,
