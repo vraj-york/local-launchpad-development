@@ -1,5 +1,6 @@
 # Project Management Platform - Docker Compose for deployment
 # Usage: docker compose up -d
+# Nginx: runs inside the backend container only — see docs/NGINX_AND_DEPLOYMENT.md
 #
 # Nginx runs inside the backend container only (port 80). Frontend is served with `serve` (no nginx).
 # Backend image sets NGINX_BIN=/usr/sbin/nginx for Node-driven `nginx -s reload`; override via .env if needed.
@@ -17,6 +18,7 @@
 # - Hub: VITE_HUB_API_URL, optional VITE_HUB_OAUTH_REDIRECT_URL, optional VITE_HUB_PROFILE_PIC_API_KEY (frontend build args)
 # - OpenAI: OPENAI_API_KEY (optional) for client-link release “what to review” summaries; OPENAI_MODEL optional
 # - CORS: FRONTEND_URL should match where users open the UI (e.g. http://localhost:3000)
+# - SCM push webhooks: backend uses NGROK_URL → FRONTEND_URL → VITE_FRONTEND_URL → BASE_URL (see backend/src/utils/apiPublicBaseUrl.js); VITE_FRONTEND_URL alone is enough if FRONTEND_URL is unset. Set GITHUB_PUSH_WEBHOOK_SECRET / BITBUCKET_PUSH_WEBHOOK_SECRET in .env
 #
 # env_file: root .env is loaded into services; optional .env.local (gitignored) overrides when present
 # (Compose 2.24+ path/required syntax). If your Compose is older, remove the .env.local entry or merge into .env.

@@ -17,6 +17,7 @@ import {
   normalizeGithubRepoPath,
   publicHttpsRepoUrl,
 } from "../utils/developerRepoGit.util.js";
+import { API_BASE_URLS } from "../constants/contstants.js";
 
 /** Fixed submodule path inside the developer repository (git submodule path / folder name). */
 const LAUNCHPAD_FRONTEND_SUBMODULE_PATH = "launchpad-frontend";
@@ -53,7 +54,7 @@ async function resolvePlatformRefToCommitSha(srcParsed, gitTagRef, token) {
   const owner = encodeURIComponent(srcParsed.owner);
   const repo = encodeURIComponent(srcParsed.repo);
   const refEnc = encodeURIComponent(ref);
-  const url = `https://api.github.com/repos/${owner}/${repo}/commits/${refEnc}`;
+  const url = `${API_BASE_URLS.GITHUB}/repos/${owner}/${repo}/commits/${refEnc}`;
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${t}`,

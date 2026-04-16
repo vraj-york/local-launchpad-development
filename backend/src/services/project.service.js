@@ -27,6 +27,7 @@ import {
 import { createAgentForProjectRelease } from "./cursor.service.js";
 import { getRepositoryMetadata, parseGitRepoPath } from "./github.service.js";
 import { parseScmRepoPath } from "../utils/scmPath.js";
+import { API_BASE_URLS } from "../constants/contstants.js";
 import {
   addBitbucketRepositoryCollaborator,
   createBitbucketRepository,
@@ -53,6 +54,7 @@ import {
   getIntegrationsStatus,
 } from "./oauthConnection.service.js";
 import { scheduleRegenerateClientReviewSummary } from "./releaseReviewSummary.service.js";
+import { ensureLaunchpadPushWebhooksForProject } from "./launchpadScmWebhookRegister.service.js";
 import { resolveGitSourceForNewClientChatAgent } from "./platformGitLine.service.js";
 
 /**
@@ -456,7 +458,7 @@ export async function assertProjectDeleteAccess(projectId, user) {
 
 const validateGithubConnection = async (username, token) => {
   try {
-    await axios.get(`https://api.github.com/users/${encodeURIComponent(username)}`, {
+    await axios.get(`${API_BASE_URLS.GITHUB}/users/${encodeURIComponent(username)}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
     });
   } catch (error) {
@@ -496,7 +498,7 @@ const validateJiraConnection = async (
         "Jira OAuth is missing Atlassian cloud id. Reconnect Jira under Integrations, then retry.",
       );
     }
-    url = `https://api.atlassian.com/ex/jira/${encodeURIComponent(cloud)}/rest/api/3/project/${key}`;
+    url = `${API_BASE_URLS.ATLASSIAN}/ex/jira/${encodeURIComponent(cloud)}/rest/api/3/project/${key}`;
   } else {
     url = `${baseUrl.replace(/\/$/, "")}/rest/api/2/project/${key}`;
   }
@@ -1134,6 +1136,10 @@ export const createProjectService = async ({ userId, body }) => {
           fromScratch: isScratch,
         },
       });
+    });
+
+    void ensureLaunchpadPushWebhooksForProject(project).catch((err) => {
+      console.warn(`[launchpad webhook] create ensure failed: ${err?.message || err}`);
     });
 
     // 9. Start static server on this project's port (so http://localhost:8004/ works)
@@ -2281,6 +2287,13 @@ export const updateProjectDetailsService = async ({ projectId, user, body }) => 
     where: { id: Number(projectId) },
     data,
   });
+  if (data.gitRepoPath !== undefined && nextNormalizedGitRepoPath) {
+    void ensureLaunchpadPushWebhooksForProject(updatedProject).catch((err) => {
+      console.warn(
+        `[launchpad webhook] update ensure failed for project ${updatedProject.id}: ${err?.message || err}`,
+      );
+    });
+  }
   return maskProjectSecrets(updatedProject);
 };
 export const getJiraTicketsService = async (projectId, user) => {

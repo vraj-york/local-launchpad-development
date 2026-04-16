@@ -47,8 +47,43 @@ import {
   buildClientLinkChatImageS3Key,
   uploadBufferToS3Inline,
 } from "../utils/uploadChatImageToS3.js";
+import { GIT_SHA_REGEX } from "../constants/contstants.js";
 
-const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
+/**
+ * Idempotent: sets ChatHistory.appliedCommitSha and clears FigmaConversion.pendingClientChatMessageId.
+ * Used by branch-tip polling and SCM push webhooks.
+ *
+ * @param {{ projectId: number, releaseId: number, chatHistoryId: number, tipSha: string, figmaConversionId: number, source?: 'scm-webhook' | 'branch-tip-poll' }} p
+ */
+export async function applyPendingClientChatMessageShaTransaction({
+  projectId,
+  releaseId,
+  chatHistoryId,
+  tipSha,
+  figmaConversionId,
+  source = "branch-tip-poll",
+}) {
+  await prisma.$transaction([
+    prisma.chatHistory.updateMany({
+      where: {
+        id: chatHistoryId,
+        projectId,
+        releaseId,
+        role: "user",
+        isActiveChat: true,
+      },
+      data: { appliedCommitSha: tipSha },
+    }),
+    prisma.figmaConversion.update({
+      where: { id: figmaConversionId },
+      data: { pendingClientChatMessageId: null },
+    }),
+  ]);
+  const shaShort = typeof tipSha === "string" ? tipSha.slice(0, 12) : String(tipSha).slice(0, 12);
+  console.info(
+    `[client-link:commit] appliedCommitSha updated source=${source} project=${projectId} release=${releaseId} chatHistoryId=${chatHistoryId} figmaConversionId=${figmaConversionId} sha=${shaShort}`,
+  );
+}
 /** Design-reference images per client-link message (Cursor multimodal + S3). */
 const MAX_REFERENCE_IMAGES_PER_MESSAGE = 6;
 
@@ -582,7 +617,7 @@ async function refineBranchTipWhenMatchesPreviousApplied(
  * until compare is identical (handles intermediate commits without relying only on poll timing).
  */
 async function advanceCapturedShaToAgentBranchTip(repo, branch, tipSha) {
-  if (!tipSha || !GIT_SHA_RE.test(tipSha)) {
+  if (!tipSha || !GIT_SHA_REGEX.test(tipSha)) {
     return tipSha;
   }
   const b = typeof branch === "string" ? branch.trim() : "";
@@ -719,22 +754,14 @@ async function syncPendingMessageCommitSha(project, conv) {
     );
     tipSha = await advanceCapturedShaToAgentBranchTip(repo, branch, tipSha);
 
-    await prisma.$transaction([
-      prisma.chatHistory.updateMany({
-        where: {
-          id: chatHistoryId,
-          projectId: project.id,
-          releaseId,
-          role: "user",
-          isActiveChat: true,
-        },
-        data: { appliedCommitSha: tipSha },
-      }),
-      prisma.figmaConversion.update({
-        where: { id: figmaRow.id },
-        data: { pendingClientChatMessageId: null },
-      }),
-    ]);
+    await applyPendingClientChatMessageShaTransaction({
+      projectId: project.id,
+      releaseId,
+      chatHistoryId,
+      tipSha,
+      figmaConversionId: figmaRow.id,
+      source: "branch-tip-poll",
+    });
     return tipSha;
   } catch {
     return null;
@@ -1710,7 +1737,7 @@ async function executeClientLinkLaunchpadMerge(
   messageId = null,
 ) {
   const requestedSha = typeof commitSha === "string" ? commitSha.trim() : "";
-  if (!GIT_SHA_RE.test(requestedSha)) {
+  if (!GIT_SHA_REGEX.test(requestedSha)) {
     throw new ApiError(400, "Applied commit SHA is required to confirm merge.");
   }
 
@@ -1995,7 +2022,7 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
   }
 
   const msgIdForMerge = pendingOk ? pendingMid : null;
-  if (!requestedSha || !GIT_SHA_RE.test(requestedSha)) {
+  if (!requestedSha || !GIT_SHA_REGEX.test(requestedSha)) {
     return { ok: false, reason: "no_sha" };
   }
 
@@ -2087,7 +2114,7 @@ export async function clientLinkRevertMergedMessage({
 
   const targetSha =
     typeof row.appliedCommitSha === "string" ? row.appliedCommitSha.trim() : "";
-  if (!GIT_SHA_RE.test(targetSha)) {
+  if (!GIT_SHA_REGEX.test(targetSha)) {
     throw new ApiError(400, "No valid commit SHA stored for this message.");
   }
 
@@ -2357,7 +2384,7 @@ export async function clientLinkPreviewCommit({
   assertReleaseNotLocked(release);
 
   const inputSha = typeof commitSha === "string" ? commitSha.trim() : "";
-  if (!GIT_SHA_RE.test(inputSha)) {
+  if (!GIT_SHA_REGEX.test(inputSha)) {
     throw new ApiError(400, "Valid commit SHA is required.");
   }
 

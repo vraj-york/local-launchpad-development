@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import path from "path";
+import { fileURLToPath } from "url";
 import { getProjectsDir } from "./utils/instanceRoot.js";
 import authRoutes from "./routes/auth.routes.js";
 import projectRoutes from "./routes/project.routes.js";
@@ -14,8 +15,14 @@ import cursorRoutes from "./routes/cursor.routes.js";
 import chatRoutes from "./routes/chat.routes.js";
 import integrationsRoutes from "./routes/oauth.routes.js";
 import { getPublicFrontendBaseUrl } from "./utils/publicFrontendUrl.js";
+import webhooksRoutes from "./routes/webhooks.routes.js";
 
-dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const backendDir = path.join(__dirname, "..");
+const repoRoot = path.join(backendDir, "..");
+// Monorepo: pick up VITE_* / NGROK_* from repo root .env when running `cd backend && npm start`.
+dotenv.config({ path: path.join(repoRoot, ".env") });
+dotenv.config({ path: path.join(backendDir, ".env"), override: true });
 
 const app = express();
 // CORS for Figma plugin (iframe origin can be null or https://www.figma.com)
@@ -40,6 +47,8 @@ app.use((req, res, next) => {
     next();
 });
 app.use(cors());
+// Push webhooks need raw body bytes for HMAC verification (before express.json).
+app.use("/api/webhooks", webhooksRoutes);
 app.use(express.json({limit: '1024mb'}));
 
 app.get("/api/health", (_req, res) => {

@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import { API_BASE_URLS } from '../constants/contstants.js';
 import fs from 'fs';
 import path from 'path';
 import FormData from 'form-data';
@@ -516,7 +517,7 @@ function jiraIssueAuthHeaders(config) {
 function jiraRestApiRoot(config) {
     const base = (config.baseUrl || '').replace(/\/$/, '');
     if (config.auth === 'bearer' && config.accessToken && config.atlassianCloudId) {
-        return `https://api.atlassian.com/ex/jira/${encodeURIComponent(config.atlassianCloudId)}`;
+        return `${API_BASE_URLS.ATLASSIAN}/ex/jira/${encodeURIComponent(config.atlassianCloudId)}`;
     }
     return base;
 }
