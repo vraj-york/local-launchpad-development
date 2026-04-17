@@ -429,6 +429,29 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     hasPlatformRepo &&
     developmentRepoIsGithubCompatible;
 
+  const migrateFrontendDisabledReason = useMemo(() => {
+    if (canMigrateFrontend) return null;
+    if (!canManageReleases) {
+      return "You need permission to manage releases (project creator, admin, or listed assignee).";
+    }
+    if (!hasDeveloperRepo) {
+      return "Set a developer repository URL on the project.";
+    }
+    if (!hasPlatformRepo) {
+      return "Set the platform Git repository path (gitRepoPath) on the project.";
+    }
+    if (!developmentRepoIsGithubCompatible) {
+      return "Developer repository must be on GitHub (https URL or git@github.com:…).";
+    }
+    return null;
+  }, [
+    canMigrateFrontend,
+    canManageReleases,
+    hasDeveloperRepo,
+    hasPlatformRepo,
+    developmentRepoIsGithubCompatible,
+  ]);
+
   const [migrateFrontendConfirmRelease, setMigrateFrontendConfirmRelease] =
     useState(null);
   const [migrateFrontendSubmitting, setMigrateFrontendSubmitting] =
@@ -714,9 +737,24 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
   useEffect(() => {
     if (migrateFrontendConfirmRelease?.id == null) return;
     setMigrateConfirmAcknowledged(false);
-    // Default to a new revision so deploy creates a new ProjectVersion + tag unless
-    // the user explicitly picks an existing tagged revision to move.
-    setMigrateSelectedProjectVersionId("__new__");
+    const versions = Array.isArray(migrateFrontendConfirmRelease.versions)
+      ? migrateFrontendConfirmRelease.versions
+      : [];
+    const tagged = versions.filter((v) => String(v?.gitTag || "").trim());
+    if (!tagged.length) {
+      setMigrateSelectedProjectVersionId("__new__");
+      return;
+    }
+    const active = tagged.find((v) => v.isActive);
+    const sorted = [...tagged].sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime(),
+    );
+    const pick = active ?? sorted[0];
+    setMigrateSelectedProjectVersionId(
+      pick?.id != null ? String(pick.id) : "__new__",
+    );
   }, [migrateFrontendConfirmRelease?.id]);
 
   const openMigrateFrontendFromHeader = useCallback(() => {
@@ -1349,7 +1387,26 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
               <ArrowRightLeft className="h-4 w-4 shrink-0" />
               Migrate Frontend
             </Button>
-          ) : null}
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-block cursor-not-allowed">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2 border-slate-200 bg-white/80"
+                    disabled
+                  >
+                    <ArrowRightLeft className="h-4 w-4 shrink-0" />
+                    Migrate Frontend
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs text-left">
+                {migrateFrontendDisabledReason}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
         )}
       </PageHeader>
@@ -2220,7 +2277,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                     {tagged.map((v) => (
                       <SelectItem key={v.id} value={String(v.id)}>
                         {v.version}
-                        {v.isActive ? " (Active)" : ""}
+                        {v.isActive ? " (Active)" : ""} — tag {v.gitTag}
                       </SelectItem>
                     ))}
                   </SelectContent>
