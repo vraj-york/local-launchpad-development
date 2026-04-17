@@ -105,6 +105,7 @@ export const createProjectValidation = [
     optionalEmailList("stakeholderEmails"),
 
     body("isScratch").optional(),
+    body("importUiFromDevelopmentRepo").optional().isBoolean().withMessage("importUiFromDevelopmentRepo must be a boolean"),
     body("prompt").optional(),
     body().custom((value, { req }) => {
         const b = req.body || {};

@@ -750,6 +750,45 @@ export const revertActiveReleaseToBaseline = async (
   }
 };
 
+/**
+ * Start Migrate Frontend: Cursor agent on GitHub dev repo; backend copies UI to platform after success.
+ * @param {number|string} projectId
+ * @param {number|string} releaseId
+ * @param {{ projectVersionId?: number, migrateFrontend?: boolean }} [opts]
+ * @param {number} [opts.projectVersionId] — optional platform revision to update (moves that revision’s tag); omit to create a new revision.
+ * @param {boolean} [opts.migrateFrontend] — must be true (user confirmed checklist).
+ */
+export const startMigrateFrontend = async (projectId, releaseId, opts = {}) => {
+  try {
+    const body = {};
+    const pv = opts.projectVersionId;
+    if (pv != null && !Number.isNaN(Number(pv)) && Number(pv) > 0) {
+      body.projectVersionId = Number(pv);
+    }
+    if (opts.migrateFrontend === true) {
+      body.migrateFrontend = true;
+    }
+    const response = await api.post(
+      `/api/projects/${projectId}/releases/${releaseId}/migrate-frontend`,
+      body,
+    );
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to start migrate frontend" };
+  }
+};
+
+/** GET /api/cursor/agents/:id — Cursor Cloud agent payload (status, branch, etc.). */
+export const fetchCursorAgentById = async (agentId) => {
+  try {
+    const enc = encodeURIComponent(String(agentId || "").trim());
+    const response = await api.get(`/api/cursor/agents/${enc}`);
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { error: "Failed to fetch Cursor agent status" };
+  }
+};
+
 // Function to generate Jira tickets from git diff summary
 export const generateJiraTickets = async (projectId) => {
   try {

@@ -37,7 +37,7 @@ Example shape (adjust origins; do not use `*` if credentials are involved):
 
 ### 3. FFmpeg on the worker host
 
-The merge worker shells out to `ffmpeg`. Install it on the same machine (or image) that runs `npm run worker:feedback-recording` or the PM2 app `launchpad-feedback-recording-worker`:
+The merge worker shells out to `ffmpeg`. Install it on the same machine (or image) that runs `npm run worker:feedback-recording` (or the Docker Compose `feedback-recording-worker` service):
 
 - macOS: `brew install ffmpeg`
 - Debian/Ubuntu: `apt-get install ffmpeg`
@@ -50,11 +50,7 @@ Development:
 cd backend && npm run worker:feedback-recording
 ```
 
-Production (with PM2, alongside the API):
-
-```bash
-cd backend && pm2 start ecosystem.config.cjs
-```
+Production (same host as the API, without Docker): run the worker in a separate terminal or a second systemd unit that executes `npm run worker:feedback-recording`.
 
 **Docker Compose** (production-style stack in this repo):
 
@@ -75,7 +71,7 @@ Abandoned recordings can leave rows stuck in `uploading` with `chunkCount` null.
 **After each deploy (recommended — no crontab required):**
 
 - **Docker Compose / EC2 with `docker compose up`:** The **backend** container **`entrypoint.sh`** runs `node src/scripts/cleanupStaleFeedbackRecordingSessions.js` once after migrations (before Node starts). Failures are logged and do not block startup.
-- **PM2 / `backend/deploy.sh`:** The script runs **`npm run cron:cleanup-feedback-sessions`** after DB migrate/push (non-fatal on error).
+- **`backend/deploy.sh` (non-Docker EC2):** Runs **`npm run cron:cleanup-feedback-sessions`** after DB migrate/push (non-fatal on error).
 
 Disable in Docker only if needed: set **`SKIP_FEEDBACK_SESSION_CLEANUP=1`** on the backend service.
 
@@ -103,5 +99,5 @@ Uses the same variables as other S3 uploads: `AWS_REGION`, `AWS_ACCESS_KEY_ID`, 
 
 1. **Browser Network tab** — After submit, you should see `POST .../chunk-upload-url` then `PUT` to `s3...amazonaws.com` with status **200**. If `PUT` is red, open it: **CORS** errors mean the bucket CORS rule must allow your widget origin and `PUT` + `Content-Type`. A **403** often means wrong `AWS_REGION` vs bucket region or signature mismatch.
 2. **Chunks in S3 but no `FeedbackRecordingMergeJob`** — The widget must call `POST .../complete` and send `recordingSessionId` + `recordingChunkCount` on `POST /api/feedback`. Stopping the red record button finalizes the session and remembers the ids for submit; closing the widget without submitting discards that payload.
-3. **S3 has objects but Jira has no video** — Run the merge worker (`npm run worker:feedback-recording` or PM2). Check DB table `FeedbackRecordingMergeJob`: `failed` rows usually mean missing **ffmpeg** or S3 download errors; see worker logs.
+3. **S3 has objects but Jira has no video** — Run the merge worker (`npm run worker:feedback-recording` or the `feedback-recording-worker` Compose service). Check DB table `FeedbackRecordingMergeJob`: `failed` rows usually mean missing **ffmpeg** or S3 download errors; see worker logs.
 4. **API logs** — On successful enqueue you should see `[feedback] Recording merge job enqueued <sessionId> <JIRA-KEY>`. If you see `[feedback] Recording merge enqueue error`, read the message (session validation, chunk count mismatch, etc.).

@@ -8,15 +8,6 @@
     "dev": "vite",
     "build": "vite build",
     "serve": "vite preview",
-    "start": "pm2 start ecosystem.config.cjs --env production",
-    "start:dev": "pm2 start ecosystem.config.cjs --env development",
-    "stop": "pm2 stop launchpad-frontend",
-    "restart": "pm2 restart launchpad-frontend",
-    "reload": "pm2 reload launchpad-frontend",
-    "delete": "pm2 delete launchpad-frontend",
-    "logs": "pm2 logs launchpad-frontend",
-    "monit": "pm2 monit",
-    "status": "pm2 status",
     "prepare": "cd .. && husky",
     "lint": {
       "*.{js,ts,jsx,tsx}": [

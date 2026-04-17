@@ -122,6 +122,7 @@ function listProjectVersionTags(rows) {
 
 /**
  * Invite GITHUB_DEFAULT_COLLABORATOR to a GitHub or Bitbucket repo (best-effort; logs on failure).
+ * No invite is attempted when the env var is unset or blank.
  * @param {string|null|undefined} normalizedRepoPath - e.g. github.com/o/r or bitbucket.org/w/s
  * @param {string|null|undefined} hostToken - OAuth or PAT for the same host as the path
  */
@@ -130,8 +131,10 @@ async function inviteDefaultCollaboratorToPath(normalizedRepoPath, hostToken) {
   if (!normalizedRepoPath || !token) return;
   const parsed = parseScmRepoPath(normalizedRepoPath);
   if (!parsed) return;
-  const defaultCollaborator =
-    process.env.GITHUB_DEFAULT_COLLABORATOR || "kalrav@york.ie";
+  const defaultCollaborator = (
+    process.env.GITHUB_DEFAULT_COLLABORATOR || ""
+  ).trim();
+  if (!defaultCollaborator) return;
   try {
     if (parsed.provider === "github") {
       const invited = await addGithubCollaborator(
@@ -738,7 +741,60 @@ export async function startScratchAgentFromProjectService({ projectId, user, bod
   };
 }
 
-export const createProjectService = async ({ userId, body }) => {
+/**
+ * After project create: ensure a release exists, then start Migrate Frontend (async via setImmediate in caller).
+ */
+async function scheduleInitialMigrateFrontendAfterProjectCreate({
+  projectId,
+  actingUser,
+}) {
+  try {
+    const pid = Number(projectId);
+    if (!Number.isInteger(pid) || pid < 1 || !actingUser) return;
+    const proj = await prisma.project.findUnique({
+      where: { id: pid },
+      select: { id: true, developmentRepoUrl: true, gitRepoPath: true },
+    });
+    if (!proj?.developmentRepoUrl?.trim() || !proj.gitRepoPath?.trim()) return;
+    const devParsed = parseScmRepoPath(proj.developmentRepoUrl);
+    if (!devParsed || devParsed.provider !== "github") return;
+    if (!process.env.CURSOR_API_KEY?.trim()) return;
+
+    let release = await prisma.release.findFirst({
+      where: { projectId: proj.id },
+      orderBy: { id: "asc" },
+      select: { id: true },
+    });
+    if (!release) {
+      release = await createReleaseService(
+        {
+          projectId: proj.id,
+          name: "1.0.0",
+          description:
+            "Draft release created automatically for initial UI import from the development repository.",
+        },
+        actingUser,
+      );
+    }
+    const { startMigrateFrontendForRelease } = await import(
+      "./migrateFrontend.service.js"
+    );
+    await startMigrateFrontendForRelease({
+      projectId: proj.id,
+      releaseId: release.id,
+      user: actingUser,
+      targetProjectVersionId: null,
+      migrateFrontend: true,
+    });
+  } catch (err) {
+    console.warn(
+      "[createProject] importUiFromDevelopmentRepo follow-up:",
+      err?.message || err,
+    );
+  }
+}
+
+export const createProjectService = async ({ userId, body, user }) => {
   const {
     name,
     jiraBaseUrl,
@@ -751,6 +807,7 @@ export const createProjectService = async ({ userId, body }) => {
     developmentRepoUrl,
     isScratch: isScratchRaw,
     prompt: scratchPromptRaw,
+    importUiFromDevelopmentRepo: importUiFromDevelopmentRepoRaw,
   } = body;
 
   const isScratch =
@@ -759,6 +816,9 @@ export const createProjectService = async ({ userId, body }) => {
     String(isScratchRaw || "").toLowerCase() === "true";
   const scratchPromptTrimmed =
     typeof scratchPromptRaw === "string" ? scratchPromptRaw.trim() : "";
+  const importUiFromDevelopmentRepoRequested =
+    importUiFromDevelopmentRepoRaw === true ||
+    String(importUiFromDevelopmentRepoRaw || "").toLowerCase() === "true";
 
   const jiraKeyTrim = (jiraProjectKey && String(jiraProjectKey).trim()) || "";
 
@@ -1115,6 +1175,7 @@ export const createProjectService = async ({ userId, body }) => {
           scratchPrompt:
             isScratch && scratchPromptTrimmed ? scratchPromptTrimmed : null,
           fromScratch: isScratch,
+          migrateFrontend: importUiFromDevelopmentRepoRequested,
         },
       });
     });
@@ -1135,12 +1196,30 @@ export const createProjectService = async ({ userId, body }) => {
     }
 
     const masked = maskProjectSecrets(project);
+    const importUiFromDevelopmentRepoScheduled = Boolean(
+      importUiFromDevelopmentRepoRequested &&
+        !isScratch &&
+        user &&
+        persistedDeveloperRepoUrl &&
+        persistedGitRepoPath &&
+        parseScmRepoPath(persistedDeveloperRepoUrl)?.provider === "github" &&
+        process.env.CURSOR_API_KEY?.trim(),
+    );
+    if (importUiFromDevelopmentRepoScheduled) {
+      setImmediate(() => {
+        void scheduleInitialMigrateFrontendAfterProjectCreate({
+          projectId: project.id,
+          actingUser: user,
+        });
+      });
+    }
     if (isScratch && scratchPromptTrimmed) {
       return {
         ...masked,
         fromScratch: true,
         scratchAgentStarted: true,
         scratchReleaseName: "1.0.0",
+        importUiFromDevelopmentRepoScheduled: false,
       };
     }
     if (isScratch && !scratchPromptTrimmed) {
@@ -1148,9 +1227,13 @@ export const createProjectService = async ({ userId, body }) => {
         ...masked,
         fromScratch: true,
         scratchAgentStarted: false,
+        importUiFromDevelopmentRepoScheduled: false,
       };
     }
-    return masked;
+    return {
+      ...masked,
+      importUiFromDevelopmentRepoScheduled,
+    };
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(500, `Project creation failed: ${error.message}`);
@@ -1322,6 +1405,7 @@ export const getProjectByIdService = async (
       createdAt: true,
       isActive: true,
       releaseId: true,
+      migrateFrontend: true,
     },
   };
 
@@ -1347,6 +1431,7 @@ export const getProjectByIdService = async (
           isActive: true,
           createdAt: true,
           releaseId: true,
+          migrateFrontend: true,
         },
       },
     },

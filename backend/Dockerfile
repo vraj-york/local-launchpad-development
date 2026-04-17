@@ -22,7 +22,6 @@ RUN npx prisma generate
 
 # Application code
 COPY src ./src/
-COPY ecosystem.config.cjs ./
 
 # Entrypoint and nginx configs for deployment
 COPY entrypoint.sh ./

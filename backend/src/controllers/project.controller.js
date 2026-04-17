@@ -21,6 +21,7 @@ import {
     upsertCustomCursorRule,
     listAllCustomCursorRules,
 } from "../services/awesomeCursorrules.service.js";
+import { startMigrateFrontendForRelease } from "../services/migrateFrontend.service.js";
 import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
@@ -54,6 +55,7 @@ export const projectController = {
         const project = await createProjectService({
             userId: req.user.id,
             body: req.body,
+            user: req.user,
         });
 
         res.status(201).json(project);
@@ -231,5 +233,30 @@ export const projectController = {
             req.body?.folders,
         );
         res.json(result);
+    }),
+
+    /** POST /api/projects/:id/releases/:releaseId/migrate-frontend */
+    migrateFrontendRelease: asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.id);
+        const releaseId = Number(req.params.releaseId);
+        const rawVid = req.body?.projectVersionId ?? req.body?.projectVersionID;
+        const targetProjectVersionId =
+            rawVid === undefined || rawVid === null || rawVid === ""
+                ? null
+                : Number(rawVid);
+        const rawAck = req.body?.migrateFrontend;
+        const migrateFrontend =
+            rawAck === true || String(rawAck || "").toLowerCase() === "true";
+        const result = await startMigrateFrontendForRelease({
+            projectId,
+            releaseId,
+            user: req.user,
+            targetProjectVersionId:
+                Number.isInteger(targetProjectVersionId) && targetProjectVersionId > 0
+                    ? targetProjectVersionId
+                    : null,
+            migrateFrontend,
+        });
+        res.status(201).json(result);
     }),
 };

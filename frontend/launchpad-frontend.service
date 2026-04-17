@@ -1,13 +1,13 @@
 [Unit]
-Description=Launchpad Backend API
+Description=Launchpad Frontend (Vite preview)
 After=network.target
 
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/launchpad/backend
+WorkingDirectory=/home/ubuntu/launchpad/frontend
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/node src/server.js
+ExecStart=/usr/bin/npm run serve -- --host 0.0.0.0 --port 5173
 Restart=on-failure
 RestartSec=10
 

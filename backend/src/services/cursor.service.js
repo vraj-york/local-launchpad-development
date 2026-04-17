@@ -32,6 +32,7 @@ import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 import { API_BASE_URLS } from "../constants/contstants.js";
 import { ensureFreshFigmaConnection } from "./oauthConnection.service.js";
 import { LAUNCHPAD_FRONTEND_SUBMODULE_PATH } from "./developerRepoSubmodule.service.js";
+import { buildLaunchpadFrontendAlignmentBlock } from "./cursorPrompts.js";
 
 /** Cursor Cloud / cursor-cloud-agent base (e.g. `http://cursor-cloud-agent:3100` in Docker). */
 const CURSOR_BASE_URL = String(process.env.CURSOR_BASE_URL ?? "").trim();
@@ -57,7 +58,7 @@ async function setProjectScratchVersionStatus(projectId, fromScratch, status) {
 }
 
 /** After pipeline errors: mark FAILED only if we had set CREATING (avoids bogus FAILED on pre-pipeline throws). */
-async function markScratchVersionFailedIfCreating(projectId) {
+export async function markScratchVersionFailedIfCreating(projectId) {
   try {
     const row = await prisma.project.findUnique({
       where: { id: projectId },
@@ -694,6 +695,51 @@ function buildBackendPlanPrompt(projectVersionId, releaseId, opts = {}) {
 }
 
 /**
+ * Force remote `launchpad` to point at headSha (GitHub or Bitbucket).
+ * @param {{ provider: 'github'|'bitbucket', owner: string, repo: string, headSha: string, token: string }} p
+ */
+export async function forceUpdateLaunchpadBranch(p) {
+  const { provider, owner, repo, headSha, token } = p;
+  const baseBranch = "launchpad";
+  if (provider === "github") {
+    const ensureResult = await ensureBranchFrom(owner, repo, baseBranch, "main", token);
+    if (!ensureResult.ok) {
+      throw new Error(ensureResult.error || "Could not ensure launchpad branch");
+    }
+
+    let updateResult = await updateRef(owner, repo, "heads/launchpad", headSha, true, token);
+    if (!updateResult.ok && updateResult.status === 404) {
+      const createResult = await createBranch(owner, repo, baseBranch, headSha, token);
+      if (!createResult.ok) {
+        throw new Error(createResult.message || "Could not create launchpad branch at SHA");
+      }
+    } else if (!updateResult.ok) {
+      throw new Error(updateResult.message || "Failed to force-update launchpad branch");
+    }
+  } else {
+    const meta = await scmGetRepositoryMetadata(provider, owner, repo, token);
+    const defaultBranch = meta.ok ? meta.defaultBranch || "main" : "main";
+    const mainTip = await scmGetBranchSha(provider, owner, repo, defaultBranch, token);
+    if (!mainTip?.sha) {
+      throw new Error(
+        `Default branch "${defaultBranch}" not found; cannot ensure "${baseBranch}" on Bitbucket.`,
+      );
+    }
+    const launchpadTip = await scmGetBranchSha(provider, owner, repo, baseBranch, token);
+    if (!launchpadTip?.sha) {
+      const created = await createBitbucketBranchAt(owner, repo, baseBranch, mainTip.sha, token);
+      if (!created.ok) {
+        throw new Error(created.message || "Could not create launchpad branch on Bitbucket");
+      }
+    }
+    const moved = await setBitbucketBranchTip(owner, repo, baseBranch, headSha, token);
+    if (!moved.ok) {
+      throw new Error(moved.message || "Failed to move launchpad branch on Bitbucket");
+    }
+  }
+}
+
+/**
  * After release lock: run Cursor agent in the GitHub developer integration repo (post-submodule push).
  * Fire-and-forget from release.service; updates Release.backendAgentId / backendAgentStatus.
  * @param {{ releaseId: number, projectId: number, projectVersionId: number, attemptedById: number }} params
@@ -1160,12 +1206,18 @@ async function findReleaseAnchorVersionForClientLinkMerge(projectId, releaseId) 
  * @param {object} conversion — row with id, projectId, releaseId, attemptedById
  * @param {string} headSha
  * @param {string} headBranchName — agent branch name (for DB)
- * @param {{ skipShaDedupe?: boolean, prUrl?: string|null, reuseExistingReleaseTag?: boolean }} options
+ * @param {{ skipShaDedupe?: boolean, prUrl?: string|null, reuseExistingReleaseTag?: boolean, explicitAnchorProjectVersionId?: number|null }} options
  * @param {boolean} [options.reuseExistingReleaseTag] — client-link only: move this release’s existing
  *   version tag to headSha and update that ProjectVersion row (no new tag / no new revision row).
+ * @param {number|null} [options.explicitAnchorProjectVersionId] — when reusing a tag, pin to this ProjectVersion id (must belong to the same project and release).
  */
 export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranchName, options = {}) {
-  const { skipShaDedupe = false, prUrl = null, reuseExistingReleaseTag = false } = options;
+  const {
+    skipShaDedupe = false,
+    prUrl = null,
+    reuseExistingReleaseTag = false,
+    explicitAnchorProjectVersionId = null,
+  } = options;
 
   const project = await prisma.project.findUnique({
     where: { id: conversion.projectId },
@@ -1253,43 +1305,7 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
     }
   }
 
-  const baseBranch = "launchpad";
-  if (provider === "github") {
-    const ensureResult = await ensureBranchFrom(owner, repo, baseBranch, "main", token);
-    if (!ensureResult.ok) {
-      throw new Error(ensureResult.error || "Could not ensure launchpad branch");
-    }
-
-    let updateResult = await updateRef(owner, repo, "heads/launchpad", headSha, true, token);
-    if (!updateResult.ok && updateResult.status === 404) {
-      const createResult = await createBranch(owner, repo, baseBranch, headSha, token);
-      if (!createResult.ok) {
-        throw new Error(createResult.message || "Could not create launchpad branch at SHA");
-      }
-    } else if (!updateResult.ok) {
-      throw new Error(updateResult.message || "Failed to force-update launchpad branch");
-    }
-  } else {
-    const meta = await scmGetRepositoryMetadata(provider, owner, repo, token);
-    const defaultBranch = meta.ok ? meta.defaultBranch || "main" : "main";
-    const mainTip = await scmGetBranchSha(provider, owner, repo, defaultBranch, token);
-    if (!mainTip?.sha) {
-      throw new Error(
-        `Default branch "${defaultBranch}" not found; cannot ensure "${baseBranch}" on Bitbucket.`,
-      );
-    }
-    const launchpadTip = await scmGetBranchSha(provider, owner, repo, baseBranch, token);
-    if (!launchpadTip?.sha) {
-      const created = await createBitbucketBranchAt(owner, repo, baseBranch, mainTip.sha, token);
-      if (!created.ok) {
-        throw new Error(created.message || "Could not create launchpad branch on Bitbucket");
-      }
-    }
-    const moved = await setBitbucketBranchTip(owner, repo, baseBranch, headSha, token);
-    if (!moved.ok) {
-      throw new Error(moved.message || "Failed to move launchpad branch on Bitbucket");
-    }
-  }
+  await forceUpdateLaunchpadBranch({ provider, owner, repo, headSha, token });
 
   const releaseId = conversion.releaseId;
 
@@ -1299,14 +1315,33 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
   let existingVersion = null;
 
   if (reuseExistingReleaseTag) {
-    anchorVersion = await findReleaseAnchorVersionForClientLinkMerge(
-      conversion.projectId,
-      releaseId,
-    );
+    const explicitId = Number(explicitAnchorProjectVersionId);
+    if (
+      explicitAnchorProjectVersionId != null &&
+      Number.isInteger(explicitId) &&
+      explicitId > 0
+    ) {
+      anchorVersion = await prisma.projectVersion.findFirst({
+        where: {
+          id: explicitId,
+          projectId: conversion.projectId,
+          releaseId: conversion.releaseId,
+        },
+        select: { id: true, gitTag: true, version: true, isActive: true },
+      });
+    }
+    if (!anchorVersion) {
+      anchorVersion = await findReleaseAnchorVersionForClientLinkMerge(
+        conversion.projectId,
+        releaseId,
+      );
+    }
     const gt = anchorVersion?.gitTag?.trim() || "";
     if (!anchorVersion || !gt) {
       throw new Error(
-        "No published version with a git tag exists for this release. Add or activate a version for this release before merging chat changes.",
+        explicitAnchorProjectVersionId != null
+          ? "The selected revision was not found for this release, or it has no git tag."
+          : "No published version with a git tag exists for this release. Add or activate a version for this release before merging chat changes.",
       );
     }
     tagName = gt;
@@ -1677,6 +1712,8 @@ export function startAgentPolling(agentId) {
           releaseId: true,
           deferLaunchpadMerge: true,
           skipLaunchpadAutomation: true,
+          flow: true,
+          projectVersionId: true,
           project: { select: { fromScratch: true } },
         },
       });
@@ -1713,6 +1750,24 @@ export function startAgentPolling(agentId) {
       }
 
       if (isCursorAgentSuccessTerminal(agentStatus)) {
+        if (convRow?.flow === "migrate_frontend") {
+          try {
+            const { runMigrateFrontendPhaseBFromPoller } = await import(
+              "./migrateFrontend.service.js"
+            );
+            await runMigrateFrontendPhaseBFromPoller({
+              agentId: id,
+              agentData,
+              convRow,
+            });
+          } catch (migrateErr) {
+            console.error("[cursor] poll: migrate frontend phase B failed", {
+              agentId: id,
+              error: migrateErr?.message || migrateErr,
+            });
+          }
+          return;
+        }
         if (convRow?.skipLaunchpadAutomation) {
           console.log(
             "[cursor] poll: agent complete — skipLaunchpadAutomation (no platform merge)",

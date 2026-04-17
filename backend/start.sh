@@ -1,46 +1,32 @@
 #!/bin/bash
 
-# Launchpad Backend PM2 Startup Script for EC2
-# This script sets up and starts the backend service using PM2
+# Launchpad Backend startup for EC2 (systemd). Production uses Docker; see EC2_DEPLOYMENT.md.
 
-echo "🚀 Starting Launchpad Backend with PM2..."
+echo "🚀 Starting Launchpad Backend..."
 
-# Navigate to backend directory
-cd /home/ubuntu/launchpad/backend
+cd /home/ubuntu/launchpad/backend || exit 1
 
-# Create logs directory if it doesn't exist
 mkdir -p logs
 
-# Install dependencies if node_modules doesn't exist
 if [ ! -d "node_modules" ]; then
-    echo "📦 Installing dependencies..."
-    npm install
+  echo "📦 Installing dependencies..."
+  npm install
 fi
 
-# Generate Prisma client if needed
 echo "🔧 Setting up Prisma..."
 npx prisma generate
 
-# Run database migrations
 echo "🗄️ Running database migrations..."
 npx prisma db push
 
-# Stop any existing PM2 processes
-echo "🛑 Stopping existing PM2 processes..."
-pm2 stop launchpad-backend 2>/dev/null || true
-pm2 delete launchpad-backend 2>/dev/null || true
-
-# Start the application with PM2
-echo "▶️ Starting application with PM2..."
-pm2 start ecosystem.config.cjs --env production
-
-# Save PM2 configuration
-pm2 save
-
-# Setup PM2 to start on system boot
-pm2 startup
-
-echo "✅ Launchpad Backend is now running with PM2!"
-echo "📊 Use 'pm2 status' to check the status"
-echo "📝 Use 'pm2 logs launchpad-backend' to view logs"
-echo "🔄 Use 'pm2 restart launchpad-backend' to restart"
+if [ -f /etc/systemd/system/launchpad-backend.service ]; then
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now launchpad-backend
+  sudo systemctl status launchpad-backend --no-pager || true
+  echo "✅ Backend is managed by systemd (launchpad-backend)."
+  echo "📝 Logs: journalctl -u launchpad-backend -f"
+else
+  echo "[WARN] launchpad-backend.service not found in /etc/systemd/system/."
+  echo "Install it: sudo cp launchpad-backend.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now launchpad-backend"
+  echo "Or run in this shell: npm start"
+fi
