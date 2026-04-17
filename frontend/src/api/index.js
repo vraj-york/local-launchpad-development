@@ -267,6 +267,24 @@ export const fetchIntegrationsStatus = async () => {
   return data;
 };
 
+/** Cursor cloud-agent: connection + whether a GitHub PAT is stored for your email */
+export const fetchCursorIntegrationStatus = async () => {
+  const { data } = await api.get("/api/integrations/cursor/status");
+  return data;
+};
+
+/** Push GitHub OAuth access token to cursor-cloud-agent for your account email */
+export const syncCursorGithubPatFromOAuth = async () => {
+  const { data } = await api.post("/api/integrations/cursor/sync-github-pat");
+  return data;
+};
+
+/** Store a GitHub PAT manually for cursor-cloud-agent (same as OAuth scope for private repos) */
+export const saveCursorGithubPatManual = async (githubToken) => {
+  const { data } = await api.post("/api/integrations/cursor/pat", { githubToken });
+  return data;
+};
+
 export const getGithubOAuthAuthorizeUrl = async (
   reconnectConnectionId,
   { returnTo } = {},
@@ -459,7 +477,10 @@ export const startProjectScratchAgent = async (projectId, prompt) => {
 // Function to fetch all releases for a project
 export const fetchReleases = async (projectId) => {
   try {
-    const response = await api.get(`/api/releases/project/${projectId}`);
+    const response = await api.get(`/api/releases/project/${projectId}`, {
+      params: { _: Date.now() },
+      headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+    });
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to fetch releases" };
@@ -547,6 +568,42 @@ export const clientLinkSendFollowup = async (
       }));
   }
   const response = await api.post(`/api/chat/${enc}/followup`, body);
+  return response.data;
+};
+
+/**
+ * Public client-link: AI SVG from reference image (Anthropic via backend; no browser API key).
+ * Same auth gate as followup (stakeholder email + release).
+ */
+export const clientLinkAiPreviewSvg = async (
+  slug,
+  {
+    releaseId,
+    clientEmail,
+    imageBase64,
+    mediaType,
+    fileName,
+    width,
+    height,
+    animate,
+    customPrompt,
+  },
+) => {
+  const enc = encodeURIComponent(String(slug).trim());
+  const body = {
+    r: Number(releaseId),
+    clientEmail: String(clientEmail || "").trim(),
+    imageBase64,
+    mediaType,
+    fileName,
+    width,
+    height,
+    animate: Boolean(animate),
+  };
+  if (typeof customPrompt === "string" && customPrompt.trim()) {
+    body.customPrompt = customPrompt.trim();
+  }
+  const response = await api.post(`/api/chat/${enc}/ai-preview-svg`, body);
   return response.data;
 };
 

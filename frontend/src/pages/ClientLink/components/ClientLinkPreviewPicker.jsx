@@ -463,6 +463,7 @@ export function ClientLinkPreviewPicker({
   onPinnedChange,
   onReplaceImageResult,
   onReplacementStagedForRepo,
+  clientLinkAiSvgContext = null,
 }) {
   const overlayRef = useRef(null);
   const [hoverBox, setHoverBox] = useState(null);
@@ -699,7 +700,7 @@ export function ClientLinkPreviewPicker({
           style={{
             left: Math.max(
               0,
-              pinnedBox.left + Math.max(pinnedBox.width, 4) - 148,
+              pinnedBox.left + Math.max(pinnedBox.width, 4) - 280,
             ),
             top: pinnedBox.top + Math.max(pinnedBox.height, 4) + 8,
           }}
@@ -709,6 +710,7 @@ export function ClientLinkPreviewPicker({
             context={pinned}
             onResult={onReplaceImageResult}
             onStagedForRepo={onReplacementStagedForRepo}
+            clientLinkAiSvgContext={clientLinkAiSvgContext}
           />
         </div>
       ) : null}

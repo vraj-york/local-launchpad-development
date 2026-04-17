@@ -7,6 +7,7 @@ import {
   getCognitoAccessVerifier,
   findOrCreateUserFromCognitoPayload,
 } from "../utils/cognitoAuth.js";
+import { reactSourceToIr } from "../services/reactToFigmaIr.service.js";
 
 const router = express.Router();
 // In-memory store for Figma plugin OAuth flow (same as Server Figma to React v2)
@@ -23,6 +24,22 @@ function randomUUID() {
   const hex = bytes.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+
+/** POST /api/figma/react-to-figma-ir — LaunchPad 2: React/JSX → layout IR (Claude). */
+router.post("/react-to-figma-ir", async (req, res) => {
+  const source =
+    typeof req.body?.source === "string"
+      ? req.body.source
+      : typeof req.body?.react === "string"
+        ? req.body.react
+        : "";
+  const result = await reactSourceToIr(source);
+  if (result.error) {
+    res.status(result.error.includes("ANTHROPIC_API_KEY") ? 503 : 400).json({ error: result.error });
+    return;
+  }
+  res.json({ ir: result.ir });
+});
 
 /** POST /api/figma/keys - Generate readKey and writeKey for plugin */
 router.post("/keys", (_req, res) => {

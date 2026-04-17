@@ -22,7 +22,7 @@
 /frontend/dist/
 /launchpad-frontend/node_modules/
 /launchpad-frontend/build/
-
+/graphify-out
 
 /backend/nginx/sites-enabled
 /backend/nginx-configs

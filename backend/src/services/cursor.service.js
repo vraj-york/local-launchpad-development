@@ -1,4 +1,5 @@
 import fetch from "node-fetch";
+import { inspect } from "util";
 import path from "path";
 import fs from "fs-extra";
 import { execFileSync } from "child_process";
@@ -30,7 +31,8 @@ import { resolveScmCredentialsFromProject } from "./integrationCredential.servic
 import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 import { API_BASE_URLS } from "../constants/contstants.js";
 
-//const prisma = new PrismaClient();
+/** Cursor Cloud / cursor-cloud-agent base (e.g. `http://cursor-cloud-agent:3100` in Docker). */
+const CURSOR_BASE_URL = String(process.env.CURSOR_BASE_URL ?? "").trim();
 
 /**
  * @param {number} projectId
@@ -75,6 +77,120 @@ async function markScratchVersionFailedIfCreating(projectId) {
 }
 const POLL_INTERVAL_MS = 5000;
 const ENV_GITHUB_USERNAME = process.env.GITHUB_USERNAME;
+
+/** Matches cursor-cloud-agent JSON when no PAT is stored for `?email=`. */
+const CURSOR_CLOUD_GITHUB_PAT_ERROR_CODE = "GITHUB_PAT_NOT_CONFIGURED";
+
+/**
+ * @param {number | null | undefined} projectId
+ * @returns {Promise<Record<string, string> | undefined>}
+ */
+async function getCreatorEmailQueryForProject(projectId) {
+  const pid = projectId != null ? Number(projectId) : NaN;
+  if (!Number.isInteger(pid) || pid < 1) return undefined;
+  const project = await prisma.project.findUnique({
+    where: { id: pid },
+    select: { createdById: true },
+  });
+  if (!project) return undefined;
+  const user = await prisma.user.findUnique({
+    where: { id: project.createdById },
+    select: { email: true },
+  });
+  const email = user?.email?.trim();
+  if (!email) return undefined;
+  return { email };
+}
+
+/**
+ * @param {number} status
+ * @param {object} data
+ */
+function responseIndicatesGithubPatNotConfigured(status, data) {
+  return (
+    status === 400 &&
+    data &&
+    typeof data === "object" &&
+    data.code === CURSOR_CLOUD_GITHUB_PAT_ERROR_CODE
+  );
+}
+
+/**
+ * POST GitHub token to cursor-cloud-agent for the project creator's email (Basic auth = CURSOR_API_KEY).
+ * @param {import("@prisma/client").Project & { createdById: number }} project
+ */
+async function registerGithubPatWithCursorCloudAgent(project) {
+  const scm = await resolveScmCredentialsFromProject(project);
+  if (scm.provider !== "github") {
+    throw new Error(
+      "GitHub connection required to register PAT with Cursor agent service (project uses non-GitHub SCM).",
+    );
+  }
+  const token = scm.token?.trim();
+  if (!token) {
+    throw new Error("GitHub token is empty; reconnect GitHub under Integrations.");
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: project.createdById },
+    select: { email: true },
+  });
+  const email = user?.email?.trim();
+  if (!email) {
+    throw new Error("Project creator email missing");
+  }
+  const { status, data } = await cursorRequest({
+    method: "POST",
+    path: "/v0/credentials/github",
+    query: { email },
+    body: { githubToken: token },
+  });
+  if (status < 200 || status >= 300) {
+    const msg =
+      data && typeof data === "object" && data.error
+        ? String(data.error)
+        : "Failed to register GitHub PAT with Cursor agent service";
+    const err = new Error(msg);
+    err.code = "CURSOR_PAT_REGISTER_FAILED";
+    throw err;
+  }
+}
+
+/**
+ * On GITHUB_PAT_NOT_CONFIGURED, push OAuth token from the project then retry once.
+ * @param {{ method: string, path: string, body?: object, projectId?: number|null }} options
+ */
+async function cursorRequestWithProjectAndPatRetry(options) {
+  const { method, path, body, projectId } = options;
+  const query = await getCreatorEmailQueryForProject(projectId);
+  let result = await cursorRequest({ method, path, body, query });
+  if (!responseIndicatesGithubPatNotConfigured(result.status, result.data) || projectId == null) {
+    return result;
+  }
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: {
+      id: true,
+      createdById: true,
+      githubConnectionId: true,
+      bitbucketConnectionId: true,
+      githubUsername: true,
+      githubToken: true,
+      bitbucketUsername: true,
+      bitbucketToken: true,
+    },
+  });
+  if (!project) {
+    return result;
+  }
+  try {
+    await registerGithubPatWithCursorCloudAgent(project);
+  } catch (e) {
+    console.error("[cursor] registerGithubPatWithCursorCloudAgent failed:", e?.message || e);
+    return result;
+  }
+  result = await cursorRequest({ method, path, body, query });
+  return result;
+}
 /**
  * Optional override for source.ref when creating Cursor agents.
  * If unset, ref defaults to `main` (caller `source.ref` still wins).
@@ -96,10 +212,10 @@ function gitExec(argv, cwd) {
 
 /**
  * Call Cursor Cloud Agents API with Basic auth (API key as username, empty password).
- * @param {{ method: string, path: string, body?: object }} options
+ * @param {{ method: string, path: string, body?: object, query?: Record<string, string> }} options
  * @returns {{ status: number, data: object }} Parsed JSON and status; throws if API key missing or request fails
  */
-export async function cursorRequest({ method, path, body }) {
+export async function cursorRequest({ method, path, body, query }) {
   const apiKey = process.env.CURSOR_API_KEY?.trim();
   if (!apiKey) {
     const err = new Error("Cursor API key not configured");
@@ -107,7 +223,24 @@ export async function cursorRequest({ method, path, body }) {
     throw err;
   }
 
-  const url = `${API_BASE_URLS.CURSOR}${path.startsWith("/") ? path : `/${path}`}`;
+  if (!CURSOR_BASE_URL) {
+    const err = new Error("CURSOR_BASE_URL is not configured");
+    err.code = "CURSOR_BASE_URL_MISSING";
+    throw err;
+  }
+
+  const baseRaw = CURSOR_BASE_URL;
+  const base = baseRaw.replace(/\/$/, "");
+  const relPath = path.startsWith("/") ? path : `/${path}`;
+  const urlObj = new URL(relPath, `${base}/`);
+  if (query && typeof query === "object") {
+    for (const [k, v] of Object.entries(query)) {
+      if (v != null && String(v).trim() !== "") {
+        urlObj.searchParams.set(k, String(v));
+      }
+    }
+  }
+  const url = urlObj.toString();
   const basicAuth = Buffer.from(`${apiKey}:`).toString("base64");
   const headers = {
     Authorization: `Basic ${basicAuth}`,
@@ -138,15 +271,37 @@ export async function cursorRequest({ method, path, body }) {
     data = text ? { error: text } : {};
   }
 
+  console.log(
+    "[cursor] API response",
+    inspect(
+      {
+        method: method || "GET",
+        path,
+        url,
+        httpStatus: res.status,
+        contentType,
+        data,
+      },
+      {
+        depth: null,
+        maxArrayLength: null,
+        maxStringLength: Infinity,
+        breakLength: 120,
+      },
+    ),
+  );
+
   return { status: res.status, data };
 }
 
 /**
  * GET /v0/agents/:id — same behavior as GET /api/cursor/agents/:id (agent payload including status).
  * @param {string} agentId
+ * @param {number} [projectId] — when set, adds `?email=` (project creator); otherwise inferred from
+ *   FigmaConversion, or from Release.backendAgentId (e.g. post-lock backend plan agent).
  * @returns {Promise<{ status: number, data: object }>}
  */
-export async function getCursorAgentById(agentId) {
+export async function getCursorAgentById(agentId, projectId) {
   const id =
     typeof agentId === "string"
       ? agentId.trim()
@@ -154,9 +309,27 @@ export async function getCursorAgentById(agentId) {
   if (!id) {
     return { status: 400, data: { error: "Agent id is required" } };
   }
+  let pid =
+    projectId != null && Number.isInteger(Number(projectId)) ? Number(projectId) : null;
+  if (pid == null) {
+    const conv = await prisma.figmaConversion.findFirst({
+      where: { agentId: id },
+      select: { projectId: true },
+    });
+    pid = conv?.projectId ?? null;
+  }
+  if (pid == null) {
+    const rel = await prisma.release.findFirst({
+      where: { backendAgentId: id },
+      select: { projectId: true },
+    });
+    pid = rel?.projectId ?? null;
+  }
+  const query = await getCreatorEmailQueryForProject(pid);
   return cursorRequest({
     method: "GET",
     path: `/v0/agents/${encodeURIComponent(id)}`,
+    query,
   });
 }
 
@@ -177,10 +350,24 @@ export async function postCursorAgentFollowup(agentId, prompt) {
     err.code = "AGENT_ID_REQUIRED";
     throw err;
   }
-  const { status, data } = await cursorRequest({
+  const conv = await prisma.figmaConversion.findFirst({
+    where: { agentId: id },
+    select: { projectId: true },
+  });
+  let projectId = conv?.projectId ?? null;
+  if (projectId == null) {
+    const rel = await prisma.release.findFirst({
+      where: { backendAgentId: id },
+      select: { projectId: true },
+    });
+    projectId = rel?.projectId ?? null;
+  }
+
+  const { status, data } = await cursorRequestWithProjectAndPatRetry({
     method: "POST",
     path: `/v0/agents/${encodeURIComponent(id)}/followup`,
     body: { prompt },
+    projectId,
   });
   if (status >= 200 && status < 300) {
     startAgentPolling(id);
@@ -305,7 +492,7 @@ export async function startReleaseBackendPlanAgent({
 
     const promptText = buildBackendPlanPrompt(projectVersionId, releaseId);
 
-    const { data } = await cursorRequest({
+    const { data } = await cursorRequestWithProjectAndPatRetry({
       method: "POST",
       path: "/v0/agents",
       body: {
@@ -313,6 +500,7 @@ export async function startReleaseBackendPlanAgent({
         source: { repository: repositoryUrl, ref: refBranch },
         target: { autoBranch: true },
       },
+      projectId,
     });
 
     if (!data?.id) {
@@ -350,7 +538,18 @@ export function startReleaseBackendAgentPolling(agentId, releaseId) {
 
   const poll = async () => {
     try {
-      const { status, data: agentData } = await getCursorAgentById(id);
+      const releaseRow = await prisma.release.findUnique({
+        where: { id: releaseId },
+        select: { projectId: true, backendAgentId: true },
+      });
+      if (!releaseRow || releaseRow.backendAgentId?.trim() !== id) {
+        return;
+      }
+
+      const { status, data: agentData } = await getCursorAgentById(
+        id,
+        releaseRow.projectId,
+      );
       if (status !== 200 || !agentData) {
         timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
         return;
@@ -361,7 +560,7 @@ export function startReleaseBackendAgentPolling(agentId, releaseId) {
 
       await prisma.release.updateMany({
         where: { id: releaseId, backendAgentId: id },
-        data: { backendAgentStatus: agentStatus || undefined },
+        data: { backendAgentStatus: agentStatus ?? undefined },
       });
 
       if (
@@ -605,10 +804,11 @@ export async function createAgentForProjectRelease({
   if (!omitTargetFromBody && effectiveTarget != null) {
     agentCreateBody.target = effectiveTarget;
   }
-  const { status, data } = await cursorRequest({
+  const { status, data } = await cursorRequestWithProjectAndPatRetry({
     method: "POST",
     path: "/v0/agents",
     body: agentCreateBody,
+    projectId,
   });
 
   if (!data || !data.id) {

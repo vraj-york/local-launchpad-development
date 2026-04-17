@@ -22,6 +22,7 @@ import {
   scmPutRepositoryContents,
 } from "./scmFacade.service.js";
 import { resolveGitSourceForNewClientChatAgent } from "./platformGitLine.service.js";
+import { generateAiSvgDataUrl } from "./anthropicPreviewSvg.service.js";
 
 import {
   compareRefs,
@@ -2431,4 +2432,62 @@ export async function clientLinkPreviewCommit({
     commitSha: targetSha,
     cached: Boolean(preview.cached),
   };
+}
+
+/**
+ * Public client-link: AI SVG from reference image (Anthropic via server; no browser API key).
+ */
+export async function clientLinkAiPreviewSvg({
+  slug,
+  releaseId,
+  clientEmail,
+  imageBase64,
+  mediaType,
+  fileName,
+  width,
+  height,
+  animate,
+  customPrompt,
+}) {
+  const project = await resolveProjectBySlug(slug);
+  assertPublicClientStakeholderEmail(project.stakeholderEmails, clientEmail, {
+    context: "aiChat",
+  });
+  await assertReleaseBelongs(releaseId, project.id);
+
+  const apiKey =
+    process.env.CLAUDE_API_KEY?.trim() || process.env.ANTHROPIC_API_KEY?.trim();
+  if (!apiKey) {
+    throw new ApiError(
+      503,
+      "AI SVG is not configured. Set CLAUDE_API_KEY or ANTHROPIC_API_KEY on the server.",
+    );
+  }
+
+  const b64 =
+    typeof imageBase64 === "string" ? imageBase64.replace(/\s/g, "") : "";
+  if (!b64) {
+    throw new ApiError(400, "Reference image (imageBase64) is required.");
+  }
+
+  const w = Math.max(1, Math.min(8192, Number(width) || 96));
+  const h = Math.max(1, Math.min(8192, Number(height) || 96));
+
+  const result = await generateAiSvgDataUrl({
+    apiKey,
+    mediaType: typeof mediaType === "string" ? mediaType : "image/png",
+    base64: b64,
+    fileName: typeof fileName === "string" ? fileName : "reference",
+    width: w,
+    height: h,
+    animate: Boolean(animate),
+    customPrompt:
+      typeof customPrompt === "string" ? customPrompt : undefined,
+  });
+
+  if (!result.ok) {
+    throw new ApiError(502, result.message || "AI SVG generation failed.");
+  }
+
+  return { ok: true, dataUrl: result.dataUrl };
 }

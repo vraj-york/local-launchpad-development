@@ -6,6 +6,7 @@ import {
   clientLinkListChatMessages,
   clientLinkRevertMergedMessage,
   clientLinkRefreshLiveBuild,
+  clientLinkAiPreviewSvg,
 } from "../services/chat.service.js";
 import ApiError from "../utils/apiError.js";
 
@@ -24,6 +25,39 @@ function readClientEmail(body) {
   if (typeof raw !== "string") return "";
   return raw.trim();
 }
+
+/** POST /api/chat/:slug/ai-preview-svg — AI SVG from reference image (Anthropic proxied; same gate as followup). */
+router.post("/:slug/ai-preview-svg", async (req, res) => {
+  const slug = req.params.slug;
+  const releaseId = readReleaseId(req.body, req.query);
+  const clientEmail = readClientEmail(req.body);
+  try {
+    if (!releaseId) {
+      return res.status(400).json({ error: "Release (r) required" });
+    }
+    const body = req.body || {};
+    const result = await clientLinkAiPreviewSvg({
+      slug,
+      releaseId,
+      clientEmail,
+      imageBase64: body.imageBase64,
+      mediaType: body.mediaType,
+      fileName: body.fileName,
+      width: body.width,
+      height: body.height,
+      animate: body.animate,
+      customPrompt: body.customPrompt,
+    });
+    return res.json(result);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      const out = { error: err.message };
+      if (err.code) out.code = err.code;
+      return res.status(err.statusCode).json(out);
+    }
+    return res.status(500).json({ error: "Server error" });
+  }
+});
 
 /** POST /api/chat/:slug/followup — send chat / follow-up */
 router.post("/:slug/followup", async (req, res) => {
