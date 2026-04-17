@@ -35,6 +35,7 @@ import { LAUNCHPAD_FRONTEND_SUBMODULE_PATH } from "./developerRepoSubmodule.serv
 import { buildLaunchpadFrontendAlignmentBlock } from "./cursorPrompts.js";
 import { ensureFreshFigmaConnection } from "./oauthConnection.service.js";
 import { LAUNCHPAD_FRONTEND_SUBMODULE_PATH } from "./developerRepoSubmodule.service.js";
+import { buildLaunchpadFrontendAlignmentBlock } from "./cursorPrompts.js";
 
 /** Cursor Cloud / cursor-cloud-agent base (e.g. `http://cursor-cloud-agent:3100` in Docker). */
 const CURSOR_BASE_URL = String(process.env.CURSOR_BASE_URL ?? "").trim();
@@ -468,8 +469,7 @@ function buildBackendPlanPrompt(projectVersionId, releaseId, opts = {}) {
   const sub = raw || LAUNCHPAD_FRONTEND_SUBMODULE_PATH;
   const subSlash = sub.endsWith("/") ? sub : `${sub}/`;
   return (
-    `You are working in the developer integration repository, which includes the Launchpad platform UI as a git submodule at ${subSlash}.\n\n` +
-    `Use ${subSlash} as the reference for Launchpad patterns and behavior. Compare ${subSlash} with Frontend/ in this repository (for example using git diff or an equivalent approach) and apply the necessary changes under the Frontend/ folder so it aligns with or correctly reflects patterns from the submodule.\n\n` +
+    buildLaunchpadFrontendAlignmentBlock() +
     `Create a Plan named backend-v${projectVersionId}-release${releaseId}.md in the backend/plan (or equivalent) folder at the repository root that documents how to implement or connect a backend that supports this Frontend: APIs, data contracts, auth or session notes if relevant, deployment considerations, and concrete integration steps.`
   );
 }
