@@ -35,6 +35,12 @@ export async function getCursorIntegrationStatus(userId) {
   let lastError = null;
 
   if (!apiKey || !base || !userEmail) {
+    console.warn("[cursor-integration] skip cursor-cloud-agent probe (config or email)", {
+      userId,
+      cursorApiKeyConfigured: apiKey,
+      cursorBaseUrlConfigured: Boolean(base),
+      hasUserEmail: Boolean(userEmail),
+    });
     return {
       cursorApiKeyConfigured: apiKey,
       cursorBaseUrlConfigured: Boolean(base),
@@ -54,6 +60,16 @@ export async function getCursorIntegrationStatus(userId) {
   }
 
   try {
+    console.warn("[cursor-integration] probing cursor-cloud-agent GET /v0/credentials/github", {
+      userId,
+      baseUrlHost: (() => {
+        try {
+          return new URL(base).host;
+        } catch {
+          return "(invalid CURSOR_BASE_URL)";
+        }
+      })(),
+    });
     const { status, data } = await cursorRequest({
       method: "GET",
       path: "/v0/credentials/github",
@@ -65,9 +81,29 @@ export async function getCursorIntegrationStatus(userId) {
     } else if (data && typeof data === "object" && data.error) {
       lastError = String(data.error);
     }
+    console.warn("[cursor-integration] cursor-cloud-agent credentials probe result", {
+      userId,
+      httpStatus: status,
+      reachable,
+      patConfigured,
+      lastError,
+    });
   } catch (e) {
+    const cause = e?.cause;
     lastError = e?.message || String(e);
     reachable = false;
+    console.warn(
+      "[cursor-integration] cursor-cloud-agent unreachable or request threw",
+      {
+        userId,
+        message: e?.message,
+        code: e?.code,
+        cause:
+          cause && typeof cause === "object"
+            ? { message: cause.message, code: cause.code, errno: cause.errno }
+            : cause,
+      },
+    );
   }
 
   return {

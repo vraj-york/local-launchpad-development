@@ -210,6 +210,21 @@ function gitExec(argv, cwd) {
   });
 }
 
+/** Log line helper: same URL shape as wire calls but without sensitive query values. */
+function cursorRequestUrlForLogs(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    for (const key of u.searchParams.keys()) {
+      if (/token|secret|password|email|github/i.test(key)) {
+        u.searchParams.set(key, "(redacted)");
+      }
+    }
+    return u.toString();
+  } catch {
+    return "(invalid-url)";
+  }
+}
+
 /**
  * Call Cursor Cloud Agents API with Basic auth (API key as username, empty password).
  * @param {{ method: string, path: string, body?: object, query?: Record<string, string> }} options
@@ -252,11 +267,53 @@ export async function cursorRequest({ method, path, body, query }) {
   const postWireBody =
     body !== undefined && body !== null ? JSON.stringify(body) : undefined;
 
-  const res = await fetch(url, {
-    method: method || "GET",
-    headers,
-    body: postWireBody,
+  const m = method || "GET";
+  console.warn("[cursor] outgoing request", {
+    method: m,
+    path: relPath,
+    url: cursorRequestUrlForLogs(url),
   });
+
+  let res;
+  try {
+    res = await fetch(url, {
+      method: m,
+      headers,
+      body: postWireBody,
+    });
+  } catch (e) {
+    const cause = e?.cause;
+    console.warn(
+      "[cursor] HTTP request failed (network / TLS / DNS before response)",
+      inspect(
+        {
+          method: m,
+          path: relPath,
+          url: cursorRequestUrlForLogs(url),
+          message: e?.message,
+          name: e?.name,
+          code: e?.code,
+          errno: e?.errno,
+          syscall: e?.syscall,
+          address: e?.address,
+          port: e?.port,
+          cause:
+            cause && typeof cause === "object"
+              ? {
+                  message: cause.message,
+                  code: cause.code,
+                  errno: cause.errno,
+                  syscall: cause.syscall,
+                  address: cause.address,
+                  port: cause.port,
+                }
+              : cause,
+        },
+        { depth: 5, breakLength: 120 },
+      ),
+    );
+    throw e;
+  }
 
   let data;
   const contentType = res.headers.get("content-type") || "";

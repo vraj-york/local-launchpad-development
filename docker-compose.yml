@@ -90,8 +90,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       CURSOR_API_KEY: ${CURSOR_API_KEY:-}
-      # Base URL of cursor-cloud-agent (same key as Cursor CLI /v0). Docker default: service name + port.
-      CURSOR_BASE_URL: ${CURSOR_BASE_URL:-http://cursor-cloud-agent:3100}
+      # Do not use ${CURSOR_BASE_URL:-...} here: root .env often sets localhost:3100 for bare-metal Node; inside
+      # this container localhost is the backend itself → ECONNREFUSED. Default is Compose DNS to sibling service.
+      # Override with CURSOR_CLOUD_AGENT_URL (e.g. http://host.docker.internal:3100 if agent runs on host only).
+      CURSOR_BASE_URL: ${CURSOR_CLOUD_AGENT_URL:-http://cursor-cloud-agent:3100}
       # Optional: force Cursor agent source.ref (branch/tag); unset uses request ref or GitHub default_branch
       CURSOR_AGENT_SOURCE_REF: ${CURSOR_AGENT_SOURCE_REF:-}
       AWS_REGION: ${AWS_REGION:-}
@@ -131,6 +133,8 @@ services:
       db:
         condition: service_healthy
         required: false
+      cursor-cloud-agent:
+        condition: service_started
 
   # Merges feedback screen-recording chunks (S3 + ffmpeg) and attaches video to Jira. Same image as backend; no nginx/migrate entrypoint.
   # Run exactly one replica (job claiming uses Postgres row locks).

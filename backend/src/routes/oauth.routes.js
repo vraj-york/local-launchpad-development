@@ -83,6 +83,8 @@ router.get("/status", authenticateToken, async (req, res, next) => {
 /** GET /api/integrations/cursor/status — Cursor cloud agent reachable + PAT stored for your email */
 router.get("/cursor/status", authenticateToken, async (req, res, next) => {
   try {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    res.set("Pragma", "no-cache");
     const status = await getCursorIntegrationStatus(req.user.id);
     res.json(status);
   } catch (e) {

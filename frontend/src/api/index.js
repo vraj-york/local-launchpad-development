@@ -269,7 +269,13 @@ export const fetchIntegrationsStatus = async () => {
 
 /** Cursor cloud-agent: connection + whether a GitHub PAT is stored for your email */
 export const fetchCursorIntegrationStatus = async () => {
-  const { data } = await api.get("/api/integrations/cursor/status");
+  const { data } = await api.get("/api/integrations/cursor/status", {
+    params: { _t: Date.now() },
+    headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    },
+  });
   return data;
 };
 
