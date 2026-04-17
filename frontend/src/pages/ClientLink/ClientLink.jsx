@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   fetchPublicProjectBySlug,
   publicLockRelease,
@@ -160,6 +166,16 @@ export const ClientLink = () => {
       : selectedReleaseId != null
         ? selectedReleaseId
         : rootReleaseIdFromActiveVersion;
+
+  /** Slug + release + email resolver for AI SVG (backend proxy; same gate as chat). */
+  const clientLinkAiSvgContext = useMemo(
+    () => ({
+      slug: typeof projectSlug === "string" ? projectSlug : "",
+      releaseId: effectiveChatReleaseId,
+      getClientEmail: getClientLinkVerifiedEmail,
+    }),
+    [projectSlug, effectiveChatReleaseId],
+  );
 
   const effectiveReleaseForChat = React.useMemo(() => {
     const rid = effectiveChatReleaseId;
@@ -870,6 +886,7 @@ export const ClientLink = () => {
                   onPinnedChange={handlePreviewPinnedChange}
                   onReplaceImageResult={handlePreviewReplaceImageResult}
                   onReplacementStagedForRepo={handleReplacementStagedForRepo}
+                  clientLinkAiSvgContext={clientLinkAiSvgContext}
                 />
               ) : null}
             </ClientLinkResponsivePreviewShell>
@@ -978,6 +995,7 @@ export const ClientLink = () => {
               stagedChatReferenceImages={stagedChatReferenceImages}
               onStagedChatReferenceImagesChange={setStagedChatReferenceImages}
               onReplacementStagedForRepo={handleReplacementStagedForRepo}
+              clientLinkAiSvgContext={clientLinkAiSvgContext}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

@@ -13,6 +13,16 @@ import {
 } from "../services/release.service.js";
 import { regenerateClientReviewSummaryNow } from "../services/releaseReviewSummary.service.js";
 
+/** Avoid browser disk/memory cache + 304 on dynamic release payloads (e.g. backendAgentStatus polling). */
+function sendNoStoreJson(res, body) {
+    res.set({
+        "Cache-Control": "private, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+    });
+    res.json(body);
+}
+
 export const releaseController = {
     /**
      * Create a new release
@@ -28,7 +38,7 @@ export const releaseController = {
     list: asyncHandler(async (req, res) => {
         const projectId = parseInt(req.params.projectId, 10);
         const releases = await listReleasesService(projectId, req.user);
-        res.json(releases);
+        sendNoStoreJson(res, releases);
     }),
 
     /**
@@ -37,7 +47,7 @@ export const releaseController = {
     getById: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
         const release = await getReleaseByIdService(releaseId, req.user);
-        res.json(release);
+        sendNoStoreJson(res, release);
     }),
 
     /**
@@ -120,7 +130,7 @@ export const releaseController = {
     changelog: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
         const entries = await getReleaseChangelogService(releaseId, req.user);
-        res.json(entries);
+        sendNoStoreJson(res, entries);
     }),
 
     /**

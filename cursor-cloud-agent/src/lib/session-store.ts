@@ -1,0 +1,303 @@
+import initSqlJs from "sql.js";
+import { join } from "path";
+import { homedir } from "os";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
+import type { StoredSession } from "@/lib/types";
+
+const DATA_DIR = join(homedir(), ".cursor-local-remote");
+const DB_PATH = join(DATA_DIR, "sessions.db");
+
+type Database = initSqlJs.Database;
+
+let db: Database | null = null;
+let sqlReady: Promise<initSqlJs.SqlJsStatic> | null = null;
+
+function getSql() {
+  if (!sqlReady) sqlReady = initSqlJs();
+  return sqlReady;
+}
+
+function save() {
+  if (!db) return;
+  writeFileSync(DB_PATH, Buffer.from(db.export()));
+}
+
+/** Persist sql.js database to disk after external writes (e.g. agent-store). */
+export function persistDb(): void {
+  save();
+}
+
+export async function getDb(): Promise<Database> {
+  if (db) return db;
+
+  const { Database: SqlDatabase } = await getSql();
+  mkdirSync(DATA_DIR, { recursive: true });
+
+  if (existsSync(DB_PATH)) {
+    const buf = readFileSync(DB_PATH);
+    db = new SqlDatabase(buf);
+  } else {
+    db = new SqlDatabase();
+  }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      workspace TEXT NOT NULL,
+      preview TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  try {
+    db.run("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+  } catch {
+    // column already exists
+  }
+  db.run(`
+    CREATE TABLE IF NOT EXISTS config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      cursor_session_id TEXT,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'RUNNING',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      summary TEXT,
+      model TEXT,
+      workspace TEXT NOT NULL,
+      source_repository TEXT,
+      source_ref TEXT,
+      source_pr_url TEXT,
+      target_branch_name TEXT,
+      target_pr_url TEXT,
+      auto_create_pr INTEGER NOT NULL DEFAULT 0,
+      open_as_cursor_github_app INTEGER NOT NULL DEFAULT 0,
+      skip_reviewer_request INTEGER NOT NULL DEFAULT 0,
+      auto_branch INTEGER NOT NULL DEFAULT 1,
+      webhook_url TEXT,
+      webhook_secret TEXT
+    )
+  `);
+  try {
+    db.run("ALTER TABLE agents ADD COLUMN cursor_session_id TEXT");
+  } catch {
+    // column already exists
+  }
+  try {
+    db.run("ALTER TABLE agents ADD COLUMN conversation_json TEXT");
+  } catch {
+    // column already exists
+  }
+  try {
+    db.run("ALTER TABLE agents ADD COLUMN api_key_encrypted TEXT");
+  } catch {
+    // column already exists
+  }
+  try {
+    db.run("ALTER TABLE agents ADD COLUMN api_key_fingerprint TEXT");
+  } catch {
+    // column already exists
+  }
+  try {
+    db.run("ALTER TABLE agents ADD COLUMN user_email TEXT");
+  } catch {
+    // column already exists
+  }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS github_credentials (
+      email_normalized TEXT PRIMARY KEY NOT NULL,
+      github_pat_encrypted TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS followup_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT NOT NULL,
+      api_key_fingerprint TEXT NOT NULL,
+      prompt_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_followup_queue_agent_id ON followup_queue (agent_id, id)`);
+  try {
+    db.run("ALTER TABLE followup_queue ADD COLUMN user_email_normalized TEXT");
+  } catch {
+    // column already exists
+  }
+
+  save();
+  return db;
+}
+
+type SqlValue = initSqlJs.SqlValue;
+
+function queryOne(conn: Database, sql: string, params: SqlValue[]): Record<string, SqlValue> | undefined {
+  const stmt = conn.prepare(sql);
+  try {
+    stmt.bind(params);
+    if (stmt.step()) return stmt.getAsObject() as Record<string, SqlValue>;
+    return undefined;
+  } finally {
+    stmt.free();
+  }
+}
+
+function queryAll(conn: Database, sql: string, params: SqlValue[] = []): Record<string, SqlValue>[] {
+  const stmt = conn.prepare(sql);
+  try {
+    stmt.bind(params);
+    const rows: Record<string, SqlValue>[] = [];
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject() as Record<string, SqlValue>);
+    }
+    return rows;
+  } finally {
+    stmt.free();
+  }
+}
+
+function rowToSession(row: Record<string, SqlValue>): StoredSession {
+  return {
+    id: row.id as string,
+    title: row.title as string,
+    workspace: row.workspace as string,
+    preview: row.preview as string,
+    createdAt: row.created_at as number,
+    updatedAt: row.updated_at as number,
+  };
+}
+
+export async function getSessionTitle(sessionId: string): Promise<string | null> {
+  const conn = await getDb();
+  const row = queryOne(conn, "SELECT title FROM sessions WHERE id = ?", [sessionId]);
+  return row ? (row.title as string) : null;
+}
+
+export async function upsertSession(
+  sessionId: string,
+  workspace: string,
+  firstMessage: string,
+): Promise<StoredSession> {
+  const conn = await getDb();
+  const now = Date.now();
+  const existing = queryOne(conn, "SELECT * FROM sessions WHERE id = ?", [sessionId]);
+
+  if (existing) {
+    const preview = firstMessage ? firstMessage.slice(0, 120) : (existing.preview as string);
+    conn.run("UPDATE sessions SET updated_at = ?, preview = ? WHERE id = ?", [now, preview, sessionId]);
+    save();
+    return rowToSession({ ...existing, updated_at: now, preview });
+  }
+
+  const title = firstMessage.slice(0, 60) || "New session";
+  const preview = firstMessage.slice(0, 120);
+  conn.run(
+    "INSERT INTO sessions (id, title, workspace, preview, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    [sessionId, title, workspace, preview, now, now],
+  );
+  save();
+  return { id: sessionId, title, workspace, preview, createdAt: now, updatedAt: now };
+}
+
+export async function listSessions(workspace?: string, includeArchived = false): Promise<StoredSession[]> {
+  const conn = await getDb();
+  const archivedFilter = includeArchived ? " archived = 1" : " archived = 0";
+  const rows = workspace
+    ? queryAll(conn, "SELECT * FROM sessions WHERE workspace = ? AND" + archivedFilter + " ORDER BY updated_at DESC", [workspace])
+    : queryAll(conn, "SELECT * FROM sessions WHERE" + archivedFilter + " ORDER BY updated_at DESC");
+  return rows.map(rowToSession);
+}
+
+export async function archiveSession(sessionId: string, session?: StoredSession): Promise<void> {
+  const conn = await getDb();
+  const existing = queryOne(conn, "SELECT id FROM sessions WHERE id = ?", [sessionId]);
+  if (!existing && session) {
+    const now = Date.now();
+    conn.run(
+      "INSERT INTO sessions (id, title, workspace, preview, created_at, updated_at, archived) VALUES (?, ?, ?, ?, ?, ?, 1)",
+      [session.id, session.title, session.workspace, session.preview, session.createdAt || now, session.updatedAt || now],
+    );
+  } else {
+    conn.run("UPDATE sessions SET archived = 1 WHERE id = ?", [sessionId]);
+  }
+  save();
+}
+
+export async function unarchiveSession(sessionId: string): Promise<void> {
+  const conn = await getDb();
+  conn.run("UPDATE sessions SET archived = 0 WHERE id = ?", [sessionId]);
+  save();
+}
+
+export async function archiveAllSessions(workspace?: string, extraSessions?: StoredSession[]): Promise<void> {
+  const conn = await getDb();
+  if (extraSessions) {
+    const now = Date.now();
+    for (const s of extraSessions) {
+      const existing = queryOne(conn, "SELECT id FROM sessions WHERE id = ?", [s.id]);
+      if (!existing) {
+        conn.run(
+          "INSERT INTO sessions (id, title, workspace, preview, created_at, updated_at, archived) VALUES (?, ?, ?, ?, ?, ?, 0)",
+          [s.id, s.title, s.workspace, s.preview, s.createdAt || now, s.updatedAt || now],
+        );
+      }
+    }
+  }
+  if (workspace) {
+    conn.run("UPDATE sessions SET archived = 1 WHERE workspace = ? AND archived = 0", [workspace]);
+  } else {
+    conn.run("UPDATE sessions SET archived = 1 WHERE archived = 0");
+  }
+  save();
+}
+
+export async function getArchivedSessionIds(): Promise<Set<string>> {
+  const conn = await getDb();
+  const rows = queryAll(conn, "SELECT id FROM sessions WHERE archived = 1");
+  return new Set(rows.map((r) => r.id as string));
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const conn = await getDb();
+  conn.run("DELETE FROM sessions WHERE id = ?", [sessionId]);
+  save();
+}
+
+export async function getConfig(key: string): Promise<string | undefined> {
+  const conn = await getDb();
+  const row = queryOne(conn, "SELECT value FROM config WHERE key = ?", [key]);
+  return row?.value as string | undefined;
+}
+
+export async function setConfig(key: string, value: string): Promise<void> {
+  const conn = await getDb();
+  conn.run("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", [key, value]);
+  save();
+}
+
+export async function listWorkspaces(): Promise<string[]> {
+  const conn = await getDb();
+  const rows = queryAll(conn, "SELECT DISTINCT workspace FROM sessions ORDER BY workspace");
+  return rows.map((r) => r.workspace as string);
+}
+
+export async function getAllConfig(): Promise<Record<string, string>> {
+  const conn = await getDb();
+  const rows = queryAll(conn, "SELECT key, value FROM config WHERE key NOT LIKE 'vapid%'");
+  const result: Record<string, string> = {};
+  for (const row of rows) {
+    result[row.key as string] = row.value as string;
+  }
+  return result;
+}

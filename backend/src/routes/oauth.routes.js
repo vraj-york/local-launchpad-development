@@ -26,6 +26,10 @@ import {
   listJiraProjectsForConnection,
 } from "../services/oauthConnection.service.js";
 import { getPublicFrontendBaseUrl } from "../utils/publicFrontendUrl.js";
+import {
+  getCursorIntegrationStatus,
+  syncCursorGithubPatForUser,
+} from "../services/cursorIntegration.service.js";
 
 const router = express.Router();
 
@@ -72,6 +76,56 @@ router.get("/status", authenticateToken, async (req, res, next) => {
     const status = await getIntegrationsStatus(req.user.id);
     res.json(status);
   } catch (e) {
+    next(e);
+  }
+});
+
+/** GET /api/integrations/cursor/status — Cursor cloud agent reachable + PAT stored for your email */
+router.get("/cursor/status", authenticateToken, async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    res.set("Pragma", "no-cache");
+    const status = await getCursorIntegrationStatus(req.user.id);
+    res.json(status);
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** POST /api/integrations/cursor/sync-github-pat — push GitHub OAuth token to cursor-cloud-agent */
+router.post("/cursor/sync-github-pat", authenticateToken, async (req, res, next) => {
+  try {
+    const { status, data } = await syncCursorGithubPatForUser(req.user.id, null);
+    res.status(status).json({ ...data, httpStatus: status });
+  } catch (e) {
+    if (e.code === "CURSOR_KEY_MISSING" || e.code === "CURSOR_BASE_URL_MISSING") {
+      res.status(503).json({ error: e.message, code: e.code });
+      return;
+    }
+    if (e.code === "GITHUB_OAUTH_REQUIRED" || e.code === "GITHUB_TOKEN_EMPTY") {
+      res.status(400).json({ error: e.message, code: e.code });
+      return;
+    }
+    next(e);
+  }
+});
+
+/** POST /api/integrations/cursor/pat — body `{ githubToken }` manual PAT for cursor-cloud-agent */
+router.post("/cursor/pat", authenticateToken, async (req, res, next) => {
+  try {
+    const raw = req.body?.githubToken;
+    const githubToken = typeof raw === "string" ? raw.trim() : "";
+    if (!githubToken) {
+      res.status(400).json({ error: "githubToken is required" });
+      return;
+    }
+    const { status, data } = await syncCursorGithubPatForUser(req.user.id, githubToken);
+    res.status(status).json({ ...data, httpStatus: status });
+  } catch (e) {
+    if (e.code === "CURSOR_KEY_MISSING" || e.code === "CURSOR_BASE_URL_MISSING") {
+      res.status(503).json({ error: e.message, code: e.code });
+      return;
+    }
     next(e);
   }
 });

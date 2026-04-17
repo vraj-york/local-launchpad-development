@@ -6,13 +6,15 @@ import {
   disconnectBitbucketIntegration,
   disconnectGithubIntegration,
   disconnectJiraIntegration,
+  fetchCursorIntegrationStatus,
   fetchIntegrationsStatus,
   getBitbucketOAuthAuthorizeUrl,
   getGithubOAuthAuthorizeUrl,
   getJiraOAuthAuthorizeUrl,
+  syncCursorGithubPatFromOAuth,
 } from "@/api";
 import { toast } from "sonner";
-import { Loader2, Unplug, Plus } from "lucide-react";
+import { Loader2, Unplug, Plus, RefreshCw, Cloud } from "lucide-react";
 import githubMarkSvg from "@/assets/apps/GitHub.svg";
 import bitbucketMarkSvg from "@/assets/apps/BitBucket.svg";
 import jiraMarkSvg from "@/assets/apps/Jira.svg";
@@ -37,14 +39,20 @@ function IntegrationBrandMark({ src, className, invertOnDark }) {
 
 const IntegrationsSettingsPage = () => {
   const [status, setStatus] = useState(null);
+  const [cursorStatus, setCursorStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(null);
+  const [cursorBusy, setCursorBusy] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchIntegrationsStatus();
+      const [data, cursor] = await Promise.all([
+        fetchIntegrationsStatus(),
+        fetchCursorIntegrationStatus().catch(() => null),
+      ]);
       setStatus(data);
+      setCursorStatus(cursor);
     } catch (e) {
       console.error(e);
       toast.error("Could not load integration status");
@@ -53,6 +61,34 @@ const IntegrationsSettingsPage = () => {
       setLoading(false);
     }
   }, []);
+
+  const refreshCursorOnly = useCallback(async () => {
+    setCursorBusy("refresh");
+    try {
+      const c = await fetchCursorIntegrationStatus();
+      setCursorStatus(c);
+      toast.success("Cursor connection status updated");
+    } catch (e) {
+      toast.error(e.response?.data?.error || "Could not load Cursor status");
+      setCursorStatus(null);
+    } finally {
+      setCursorBusy(null);
+    }
+  }, []);
+
+  const syncPatFromGithub = async () => {
+    setCursorBusy("sync-oauth");
+    try {
+      await syncCursorGithubPatFromOAuth();
+      toast.success("GitHub token registered for Cursor cloud agent");
+      const c = await fetchCursorIntegrationStatus();
+      setCursorStatus(c);
+    } catch (e) {
+      toast.error(e.response?.data?.error || e.message || "Could not sync token");
+    } finally {
+      setCursorBusy(null);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -173,6 +209,60 @@ const IntegrationsSettingsPage = () => {
         </div>
       ) : (
         <div className="space-y-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <Cloud className="size-6 shrink-0 text-muted-foreground" aria-hidden />
+                <CardTitle className="text-lg">Cursor cloud agent</CardTitle>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={Boolean(cursorBusy)}
+                onClick={refreshCursorOnly}
+              >
+                {cursorBusy === "refresh" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <RefreshCw className="mr-1 h-4 w-4" />
+                    Check connection
+                  </>
+                )}
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <p className="text-muted-foreground">
+                Registers your GitHub token with the Cursor cloud agent service so agents can clone and push
+                using your account. Connect GitHub below first, then use &quot;Sync from GitHub&quot;.
+              </p>
+              {cursorStatus?.lastError && !cursorStatus?.reachable ? (
+                <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive">
+                  {cursorStatus.lastError}
+                </p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={Boolean(cursorBusy) || !cursorStatus?.hasGithubOAuth}
+                  onClick={syncPatFromGithub}
+                  title={
+                    cursorStatus?.hasGithubOAuth
+                      ? undefined
+                      : "Add a GitHub account in the section below first"
+                  }
+                >
+                  {cursorBusy === "sync-oauth" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Sync from GitHub"
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <div className="flex min-w-0 items-center gap-2">

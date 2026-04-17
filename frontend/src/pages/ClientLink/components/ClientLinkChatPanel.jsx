@@ -516,6 +516,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
   stagedChatReferenceImages = [],
   onStagedChatReferenceImagesChange = () => {},
   onReplacementStagedForRepo = () => {},
+  clientLinkAiSvgContext = null,
 }) {
   const [chatInput, setChatInput] = useState("");
   const [composerDragOver, setComposerDragOver] = useState(false);
@@ -1598,6 +1599,7 @@ export const ClientLinkChatPanel = React.memo(function ClientLinkChatPanel({
                                 disabled={composerDisabled}
                                 onResult={onPreviewReplaceImageResult}
                                 onStagedForRepo={onReplacementStagedForRepo}
+                                clientLinkAiSvgContext={clientLinkAiSvgContext}
                                 buttonClassName="h-8 shrink-0 rounded-full px-3"
                               />
                             ) : null}
