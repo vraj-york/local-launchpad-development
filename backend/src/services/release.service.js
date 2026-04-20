@@ -498,7 +498,6 @@ export const getReleaseByIdService = async (releaseId, user) => {
         select: {
           id: true,
           name: true,
-          assignedManagerId: true,
         },
       },
       versions: {
@@ -817,7 +816,6 @@ export const setReleaseStatusService = async (releaseId, status, user, options =
       id: true,
       projectId: true,
       status: true,
-      project: { select: { assignedManagerId: true } },
     },
   });
   if (!release) throw new ApiError(404, "Release not found");
@@ -1002,7 +1000,6 @@ export const lockReleaseService = async (releaseId, locked, user, lockOptions = 
       id: true,
       projectId: true,
       status: true,
-      project: { select: { assignedManagerId: true } },
     },
   });
 
@@ -1118,7 +1115,6 @@ export const updateReleaseService = async (releaseId, data, user) => {
       clientReviewAiSummary: true,
       showClientReviewSummary: true,
       clientReviewAiGenerationContext: true,
-      project: { select: { assignedManagerId: true } },
     },
   });
   if (!current) throw new ApiError(404, "Release not found");

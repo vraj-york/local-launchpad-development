@@ -1,6 +1,6 @@
 import axios from "axios";
 import config from "../config/index.js";
-import { isTokenExpiringSoon } from "../utils/auth.js";
+import { isTokenExpired, isTokenExpiringSoon } from "../utils/auth.js";
 
 const API_URL = config.API_URL;
 
@@ -142,12 +142,24 @@ export async function refreshAppToken() {
  */
 export async function tryProactiveRefresh() {
   const refreshToken = localStorage.getItem("cognito_refresh_token");
-  if (!refreshToken) return false;
   const token = localStorage.getItem("token");
-  if (token && !isTokenExpiringSoon(token, PROACTIVE_REFRESH_BUFFER_SEC))
+
+  if (!refreshToken) {
+    if (token && isTokenExpired(token)) clearAuthAndRedirect();
     return false;
+  }
+
+  const needsRefresh =
+    !token ||
+    isTokenExpired(token) ||
+    isTokenExpiringSoon(token, PROACTIVE_REFRESH_BUFFER_SEC);
+  if (!needsRefresh) return false;
+
   const newToken = await refreshAppToken();
-  return !!newToken;
+  if (newToken) return true;
+
+  clearAuthAndRedirect();
+  return false;
 }
 
 let refreshCheckTimerId = null;
@@ -230,8 +242,9 @@ api.interceptors.response.use(
       }
     } catch {
       // refresh failed
+    } finally {
+      isRefreshing = false;
     }
-    isRefreshing = false;
     clearAuthAndRedirect();
     return Promise.reject(error);
   },
@@ -248,16 +261,6 @@ export const figmaComplete = async (state, access_token) => {
   } catch (error) {
     const data = error.response?.data || {};
     return { error: data.error || "Failed to complete Figma login" };
-  }
-};
-
-// Function to fetch all managers
-export const fetchManagers = async () => {
-  try {
-    const response = await api.get("/api/auth/managers");
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || { error: "Failed to fetch managers" };
   }
 };
 

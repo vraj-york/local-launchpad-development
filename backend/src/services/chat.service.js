@@ -295,7 +295,6 @@ export async function resolveProjectBySlug(slug) {
     select: {
       id: true,
       slug: true,
-      assignedManagerId: true,
       githubToken: true,
       name: true,
       gitRepoPath: true,
@@ -930,7 +929,7 @@ async function createClientChatAgent({
   const cursorAgentCreateInput = {
     projectId: project.id,
     releaseId: Number(releaseId),
-    attemptedById: project.assignedManagerId,
+    attemptedById: project.createdById,
     prompt,
     model: "composer-1.5",
     deferLaunchpadMerge: true,
@@ -1920,7 +1919,6 @@ export async function clientLinkAutoMergeFromAgentPoll(agentId) {
     select: {
       id: true,
       slug: true,
-      assignedManagerId: true,
       githubToken: true,
       githubUsername: true,
       githubConnectionId: true,
@@ -2297,7 +2295,7 @@ export async function clientLinkRestoreVersion({
   }
 
   // deployVersionArtifactsToProjectFolder uses assertProjectAccess (creator / admin / assignees).
-  // Use project creator — not assignedManager — so stakeholder-triggered deploy matches SCM OAuth ownership.
+  // Use project creator so stakeholder-triggered deploy matches SCM OAuth ownership.
   const deployActor = await prisma.user.findUnique({
     where: { id: project.createdById },
   });
