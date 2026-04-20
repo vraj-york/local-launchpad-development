@@ -14,7 +14,6 @@ model User {
   password  String
   role      Role
   projectsCreated      Project[] @relation("CreatedProjects")
-  projectsManaged      Project[] @relation("ManagedProjects")
   versionsUploaded     ProjectVersion[] @relation("VersionUploader")
   releasesCreated       Release[]       @relation("ReleaseCreator")
   releaseChangeLogs     ReleaseChangeLog[]
@@ -77,7 +76,6 @@ model Project {
   slug              String?  @unique
   description       String?
   createdById       Int
-  assignedManagerId Int
   isUploading  Boolean  @default(false)
   
   githubUsername   String?
@@ -119,7 +117,6 @@ model Project {
   updatedAt         DateTime @updatedAt
 
   createdBy         User     @relation("CreatedProjects", fields: [createdById], references: [id])
-  assignedManager   User     @relation("ManagedProjects", fields: [assignedManagerId], references: [id])
   githubConnection  UserOAuthConnection? @relation("ProjectGithubConnection", fields: [githubConnectionId], references: [id], onDelete: SetNull)
   bitbucketConnection UserOAuthConnection? @relation("ProjectBitbucketConnection", fields: [bitbucketConnectionId], references: [id], onDelete: SetNull)
   jiraConnection    UserOAuthConnection? @relation("ProjectJiraConnection", fields: [jiraConnectionId], references: [id], onDelete: SetNull)

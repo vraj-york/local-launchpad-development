@@ -23,10 +23,6 @@ export const createProjectValidation = [
         .isLength({ min: 3, max: 100 })
         .withMessage("Name must be between 3 and 100 characters"),
 
-    body("assignedManagerId")
-        .isInt()
-        .withMessage("Assigned manager ID must be an integer"),
-
     body("jiraUsername")
         .optional({ checkFalsy: true })
         .trim()

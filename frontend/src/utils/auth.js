@@ -29,9 +29,10 @@ const DEFAULT_EXPIRY_BUFFER = 60;
  * Returns true if token is missing, invalid, or expired.
  */
 export const isTokenExpired = (token) => {
+    if (!token || typeof token !== 'string') return true;
     const payload = getTokenPayload(token);
-    if (!payload) return false;
-    if (typeof payload.exp !== 'number') return false;
+    if (!payload) return true;
+    if (typeof payload.exp !== 'number') return true;
     const nowSeconds = Math.floor(Date.now() / 1000);
     return payload.exp <= nowSeconds + DEFAULT_EXPIRY_BUFFER;
 };

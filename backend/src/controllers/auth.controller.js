@@ -1,6 +1,5 @@
 import asyncHandler from "../middleware/asyncHandler.middleware.js";
 import {
-  listManagersService,
   registerUserService,
   loginUserService,
   getMeService,
@@ -8,11 +7,6 @@ import {
 } from "../services/auth.service.js";
 
 export const authController = {
-  listManagers: asyncHandler(async (_req, res) => {
-    const managers = await listManagersService();
-    res.json(managers);
-  }),
-
   register: asyncHandler(async (req, res) => {
     const { name, email, password, role } = req.body;
     const user = await registerUserService({ name, email, password, role });

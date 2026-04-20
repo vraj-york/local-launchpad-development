@@ -3,17 +3,6 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
 
-export async function listManagersService() {
-  return prisma.user.findMany({
-    where: { role: "manager" },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-    },
-  });
-}
-
 export async function registerUserService({ name, email, password, role }) {
   const hashedPassword = await bcrypt.hash(password, 10);
   try {

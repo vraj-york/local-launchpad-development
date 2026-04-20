@@ -5,18 +5,6 @@ import { authController } from "../controllers/auth.controller.js";
 const router = express.Router();
 /**
  * @swagger
- * /auth/managers:
- *   get:
- *     summary: Get list of managers
- *     tags: [Auth]
- *     responses:
- *       200:
- *         description: Success
- */
-router.get("/managers", authController.listManagers);
-
-/**
- * @swagger
  * /auth/register:
  *   post:
  *     summary: Register a new user

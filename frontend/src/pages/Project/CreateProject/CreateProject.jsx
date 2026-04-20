@@ -8,7 +8,6 @@ import React, {
 } from "react";
 import {
   createProject,
-  fetchManagers,
   fetchExternalHubProjects,
   fetchIntegrationsStatus,
 } from "@/api";
@@ -84,8 +83,6 @@ const CreateProject = () => {
   const [externalHubProjects, setExternalHubProjects] = useState([]);
   const [selectedHubProjectId, setSelectedHubProjectId] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
-  const [managers, setManagers] = useState([]);
-  const [selectedManager, setSelectedManager] = useState("");
 
   const [integrationsStatus, setIntegrationsStatus] = useState(null);
   const [integrationsLoading, setIntegrationsLoading] = useState(true);
@@ -100,7 +97,6 @@ const CreateProject = () => {
   const [error, setError] = useState("");
   const [validationErrors, setValidationErrors] = useState({});
   const [loading, setLoading] = useState(false);
-  const [managersLoading, setManagersLoading] = useState(false);
   const [hubProjectsLoading, setHubProjectsLoading] = useState(true);
   const [hubProjectsError, setHubProjectsError] = useState("");
 
@@ -150,12 +146,6 @@ const CreateProject = () => {
         setSelectedHubProjectId(String(parsed.selectedHubProjectId));
       if (typeof parsed.projectDescription === "string")
         setProjectDescription(parsed.projectDescription);
-      if (
-        user?.role === "admin" &&
-        parsed.selectedManager != null &&
-        parsed.selectedManager !== ""
-      )
-        setSelectedManager(String(parsed.selectedManager));
       if (Array.isArray(parsed.assignedUserEmailTags))
         setAssignedUserEmailTags(parsed.assignedUserEmailTags);
       if (Array.isArray(parsed.stakeholderEmailTags))
@@ -201,10 +191,6 @@ const CreateProject = () => {
             ? String(selectedHubProjectId)
             : "",
         projectDescription,
-        selectedManager:
-          user?.role === "admin" && selectedManager !== ""
-            ? String(selectedManager)
-            : "",
         assignedUserEmailTags,
         stakeholderEmailTags,
         startFromScratch,
@@ -234,31 +220,11 @@ const CreateProject = () => {
     oauthDraftSnapshot,
     selectedHubProjectId,
     projectDescription,
-    selectedManager,
     assignedUserEmailTags,
     stakeholderEmailTags,
     startFromScratch,
     scratchPrompt,
   ]);
-
-  // Load managers if admin
-  useEffect(() => {
-    if (user?.role === "admin") {
-      const loadManagers = async () => {
-        setManagersLoading(true);
-        try {
-          const data = await fetchManagers();
-          setManagers(data);
-        } catch (err) {
-          console.error("Failed to fetch managers:", err);
-          setError("Failed to load managers. Please refresh.");
-        } finally {
-          setManagersLoading(false);
-        }
-      };
-      loadManagers();
-    }
-  }, [user]);
 
   const loadIntegrations = async () => {
     setIntegrationsLoading(true);
@@ -296,9 +262,6 @@ const CreateProject = () => {
       if (typeof d.projectDescription === "string") {
         setProjectDescription(d.projectDescription);
       }
-      if (d.selectedManager != null && d.selectedManager !== "") {
-        setSelectedManager(d.selectedManager);
-      }
       if (Array.isArray(d.assignedUserEmailTags)) {
         setAssignedUserEmailTags(d.assignedUserEmailTags);
       }
@@ -328,7 +291,6 @@ const CreateProject = () => {
           savedAt: Date.now(),
           selectedHubProjectId,
           projectDescription,
-          selectedManager,
           assignedUserEmailTags,
           stakeholderEmailTags,
           startFromScratch,
@@ -341,7 +303,6 @@ const CreateProject = () => {
   }, [
     selectedHubProjectId,
     projectDescription,
-    selectedManager,
     assignedUserEmailTags,
     stakeholderEmailTags,
     startFromScratch,
@@ -400,9 +361,6 @@ const CreateProject = () => {
         errors.hubProject = "Project name must be between 3 and 100 characters";
       }
     }
-    if (user?.role === "admin" && !selectedManager)
-      errors.manager = "Manager is required";
-
     Object.assign(
       errors,
       gitJiraRef.current?.validateCreate?.(integrationsLoading) ?? {},
@@ -461,11 +419,6 @@ const CreateProject = () => {
           emailsArrayToStorageString(stakeholderEmailTags) || undefined,
       };
 
-      if (user?.role === "admin") {
-        projectData.assignedManagerId = parseInt(selectedManager);
-      } else {
-        projectData.assignedManagerId = user.id;
-      }
       if (startFromScratch) {
         projectData.isScratch = true;
         const sp =
@@ -529,8 +482,7 @@ const CreateProject = () => {
             )}
 
             <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
+              <div className="space-y-2">
                   <div className="flex items-center gap-1.5">
                     <Label htmlFor="hub-project">Select Project</Label>
                     <Tooltip>
@@ -598,53 +550,6 @@ const CreateProject = () => {
                       Fetching projects from Form hub...
                     </p>
                   )}
-                </div>
-                {user?.role === "admin" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="manager">Assigned Manager</Label>
-                    <Select
-                      value={selectedManager || undefined}
-                      onValueChange={(v) => setSelectedManager(String(v))}
-                      disabled={managersLoading}
-                    >
-                      <SelectTrigger
-                        className={
-                          validationErrors.manager
-                            ? "border-destructive w-full"
-                            : "w-full"
-                        }
-                      >
-                        <SelectValue
-                          placeholder={
-                            managersLoading
-                              ? "Loading managers..."
-                              : "Select a manager"
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {managers.map((manager) => (
-                          <SelectItem
-                            key={manager.id}
-                            value={manager.id.toString()}
-                          >
-                            {manager.name} ({manager.email})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {validationErrors.manager && (
-                      <p className="text-sm text-destructive mt-1">
-                        {validationErrors.manager}
-                      </p>
-                    )}
-                    {managersLoading && (
-                      <p className="text-xs text-muted-foreground">
-                        Fetching list of managers...
-                      </p>
-                    )}
-                  </div>
-                )}
               </div>
 
               <div className="space-y-2">
@@ -782,8 +687,7 @@ const CreateProject = () => {
             !createDraftBootstrapDone ||
             loading ||
             hubProjectsLoading ||
-            integrationsLoading ||
-            (user?.role === "admin" && managersLoading)
+            integrationsLoading
           }
           className="px-8"
         >

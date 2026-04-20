@@ -741,7 +741,6 @@ export async function startScratchAgentFromProjectService({ projectId, user, bod
 export const createProjectService = async ({ userId, body }) => {
   const {
     name,
-    assignedManagerId,
     jiraBaseUrl,
     jiraProjectKey,
     jiraUsername,
@@ -830,23 +829,6 @@ export const createProjectService = async ({ userId, body }) => {
         );
       }
     }
-
-    // 2. Assigned manager field (legacy FK): default to creator; must be an existing user
-    const effectiveAssignedManagerId =
-      assignedManagerId != null && String(assignedManagerId).trim() !== ""
-        ? Number(assignedManagerId)
-        : Number(userId);
-    if (
-      !Number.isInteger(effectiveAssignedManagerId) ||
-      effectiveAssignedManagerId < 1
-    ) {
-      throw new ApiError(400, "Invalid assigned manager");
-    }
-    const assigneeUser = await prisma.user.findUnique({
-      where: { id: effectiveAssignedManagerId },
-      select: { id: true },
-    });
-    if (!assigneeUser) throw new ApiError(400, "Assigned manager user not found");
 
     if (
       Number.isInteger(githubConnectionId) &&
@@ -1104,7 +1086,6 @@ export const createProjectService = async ({ userId, body }) => {
               ? body.description.trim() || null
               : null,
           slug,
-          assignedManagerId: effectiveAssignedManagerId,
           createdById: userId,
           githubUsername: bitbucketConnectionId ? null : effGithubUsername || null,
           githubToken:
@@ -1411,9 +1392,6 @@ export const getProjectByIdService = async (
     where,
     include: {
       createdBy: {
-        select: { id: true, name: true, email: true },
-      },
-      assignedManager: {
         select: { id: true, name: true, email: true },
       },
       versions: versionsQuery,
