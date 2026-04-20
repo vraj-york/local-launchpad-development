@@ -15,8 +15,6 @@ import {
   deleteGithubConnection,
   deleteBitbucketConnection,
   deleteJiraConnection,
-  deleteFigmaConnection,
-  completeFigmaOAuth,
   assertGithubConnectionRowForListing,
   assertBitbucketConnectionRowForListing,
   assertJiraConnectionRowForListing,
@@ -32,28 +30,11 @@ import {
   getCursorIntegrationStatus,
   syncCursorGithubPatForUser,
 } from "../services/cursorIntegration.service.js";
+import { figmaOAuthController } from "../controllers/figmaOAuth.controller.js";
 
 const router = express.Router();
 
 const FRONTEND = () => getPublicFrontendBaseUrl();
-
-/** Default Figma REST OAuth scopes (override with `FIGMA_OAUTH_SCOPES`). Space-separated. */
-const DEFAULT_FIGMA_OAUTH_SCOPES = [
-  "current_user:read",
-  "file_comments:read",
-  "file_comments:write",
-  "file_content:read",
-  "file_metadata:read",
-  "file_versions:read",
-  "library_assets:read",
-  "library_content:read",
-  "team_library_content:read",
-  "file_dev_resources:read",
-  "file_dev_resources:write",
-  "projects:read",
-  "webhooks:read",
-  "webhooks:write",
-].join(" ");
 
 function redirectWithError(res, provider, message, returnPath = null) {
   const q = new URLSearchParams({ provider, error: message.slice(0, 200) });
@@ -369,59 +350,10 @@ router.get("/jira/start", authenticateToken, (req, res) => {
 });
 
 /** GET /api/integrations/figma/start — JSON { url } or 302 redirect */
-router.get("/figma/start", authenticateToken, (req, res) => {
-  const clientId = process.env.FIGMA_OAUTH_CLIENT_ID;
-  const redirectUri = process.env.FIGMA_OAUTH_REDIRECT_URI;
-  if (!clientId || !redirectUri) {
-    res.status(503).json({ error: "Figma OAuth is not configured on the server" });
-    return;
-  }
-  const reconnectId = parseReconnectId(req.query);
-  const returnPath = parseReturnToQuery(req.query);
-  const state = signOAuthState(req.user.id, "figma", reconnectId, returnPath);
-  const scope = process.env.FIGMA_OAUTH_SCOPES?.trim() || DEFAULT_FIGMA_OAUTH_SCOPES;
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    scope,
-    state,
-    response_type: "code",
-  });
-  const url = `https://www.figma.com/oauth?${params.toString()}`;
-  if ((req.get("Accept") || "").includes("application/json")) {
-    res.json({ url });
-    return;
-  }
-  res.redirect(302, url);
-});
+router.get("/figma/start", authenticateToken, figmaOAuthController.start);
 
 /** GET /api/integrations/figma/callback */
-router.get("/figma/callback", async (req, res) => {
-  const code = typeof req.query.code === "string" ? req.query.code : "";
-  const state = typeof req.query.state === "string" ? req.query.state : "";
-  const err = typeof req.query.error === "string" ? req.query.error : "";
-  const rpErr = returnPathFromStateToken(state);
-  if (err) {
-    redirectWithError(res, "figma", err, rpErr);
-    return;
-  }
-  if (!code || !state) {
-    redirectWithError(res, "figma", "missing_code_or_state", rpErr);
-    return;
-  }
-  try {
-    const decoded = verifyOAuthState(state);
-    if (decoded.provider !== "figma") {
-      redirectWithError(res, "figma", "invalid_state", decoded.returnPath || null);
-      return;
-    }
-    await completeFigmaOAuth(code, state);
-    redirectOk(res, "figma", decoded.returnPath || null);
-  } catch (e) {
-    const rp = returnPathFromStateToken(state);
-    redirectWithError(res, "figma", e.message || "oauth_failed", rp);
-  }
-});
+router.get("/figma/callback", figmaOAuthController.callback);
 
 /** GET /api/integrations/jira/callback */
 router.get("/jira/callback", async (req, res) => {
@@ -507,13 +439,10 @@ router.delete("/jira/:connectionId", authenticateToken, async (req, res, next) =
   }
 });
 
-router.delete("/figma/:connectionId", authenticateToken, async (req, res, next) => {
-  try {
-    await deleteFigmaConnection(req.user.id, req.params.connectionId);
-    res.json({ ok: true });
-  } catch (e) {
-    next(e);
-  }
-});
+router.delete(
+  "/figma/:connectionId",
+  authenticateToken,
+  figmaOAuthController.deleteConnection,
+);
 
 export default router;

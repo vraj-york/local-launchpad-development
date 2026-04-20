@@ -4,6 +4,7 @@ import { encryptToken, decryptToken } from "../utils/tokenVault.js";
 import ApiError from "../utils/apiError.js";
 import { prisma } from "../lib/prisma.js";
 import { API_BASE_URLS, API_ENDPOINTS } from "../constants/contstants.js";
+import { getPublicFrontendBaseUrl } from "../utils/publicFrontendUrl.js";
 
 const EXPIRY_SKEW_MS = 60_000;
 
@@ -68,6 +69,139 @@ export function verifyOAuthState(token) {
       rcid != null && rcid !== "" && !Number.isNaN(Number(rcid)) ? Number(rcid) : null,
     returnPath: sanitizeOAuthReturnPath(payload.rp),
   };
+}
+
+/** @param {import("express").Request["query"]} query */
+export function parseOAuthReconnectIdFromQuery(query) {
+  const raw = query?.reconnectId ?? query?.reconnect_id;
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** @param {import("express").Request["query"]} query */
+export function parseOAuthReturnToFromQuery(query) {
+  const raw = query?.returnTo ?? query?.return_to;
+  if (raw == null || raw === "") return null;
+  return sanitizeOAuthReturnPath(raw);
+}
+
+function safeReturnPathFromOAuthState(state) {
+  if (!state) return null;
+  try {
+    return verifyOAuthState(state).returnPath || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * SPA integrations callback URL (same path for all providers).
+ * @param {string} provider
+ * @param {{ error?: string, ok?: boolean, returnPath?: string | null }} opts
+ */
+export function buildIntegrationsOAuthCallbackRedirectUrl(provider, opts = {}) {
+  const q = new URLSearchParams({ provider });
+  if (opts.ok) q.set("ok", "1");
+  if (opts.error != null && opts.error !== "") {
+    q.set("error", String(opts.error).slice(0, 200));
+  }
+  if (opts.returnPath) q.set("return_to", opts.returnPath);
+  return `${getPublicFrontendBaseUrl()}/integrations/callback?${q.toString()}`;
+}
+
+/** Default Figma REST OAuth scopes (override with `FIGMA_OAUTH_SCOPES`). Space-separated. */
+const DEFAULT_FIGMA_OAUTH_SCOPES = [
+  "current_user:read",
+  "file_comments:read",
+  "file_comments:write",
+  "file_content:read",
+  "file_metadata:read",
+  "file_versions:read",
+  "library_assets:read",
+  "library_content:read",
+  "team_library_content:read",
+  "file_dev_resources:read",
+  "file_dev_resources:write",
+  "projects:read",
+  "webhooks:read",
+  "webhooks:write",
+].join(" ");
+
+/**
+ * Build Figma authorize URL for GET /integrations/figma/start.
+ * @param {number} userId
+ * @param {import("express").Request["query"]} query
+ * @returns {{ ok: true, authorizeUrl: string } | { ok: false, status: number, clientMessage: string }}
+ */
+export function getFigmaOAuthStartResult(userId, query) {
+  const clientId = process.env.FIGMA_OAUTH_CLIENT_ID;
+  const redirectUri = process.env.FIGMA_OAUTH_REDIRECT_URI;
+  if (!clientId || !redirectUri) {
+    return {
+      ok: false,
+      status: 503,
+      clientMessage: "Figma OAuth is not configured on the server",
+    };
+  }
+  const reconnectId = parseOAuthReconnectIdFromQuery(query);
+  const returnPath = parseOAuthReturnToFromQuery(query);
+  const state = signOAuthState(userId, "figma", reconnectId, returnPath);
+  const scope = process.env.FIGMA_OAUTH_SCOPES?.trim() || DEFAULT_FIGMA_OAUTH_SCOPES;
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope,
+    state,
+    response_type: "code",
+  });
+  const authorizeUrl = `https://www.figma.com/oauth?${params.toString()}`;
+  return { ok: true, authorizeUrl };
+}
+
+/**
+ * Run Figma OAuth callback logic and return the frontend callback redirect URL.
+ * @param {import("express").Request["query"]} query
+ * @returns {Promise<string>}
+ */
+export async function completeFigmaOAuthCallbackRedirect(query) {
+  const code = typeof query.code === "string" ? query.code : "";
+  const state = typeof query.state === "string" ? query.state : "";
+  const oauthError = typeof query.error === "string" ? query.error : "";
+  const returnPathOnError = safeReturnPathFromOAuthState(state);
+
+  if (oauthError) {
+    return buildIntegrationsOAuthCallbackRedirectUrl("figma", {
+      error: oauthError,
+      returnPath: returnPathOnError,
+    });
+  }
+  if (!code || !state) {
+    return buildIntegrationsOAuthCallbackRedirectUrl("figma", {
+      error: "missing_code_or_state",
+      returnPath: returnPathOnError,
+    });
+  }
+  try {
+    const decoded = verifyOAuthState(state);
+    if (decoded.provider !== "figma") {
+      return buildIntegrationsOAuthCallbackRedirectUrl("figma", {
+        error: "invalid_state",
+        returnPath: decoded.returnPath || null,
+      });
+    }
+    await completeFigmaOAuth(code, state);
+    return buildIntegrationsOAuthCallbackRedirectUrl("figma", {
+      ok: true,
+      returnPath: decoded.returnPath || null,
+    });
+  } catch (e) {
+    const rp = safeReturnPathFromOAuthState(state);
+    return buildIntegrationsOAuthCallbackRedirectUrl("figma", {
+      error: e?.message || "oauth_failed",
+      returnPath: rp,
+    });
+  }
 }
 
 function tokenExpiryDate(expiresInSec) {
