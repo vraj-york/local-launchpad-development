@@ -121,6 +121,14 @@ export async function getDb(): Promise<Database> {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS figma_credentials (
+      email_normalized TEXT PRIMARY KEY NOT NULL,
+      figma_token_encrypted TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS followup_queue (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       agent_id TEXT NOT NULL,

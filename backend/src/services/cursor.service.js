@@ -30,6 +30,7 @@ import ApiError from "../utils/apiError.js";
 import { resolveScmCredentialsFromProject } from "./integrationCredential.service.js";
 import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 import { API_BASE_URLS } from "../constants/contstants.js";
+import { ensureFreshFigmaConnection } from "./oauthConnection.service.js";
 
 /** Cursor Cloud / cursor-cloud-agent base (e.g. `http://cursor-cloud-agent:3100` in Docker). */
 const CURSOR_BASE_URL = String(process.env.CURSOR_BASE_URL ?? "").trim();
@@ -80,6 +81,23 @@ const ENV_GITHUB_USERNAME = process.env.GITHUB_USERNAME;
 
 /** Matches cursor-cloud-agent JSON when no PAT is stored for `?email=`. */
 const CURSOR_CLOUD_GITHUB_PAT_ERROR_CODE = "GITHUB_PAT_NOT_CONFIGURED";
+
+function redactEmailForLog(email) {
+  const e = String(email ?? "").trim();
+  if (!e) return "(none)";
+  const at = e.indexOf("@");
+  if (at < 1) return "***";
+  const local = e.slice(0, at);
+  const domain = e.slice(at + 1);
+  const u = local.length <= 1 ? "*" : `${local[0]}***`;
+  return `${u}@${domain}`;
+}
+
+function tokenPreviewForLog(token) {
+  const t = String(token ?? "").trim();
+  if (!t) return "(empty)";
+  return t.length <= 4 ? `${t}…` : `${t.slice(0, 4)}…`;
+}
 
 /**
  * @param {number | null | undefined} projectId
@@ -155,12 +173,217 @@ async function registerGithubPatWithCursorCloudAgent(project) {
   }
 }
 
+const PROJECT_SELECT_FOR_SCM_PUSH = {
+  id: true,
+  createdById: true,
+  githubConnectionId: true,
+  bitbucketConnectionId: true,
+  githubUsername: true,
+  githubToken: true,
+  bitbucketUsername: true,
+  bitbucketToken: true,
+};
+
+/**
+ * Push project creator's GitHub token to cursor-cloud-agent before agent calls (non-fatal; mirrors Figma).
+ * Skips non-GitHub projects and missing/invalid SCM without blocking the Cursor request.
+ * @param {number} projectId
+ */
+async function registerGithubPatWithCursorCloudAgentBestEffort(projectId) {
+  const pid = Number(projectId);
+  if (!Number.isInteger(pid) || pid < 1) return;
+
+  if (!String(CURSOR_BASE_URL ?? "").trim() || !process.env.CURSOR_API_KEY?.trim()) {
+    return;
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id: pid },
+    select: PROJECT_SELECT_FOR_SCM_PUSH,
+  });
+  if (!project) return;
+
+  let scm;
+  try {
+    scm = await resolveScmCredentialsFromProject(project);
+  } catch (e) {
+    console.warn("[cursor] github MCP: could not resolve SCM for cloud agent PAT push (non-fatal)", {
+      projectId: pid,
+      userId: project.createdById,
+      message: e?.message || String(e),
+    });
+    return;
+  }
+
+  if (scm.provider !== "github") {
+    console.warn(
+      "[cursor] github MCP: project uses non-GitHub SCM (skipping cloud agent PAT push)",
+      { projectId: pid, userId: project.createdById, provider: scm.provider },
+    );
+    return;
+  }
+
+  const token = scm.token?.trim() || "";
+  if (!token) {
+    console.warn("[cursor] github MCP: empty GitHub token (skipping cloud agent PAT push)", {
+      projectId: pid,
+      userId: project.createdById,
+    });
+    return;
+  }
+
+  try {
+    await registerGithubPatWithCursorCloudAgent(project);
+    const user = await prisma.user.findUnique({
+      where: { id: project.createdById },
+      select: { id: true, email: true },
+    });
+    console.log("[cursor] github MCP: pushed PAT for cloud agent", {
+      projectId: pid,
+      userId: user?.id ?? project.createdById,
+      emailRedacted: redactEmailForLog(user?.email),
+      tokenPreview: tokenPreviewForLog(token),
+    });
+  } catch (e) {
+    console.warn("[cursor] github MCP: push to cloud agent failed (non-fatal)", {
+      projectId: pid,
+      userId: project.createdById,
+      message: e?.message || String(e),
+    });
+  }
+}
+
+/**
+ * Push project creator's Figma OAuth access token to cursor-cloud-agent (non-fatal on missing row or errors).
+ * @param {number} projectId
+ */
+async function registerFigmaTokenWithCursorCloudAgent(projectId) {
+  const pid = Number(projectId);
+  if (!Number.isInteger(pid) || pid < 1) return;
+
+  if (!String(CURSOR_BASE_URL ?? "").trim() || !process.env.CURSOR_API_KEY?.trim()) {
+    return;
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id: pid },
+    select: { id: true, createdById: true },
+  });
+  if (!project) return;
+
+  const row = await prisma.userOAuthConnection.findFirst({
+    where: { userId: project.createdById, provider: "figma" },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (!row) {
+    console.warn(
+      "[cursor] figma MCP: no Figma OAuth row for project creator (skipping cloud agent token push)",
+      { projectId: pid, userId: project.createdById },
+    );
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: project.createdById },
+    select: { id: true, email: true },
+  });
+  const email = user?.email?.trim();
+  if (!email) {
+    console.warn("[cursor] figma MCP: creator email missing (skipping)", {
+      projectId: pid,
+      userId: project.createdById,
+    });
+    return;
+  }
+
+  let accessToken = "";
+  let figmaUserId = row.figmaUserId ?? null;
+  try {
+    const fresh = await ensureFreshFigmaConnection(row);
+    accessToken = fresh.accessToken?.trim() || "";
+    figmaUserId = fresh.figmaUserId ?? figmaUserId;
+  } catch (e) {
+    console.warn("[cursor] figma MCP: could not refresh Figma token (non-fatal)", {
+      projectId: pid,
+      userId: project.createdById,
+      emailRedacted: redactEmailForLog(email),
+      message: e?.message || String(e),
+    });
+    return;
+  }
+
+  if (!accessToken) {
+    console.warn("[cursor] figma MCP: empty access token after refresh (non-fatal)", {
+      projectId: pid,
+      userId: project.createdById,
+      emailRedacted: redactEmailForLog(email),
+    });
+    return;
+  }
+
+  try {
+    const { status, data } = await cursorRequest({
+      method: "POST",
+      path: "/v0/credentials/figma",
+      query: { email },
+      body: { figmaAccessToken: accessToken },
+    });
+    if (status < 200 || status >= 300) {
+      const msg =
+        data && typeof data === "object" && data.error
+          ? String(data.error)
+          : `HTTP ${status}`;
+      console.warn("[cursor] figma MCP: cloud agent rejected token push (non-fatal)", {
+        projectId: pid,
+        userId: user.id,
+        emailRedacted: redactEmailForLog(email),
+        message: msg,
+      });
+      return;
+    }
+    console.log("[cursor] figma MCP: pushed token for cloud agent", {
+      projectId: pid,
+      userId: user.id,
+      emailRedacted: redactEmailForLog(email),
+      figmaUserId: figmaUserId ?? undefined,
+      tokenPreview: tokenPreviewForLog(accessToken),
+    });
+  } catch (e) {
+    console.warn("[cursor] figma MCP: push to cloud agent failed (non-fatal)", {
+      projectId: pid,
+      userId: user.id,
+      emailRedacted: redactEmailForLog(email),
+      message: e?.message || String(e),
+    });
+  }
+}
+
 /**
  * On GITHUB_PAT_NOT_CONFIGURED, push OAuth token from the project then retry once.
  * @param {{ method: string, path: string, body?: object, projectId?: number|null }} options
  */
 async function cursorRequestWithProjectAndPatRetry(options) {
   const { method, path, body, projectId } = options;
+
+  if (projectId != null) {
+    try {
+      await registerFigmaTokenWithCursorCloudAgent(projectId);
+    } catch (e) {
+      console.warn("[cursor] figma MCP: registerFigmaTokenWithCursorCloudAgent failed (non-fatal)", {
+        projectId,
+        message: e?.message || String(e),
+      });
+    }
+    try {
+      await registerGithubPatWithCursorCloudAgentBestEffort(projectId);
+    } catch (e) {
+      console.warn(
+        "[cursor] github MCP: registerGithubPatWithCursorCloudAgentBestEffort failed (non-fatal)",
+        { projectId, message: e?.message || String(e) },
+      );
+    }
+  }
+
   const query = await getCreatorEmailQueryForProject(projectId);
   let result = await cursorRequest({ method, path, body, query });
   if (!responseIndicatesGithubPatNotConfigured(result.status, result.data) || projectId == null) {
@@ -168,16 +391,7 @@ async function cursorRequestWithProjectAndPatRetry(options) {
   }
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: {
-      id: true,
-      createdById: true,
-      githubConnectionId: true,
-      bitbucketConnectionId: true,
-      githubUsername: true,
-      githubToken: true,
-      bitbucketUsername: true,
-      bitbucketToken: true,
-    },
+    select: PROJECT_SELECT_FOR_SCM_PUSH,
   });
   if (!project) {
     return result;
@@ -453,7 +667,13 @@ export function isCursorAgentSuccessTerminal(status) {
 export function isCursorAgentFailureTerminal(status) {
   if (status == null || status === "") return false;
   const u = String(status).trim().toUpperCase().replace(/\s+/g, "_");
-  if (u === "FAILED" || u === "ERROR" || u === "CANCELLED" || u === "CANCELED")
+  if (
+    u === "FAILED" ||
+    u === "ERROR" ||
+    u === "CANCELLED" ||
+    u === "CANCELED" ||
+    u === "STOPPED"
+  )
     return true;
   return u.includes("FAIL");
 }

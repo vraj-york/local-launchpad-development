@@ -261,7 +261,7 @@ export const fetchManagers = async () => {
   }
 };
 
-/** OAuth / integrations (GitHub, Bitbucket, Jira) — Bearer required via api interceptor */
+/** OAuth / integrations (GitHub, Bitbucket, Jira, Figma) — Bearer required via api interceptor */
 export const fetchIntegrationsStatus = async () => {
   const { data } = await api.get("/api/integrations/status");
   return data;
@@ -352,6 +352,27 @@ export const disconnectBitbucketIntegration = async (connectionId) => {
 
 export const disconnectJiraIntegration = async (connectionId) => {
   await api.delete(`/api/integrations/jira/${connectionId}`);
+};
+
+export const getFigmaOAuthAuthorizeUrl = async (
+  reconnectConnectionId,
+  { returnTo } = {},
+) => {
+  const params = {};
+  if (reconnectConnectionId != null && reconnectConnectionId !== "") {
+    params.reconnectId = reconnectConnectionId;
+  }
+  if (returnTo) params.returnTo = returnTo;
+  const { data } = await api.get("/api/integrations/figma/start", {
+    params,
+    headers: { Accept: "application/json" },
+  });
+  if (!data?.url) throw new Error("Figma OAuth is not available");
+  return data.url;
+};
+
+export const disconnectFigmaIntegration = async (connectionId) => {
+  await api.delete(`/api/integrations/figma/${connectionId}`);
 };
 
 /** Paginated GitHub repos visible to the OAuth connection (affiliation owner/collaborator/org member). */

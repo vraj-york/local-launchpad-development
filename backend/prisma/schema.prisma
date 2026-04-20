@@ -30,6 +30,7 @@ enum OAuthProvider {
   github
   jira_atlassian
   bitbucket
+  figma
 }
 
 /// Multiple OAuth connections per user per provider; projects pick a specific connection id.
@@ -49,6 +50,12 @@ model UserOAuthConnection {
   jiraBaseUrl            String?
   atlassianAccountEmail  String?
   atlassianCloudId       String?
+  /// Figma REST API user id (`user_id_string` from token response); use string, not JS Number.
+  figmaUserId            String?
+  /// Figma display name from `GET /v1/me` (`handle`).
+  figmaHandle            String?
+  /// Figma account email from `GET /v1/me` (only present on that endpoint).
+  figmaEmail             String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -60,6 +67,7 @@ model UserOAuthConnection {
 
   @@index([userId])
   @@index([userId, provider])
+  @@index([userId, figmaUserId])
 }
 
 model Project {

@@ -13,6 +13,12 @@ https://github.com/user-attachments/assets/6b2284fd-0e3d-46c9-ae63-86bbd672ad72
 
 When using the Cloud Agents–compatible HTTP API, set **`CLOUD_API_KEY_ENCRYPTION_SECRET`** in the environment to a long random string. The server uses it to encrypt stored Cursor API keys and to scope list/detail/conversation responses to the same key you send in `Authorization`.
 
+**Figma MCP credentials:** Launchpad can push each **project creator’s** Figma OAuth access token to `POST /v0/credentials/figma?email=…` (same normalized email as GitHub). The agent injects that value into the ephemeral clone `.cursor/mcp.json` as **`FIGMA_API_KEY`** for `${env:FIGMA_API_KEY}` placeholders. A **`FIGMA_API_KEY`** environment variable on the cloud-agent process remains an optional fallback for local development when no token was stored for that email.
+
+**GitHub PAT:** On project-scoped Cursor agent API calls, Launchpad also pushes the project creator’s GitHub token to `POST /v0/credentials/github?email=…` before the agent runs, so Integrations “sync GitHub PAT” is not required for those flows (it remains useful to pre-register the PAT without a project context).
+
+**Stop agent:** `POST /v0/agents/{id}/stop?email=` (same auth and email query as other v0 agent routes) sends `SIGTERM` to the running `agent` CLI for that id, sets status to `STOPPED`, and returns `{ "id" }`. The agent row is not deleted.
+
 **Auth header:** `Authorization: Basic base64(<KEY>:)` (empty password), e.g. `curl -u "$KEY:"`, **or** `Authorization: Bearer <KEY>`. Cross-origin browser calls use a CORS preflight (`OPTIONS`); those requests do not include `Authorization`, so the server answers `OPTIONS` without auth and attaches CORS headers on v0 responses.
 
 ## Good to know

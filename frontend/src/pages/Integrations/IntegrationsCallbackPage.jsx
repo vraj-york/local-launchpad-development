@@ -42,7 +42,9 @@ const IntegrationsCallbackPage = () => {
           ? "Bitbucket"
           : provider === "jira"
             ? "Jira"
-            : "Integration";
+            : provider === "figma"
+              ? "Figma"
+              : "Integration";
     if (err) {
       toast.error(`${label}: ${decodeURIComponent(err)}`);
     } else if (ok === "1") {
@@ -51,7 +53,7 @@ const IntegrationsCallbackPage = () => {
 
     if (!user) {
       toast.error(
-        "Session not found — log in again, then retry connecting GitHub, Bitbucket, or Jira.",
+        "Session not found — log in again, then retry connecting GitHub, Bitbucket, Jira, or Figma.",
       );
       navigate("/login", { replace: true });
       return;
