@@ -55,13 +55,16 @@ export const releaseController = {
      */
     lock: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
-        const { locked } = req.body;
+        const { locked, developerSubmodulePath, developerAgentRef } = req.body || {};
 
         if (typeof locked !== 'boolean') {
             return res.status(400).json({ error: "Invalid 'locked' parameter. Must be true or false." });
         }
 
-        const release = await lockReleaseService(releaseId, locked, req.user);
+        const release = await lockReleaseService(releaseId, locked, req.user, {
+            developerSubmodulePath,
+            developerAgentRef,
+        });
 
         res.json({
             message: "Release locked successfully",
@@ -86,6 +89,8 @@ export const releaseController = {
         const { status } = req.body;
         const release = await setReleaseStatusService(releaseId, status, req.user, {
             reason: req.body?.reason,
+            developerSubmodulePath: req.body?.developerSubmodulePath,
+            developerAgentRef: req.body?.developerAgentRef,
         });
         res.json({
             message: `Release status set to ${release.status}`,
@@ -122,8 +127,11 @@ export const releaseController = {
      */
     publicLock: asyncHandler(async (req, res) => {
         const releaseId = parseInt(req.params.id, 10);
-        const { lockedBy } = req.body || {};
-        const result = await publicLockReleaseService(releaseId, lockedBy);
+        const { lockedBy, developerSubmodulePath, developerAgentRef } = req.body || {};
+        const result = await publicLockReleaseService(releaseId, lockedBy, {
+            developerSubmodulePath,
+            developerAgentRef,
+        });
         res.json(result);
     }),
 

@@ -31,6 +31,13 @@ import { SelectClientLinkVersion } from "./components/SelectClientLinkVersion";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
@@ -69,11 +76,18 @@ const PREVIEW_MOBILE_W = 390;
 const PREVIEW_TABLET_W = 820;
 const PREVIEW_MIN_W = 320;
 
+const DEFAULT_LOCK_DEVELOPER_SUBMODULE_PATH = "launchpad-frontend";
+
 export const ClientLink = () => {
   const [publicProject, setPublicProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
   const [lockConfirmOpen, setLockConfirmOpen] = useState(false);
+  const [lockDeveloperSubmodulePath, setLockDeveloperSubmodulePath] = useState(
+    DEFAULT_LOCK_DEVELOPER_SUBMODULE_PATH,
+  );
+  const [lockAgentRefPreset, setLockAgentRefPreset] = useState("default");
+  const [lockAgentRefCustom, setLockAgentRefCustom] = useState("");
   const [lockEmail, setLockEmail] = useState("");
   const [previewBuildUrl, setPreviewBuildUrl] = useState(null);
   const [previewContextReleaseId, setPreviewContextReleaseId] = useState(null);
@@ -251,7 +265,12 @@ export const ClientLink = () => {
   useEffect(() => {
     if (!lockConfirmOpen) return;
     setLockEmail(getClientLinkVerifiedEmail());
+    setLockDeveloperSubmodulePath(DEFAULT_LOCK_DEVELOPER_SUBMODULE_PATH);
+    setLockAgentRefPreset("default");
+    setLockAgentRefCustom("");
   }, [lockConfirmOpen]);
+
+  const hasDevelopmentRepo = Boolean(publicProject?.hasDevelopmentRepo);
 
   const lockEmailValid = React.useMemo(() => {
     return isPlausibleClientLinkEmail(lockEmail);
@@ -310,7 +329,21 @@ export const ClientLink = () => {
     }
     try {
       setLocking(true);
-      const res = await publicLockRelease(selectedReleaseId, email);
+      const lockOpts = {};
+      if (hasDevelopmentRepo) {
+        lockOpts.developerSubmodulePath =
+          (lockDeveloperSubmodulePath || "").trim() ||
+          DEFAULT_LOCK_DEVELOPER_SUBMODULE_PATH;
+        let developerAgentRef;
+        if (lockAgentRefPreset === "custom") {
+          const c = (lockAgentRefCustom || "").trim();
+          if (c) developerAgentRef = c;
+        } else if (lockAgentRefPreset !== "default") {
+          developerAgentRef = lockAgentRefPreset;
+        }
+        if (developerAgentRef) lockOpts.developerAgentRef = developerAgentRef;
+      }
+      const res = await publicLockRelease(selectedReleaseId, email, lockOpts);
       setClientLinkVerifiedEmail(email);
       setLockConfirmOpen(false);
       toast.success(res?.message ?? "Release locked successfully");
@@ -320,7 +353,15 @@ export const ClientLink = () => {
     } finally {
       setLocking(false);
     }
-  }, [selectedReleaseId, loadProject, lockEmail]);
+  }, [
+    selectedReleaseId,
+    loadProject,
+    lockEmail,
+    hasDevelopmentRepo,
+    lockDeveloperSubmodulePath,
+    lockAgentRefPreset,
+    lockAgentRefCustom,
+  ]);
 
   const rawBuildUrl =
     publicProject?.versions?.find(
@@ -1013,7 +1054,7 @@ export const ClientLink = () => {
           <DialogHeader>
             <DialogTitle>Lock this release?</DialogTitle>
             <DialogDescription>
-              Once this release is locked, it cannot be unlock. Are you sure you
+              Once this release is locked, it cannot be unlocked. Are you sure you
               want to lock it?
             </DialogDescription>
           </DialogHeader>
@@ -1032,6 +1073,70 @@ export const ClientLink = () => {
               disabled={locking}
               className="rounded-lg border-slate-200 focus-visible:ring-emerald-500/30"
             />
+            {hasDevelopmentRepo ? (
+              <div className="mt-3 space-y-3 border-t border-slate-200 pt-3">
+                <p className="text-xs text-slate-600">
+                  Optional: platform submodule path under the developer repo and git
+                  ref for the post-lock Cursor agent. Leave the ref on the default to
+                  use the repository&apos;s default branch.
+                </p>
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="client-link-lock-submodule"
+                    className="text-slate-700"
+                  >
+                    Submodule path (repo-relative)
+                  </Label>
+                  <Input
+                    id="client-link-lock-submodule"
+                    placeholder={DEFAULT_LOCK_DEVELOPER_SUBMODULE_PATH}
+                    value={lockDeveloperSubmodulePath}
+                    onChange={(e) => setLockDeveloperSubmodulePath(e.target.value)}
+                    disabled={locking}
+                    className="rounded-lg border-slate-200 focus-visible:ring-emerald-500/30 transition-all duration-200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="client-link-lock-agent-ref"
+                    className="text-slate-700"
+                  >
+                    Cursor agent branch / tag
+                  </Label>
+                  <Select
+                    value={lockAgentRefPreset}
+                    onValueChange={setLockAgentRefPreset}
+                    disabled={locking}
+                  >
+                    <SelectTrigger
+                      id="client-link-lock-agent-ref"
+                      className="w-full rounded-lg border-slate-200 transition-all duration-200"
+                    >
+                      <SelectValue placeholder="Default branch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">
+                        Default (GitHub default branch)
+                      </SelectItem>
+                      <SelectItem value="main">main</SelectItem>
+                      <SelectItem value="master">master</SelectItem>
+                      <SelectItem value="develop">develop</SelectItem>
+                      <SelectItem value="custom">Custom…</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {lockAgentRefPreset === "custom" ? (
+                    <Input
+                      id="client-link-lock-agent-ref-custom"
+                      placeholder="e.g. release/1.2 or v1.0.0"
+                      value={lockAgentRefCustom}
+                      onChange={(e) => setLockAgentRefCustom(e.target.value)}
+                      disabled={locking}
+                      className="rounded-lg border-slate-200 focus-visible:ring-emerald-500/30 transition-all duration-200"
+                    />
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
           <DialogFooter showCloseButton={false}>
             <Button

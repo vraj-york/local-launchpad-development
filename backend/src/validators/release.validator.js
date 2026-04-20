@@ -146,6 +146,16 @@ export const setReleaseStatusValidation = [
     .optional({ nullable: true })
     .isString()
     .withMessage("reason must be a string"),
+  body("developerSubmodulePath")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 200 })
+    .withMessage("developerSubmodulePath must be a string at most 200 characters"),
+  body("developerAgentRef")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 255 })
+    .withMessage("developerAgentRef must be a string at most 255 characters"),
 ];
 
 export const lockReleaseValidation = [
@@ -156,6 +166,16 @@ export const lockReleaseValidation = [
     .exists()
     .isBoolean()
     .withMessage("locked must be a boolean"),
+  body("developerSubmodulePath")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 200 })
+    .withMessage("developerSubmodulePath must be a string at most 200 characters"),
+  body("developerAgentRef")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 255 })
+    .withMessage("developerAgentRef must be a string at most 255 characters"),
 ];
 
 export const publicLockReleaseValidation = [
@@ -166,6 +186,16 @@ export const publicLockReleaseValidation = [
     .trim()
     .notEmpty()
     .withMessage("lockedBy email is required"),
+  body("developerSubmodulePath")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 200 })
+    .withMessage("developerSubmodulePath must be a string at most 200 characters"),
+  body("developerAgentRef")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 255 })
+    .withMessage("developerAgentRef must be a string at most 255 characters"),
 ];
 
 export const releaseChangelogParamValidation = [

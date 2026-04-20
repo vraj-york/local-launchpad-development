@@ -31,6 +31,7 @@ import { resolveScmCredentialsFromProject } from "./integrationCredential.servic
 import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 import { API_BASE_URLS } from "../constants/contstants.js";
 import { ensureFreshFigmaConnection } from "./oauthConnection.service.js";
+import { LAUNCHPAD_FRONTEND_SUBMODULE_PATH } from "./developerRepoSubmodule.service.js";
 
 /** Cursor Cloud / cursor-cloud-agent base (e.g. `http://cursor-cloud-agent:3100` in Docker). */
 const CURSOR_BASE_URL = String(process.env.CURSOR_BASE_URL ?? "").trim();
@@ -678,10 +679,16 @@ export function isCursorAgentFailureTerminal(status) {
   return u.includes("FAIL");
 }
 
-function buildBackendPlanPrompt(projectVersionId, releaseId) {
+/**
+ * @param {{ submodulePath?: string }} [opts] — relative path to platform submodule in dev repo (default launchpad-frontend)
+ */
+function buildBackendPlanPrompt(projectVersionId, releaseId, opts = {}) {
+  const raw = (opts.submodulePath || LAUNCHPAD_FRONTEND_SUBMODULE_PATH).trim().replace(/^\/+|\/+$/g, "");
+  const sub = raw || LAUNCHPAD_FRONTEND_SUBMODULE_PATH;
+  const subSlash = sub.endsWith("/") ? sub : `${sub}/`;
   return (
-    "You are working in the developer integration repository, which includes the Launchpad platform UI as a git submodule at launchpad-frontend/.\n\n" +
-    "Use launchpad-frontend/ as the reference for Launchpad patterns and behavior. Compare launchpad-frontend/ with Frontend/ in this repository (for example using git diff or an equivalent approach) and apply the necessary changes under the Frontend/ folder so it aligns with or correctly reflects patterns from the submodule.\n\n" +
+    `You are working in the developer integration repository, which includes the Launchpad platform UI as a git submodule at ${subSlash}.\n\n` +
+    `Use ${subSlash} as the reference for Launchpad patterns and behavior. Compare ${subSlash} with Frontend/ in this repository (for example using git diff or an equivalent approach) and apply the necessary changes under the Frontend/ folder so it aligns with or correctly reflects patterns from the submodule.\n\n` +
     `Create a Plan named backend-v${projectVersionId}-release${releaseId}.md in the backend/plan (or equivalent) folder at the repository root that documents how to implement or connect a backend that supports this Frontend: APIs, data contracts, auth or session notes if relevant, deployment considerations, and concrete integration steps.`
   );
 }
@@ -761,13 +768,24 @@ export async function startReleaseBackendPlanAgent({
       await markFailed();
       return;
     }
+
+    const releaseLockRow = await prisma.release.findUnique({
+      where: { id: releaseId },
+      select: { developerSubmodulePath: true, developerAgentRef: true },
+    });
+    const submodulePathForPrompt =
+      releaseLockRow?.developerSubmodulePath?.trim() || LAUNCHPAD_FRONTEND_SUBMODULE_PATH;
+    const explicitAgentRef = releaseLockRow?.developerAgentRef?.trim();
     const refBranch =
+      explicitAgentRef ||
       (meta.defaultBranch && String(meta.defaultBranch).trim()) ||
       (typeof CURSOR_AGENT_SOURCE_REF_ENV === "string" && CURSOR_AGENT_SOURCE_REF_ENV.trim()
         ? CURSOR_AGENT_SOURCE_REF_ENV.trim()
         : "main");
 
-    const promptText = buildBackendPlanPrompt(projectVersionId, releaseId);
+    const promptText = buildBackendPlanPrompt(projectVersionId, releaseId, {
+      submodulePath: submodulePathForPrompt,
+    });
 
     const { data } = await cursorRequestWithProjectAndPatRetry({
       method: "POST",

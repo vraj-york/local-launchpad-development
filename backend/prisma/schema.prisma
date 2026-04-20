@@ -246,6 +246,10 @@ model Release {
   backendAgentId     String?
   /// Last known Cursor agent status for backend plan (polled server-side).
   backendAgentStatus String?
+  /// Relative path in developer repo where platform submodule was placed at lock (default launchpad-frontend).
+  developerSubmodulePath String?
+  /// Git ref on developer repo for post-lock Cursor agent `source.ref` when set at lock; null uses default-branch/env/main resolution.
+  developerAgentRef String?
 
   createdBy   Int
   createdAt   DateTime @default(now())

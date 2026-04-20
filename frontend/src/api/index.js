@@ -525,22 +525,28 @@ export const createRelease = async (releaseData) => {
 };
 
 // Function to lock/unlock a release
-export const toggleReleaseLock = async (releaseId, locked) => {
+export const toggleReleaseLock = async (releaseId, locked, options = {}) => {
   try {
-    const response = await api.post(`/api/releases/${releaseId}/lock`, {
-      locked,
-    });
+    const body = { locked, ...options };
+    if (body.developerSubmodulePath === undefined) delete body.developerSubmodulePath;
+    if (body.developerAgentRef === undefined || body.developerAgentRef === "") {
+      delete body.developerAgentRef;
+    }
+    const response = await api.post(`/api/releases/${releaseId}/lock`, body);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to toggle release lock" };
   }
 };
 
-export const publicLockRelease = async (releaseId, lockedBy) => {
+export const publicLockRelease = async (releaseId, lockedBy, options = {}) => {
   try {
-    const response = await api.post(`/api/releases/${releaseId}/public-lock`, {
-      lockedBy,
-    });
+    const body = { lockedBy, ...options };
+    if (body.developerSubmodulePath === undefined) delete body.developerSubmodulePath;
+    if (body.developerAgentRef === undefined || body.developerAgentRef === "") {
+      delete body.developerAgentRef;
+    }
+    const response = await api.post(`/api/releases/${releaseId}/public-lock`, body);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to lock release" };
@@ -1007,13 +1013,32 @@ export const fetchExternalHubProjects = async () => {
   }
 };
 
-/** Set release lifecycle status: draft | active | locked */
-export const updateReleaseStatus = async (releaseId, status, reason) => {
+/**
+ * Set release lifecycle status: draft | active | locked | skip.
+ * @param {number|string} releaseId
+ * @param {string} status
+ * @param {string|{ reason?: string, developerSubmodulePath?: string, developerAgentRef?: string }} [reasonOrOptions] — string reason for non-lock transitions; object when locking with optional dev-repo fields
+ */
+export const updateReleaseStatus = async (releaseId, status, reasonOrOptions = "") => {
   try {
-    const response = await api.patch(`/api/releases/${releaseId}/status`, {
-      status,
-      reason: reason ?? "",
-    });
+    const body = { status };
+    if (typeof reasonOrOptions === "string") {
+      body.reason = reasonOrOptions;
+    } else if (reasonOrOptions && typeof reasonOrOptions === "object") {
+      body.reason = reasonOrOptions.reason ?? "";
+      if (reasonOrOptions.developerSubmodulePath != null) {
+        body.developerSubmodulePath = reasonOrOptions.developerSubmodulePath;
+      }
+      if (
+        reasonOrOptions.developerAgentRef != null &&
+        String(reasonOrOptions.developerAgentRef).trim() !== ""
+      ) {
+        body.developerAgentRef = String(reasonOrOptions.developerAgentRef).trim();
+      }
+    } else {
+      body.reason = "";
+    }
+    const response = await api.patch(`/api/releases/${releaseId}/status`, body);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to update release status" };

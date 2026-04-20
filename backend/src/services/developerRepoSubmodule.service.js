@@ -19,8 +19,11 @@ import {
 } from "../utils/developerRepoGit.util.js";
 import { API_BASE_URLS } from "../constants/contstants.js";
 
-/** Fixed submodule path inside the developer repository (git submodule path / folder name). */
-const LAUNCHPAD_FRONTEND_SUBMODULE_PATH = "launchpad-frontend";
+/** Default submodule path inside the developer repository (git submodule path / folder name). */
+export const LAUNCHPAD_FRONTEND_SUBMODULE_PATH = "launchpad-frontend";
+
+const MAX_DEVELOPER_SUBMODULE_PATH_LEN = 200;
+const MAX_DEVELOPER_AGENT_REF_LEN = 255;
 
 function parentSubmoduleCommitMessage() {
   const custom = (process.env.DEVELOPER_SUBMODULE_PARENT_COMMIT_MESSAGE || "").trim();
@@ -34,25 +37,24 @@ function looksLikeFullSha(s) {
 }
 
 /**
- * Resolve tag/branch/sha to a commit SHA on the platform GitHub repo using the REST API.
- * Avoids `git ls-remote`, which in headless/Docker often ignores url.insteadOf and embedded credentials
- * and then fails with "terminal prompts disabled".
- * @param {{ owner: string, repo: string }} srcParsed
+ * Resolve tag/branch/sha to a commit SHA on a GitHub repo using the REST API.
+ * @param {{ owner: string, repo: string }} repoParsed
+ * @param {string} notFoundLabel — e.g. "platform" or "developer" (for error messages)
  */
-async function resolvePlatformRefToCommitSha(srcParsed, gitTagRef, token) {
+async function resolveGithubRefToCommitSha(repoParsed, gitTagRef, token, notFoundLabel) {
   const ref = String(gitTagRef).trim();
   if (!ref) {
-    throw new ApiError(400, "Active version has an empty git tag / ref.");
+    throw new ApiError(400, "Ref is empty.");
   }
   if (looksLikeFullSha(ref)) {
     return ref.toLowerCase();
   }
   const t = typeof token === "string" ? token.trim() : "";
   if (!t) {
-    throw new ApiError(400, "GitHub token is required to resolve the version ref.");
+    throw new ApiError(400, "GitHub token is required to resolve the ref.");
   }
-  const owner = encodeURIComponent(srcParsed.owner);
-  const repo = encodeURIComponent(srcParsed.repo);
+  const owner = encodeURIComponent(repoParsed.owner);
+  const repo = encodeURIComponent(repoParsed.repo);
   const refEnc = encodeURIComponent(ref);
   const url = `${API_BASE_URLS.GITHUB}/repos/${owner}/${repo}/commits/${refEnc}`;
   const res = await fetch(url, {
@@ -74,7 +76,7 @@ async function resolvePlatformRefToCommitSha(srcParsed, gitTagRef, token) {
     }
     throw new ApiError(
       res.status === 404 ? 404 : 400,
-      `Could not resolve "${ref}" on the platform GitHub repository (${res.status}): ${detail}`,
+      `Could not resolve "${ref}" on the ${notFoundLabel} GitHub repository (${res.status}): ${detail}`,
     );
   }
   const data = await res.json();
@@ -83,6 +85,95 @@ async function resolvePlatformRefToCommitSha(srcParsed, gitTagRef, token) {
     throw new ApiError(502, "GitHub API returned an unexpected commit payload.");
   }
   return sha.toLowerCase();
+}
+
+/**
+ * Resolve tag/branch/sha to a commit SHA on the platform GitHub repo using the REST API.
+ * @param {{ owner: string, repo: string }} srcParsed
+ */
+async function resolvePlatformRefToCommitSha(srcParsed, gitTagRef, token) {
+  const ref = String(gitTagRef).trim();
+  if (!ref) {
+    throw new ApiError(400, "Active version has an empty git tag / ref.");
+  }
+  return resolveGithubRefToCommitSha(srcParsed, ref, token, "platform");
+}
+
+/**
+ * Effective submodule path under the developer repo (trim slashes, reject traversal).
+ * @param {string | null | undefined} raw
+ * @returns {string}
+ */
+export function resolveDeveloperSubmodulePathForLock(raw) {
+  const fallback = LAUNCHPAD_FRONTEND_SUBMODULE_PATH;
+  if (raw == null || String(raw).trim() === "") return fallback;
+  const s = String(raw).trim().replace(/^\/+|\/+$/g, "");
+  if (!s) return fallback;
+  if (s.includes("..")) {
+    throw new ApiError(400, "developerSubmodulePath must not contain '..'.");
+  }
+  if (path.isAbsolute(s)) {
+    throw new ApiError(400, "developerSubmodulePath must be a relative path.");
+  }
+  if (s.length > MAX_DEVELOPER_SUBMODULE_PATH_LEN) {
+    throw new ApiError(
+      400,
+      `developerSubmodulePath is too long (max ${MAX_DEVELOPER_SUBMODULE_PATH_LEN}).`,
+    );
+  }
+  return s;
+}
+
+/**
+ * @param {string | null | undefined} raw
+ * @returns {string | null} null when omitted / blank
+ */
+export function normalizeDeveloperAgentRefForLock(raw) {
+  if (raw == null) return null;
+  const t = String(raw).trim();
+  if (!t) return null;
+  if (t.length > MAX_DEVELOPER_AGENT_REF_LEN) {
+    throw new ApiError(
+      400,
+      `developerAgentRef is too long (max ${MAX_DEVELOPER_AGENT_REF_LEN}).`,
+    );
+  }
+  if (/[\s\x00-\x1f]/.test(t)) {
+    throw new ApiError(400, "developerAgentRef must not contain whitespace or control characters.");
+  }
+  return t;
+}
+
+/**
+ * Ensures `ref` resolves on the project's GitHub developmentRepoUrl (branch, tag, or full SHA).
+ * @param {import("@prisma/client").Project} project — must include developmentRepoUrl
+ * @param {string} ref — non-empty after trim
+ */
+export async function assertDeveloperAgentRefResolvable(project, ref) {
+  const normalized = normalizeDeveloperAgentRefForLock(ref);
+  if (!normalized) return;
+
+  const devUrl = String(project.developmentRepoUrl || "").trim();
+  const parsed = parseScmRepoPath(devUrl);
+  if (!parsed || parsed.provider !== "github") {
+    throw new ApiError(
+      400,
+      "developerAgentRef requires a GitHub developmentRepoUrl on the project.",
+    );
+  }
+
+  const { githubToken } = await resolveGithubCredentialsFromProject(project);
+  const token = githubToken?.trim();
+  if (!token) {
+    throw new ApiError(400, "GitHub credentials are required to validate developerAgentRef.");
+  }
+
+  await resolveGithubRefToCommitSha(
+    { owner: parsed.owner, repo: parsed.repo },
+    normalized,
+    token,
+    "developer",
+  );
 }
 
 /** `remoteUrl` should be the public HTTPS repo URL; auth is via `configureGithubHttpExtraHeader(subAbs)`. */
@@ -183,10 +274,11 @@ async function getSubmoduleNameForPath(workDir, relPath) {
  * The commit SHA comes from the active ProjectVersion gitTag (tag/branch/sha) on that release.
  * Uses public https URLs in .gitmodules; token only for fetch/push remotes.
  *
- * @param {{ releaseId: number, project: object, releaseName?: string|null }} params
+ * @param {{ releaseId: number, project: object, releaseName?: string|null, developerSubmodulePath?: string|null }} params
  */
 export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
   const { releaseId, project } = params;
+  const submoduleRel = resolveDeveloperSubmodulePathForLock(params.developerSubmodulePath);
   const releaseName =
     typeof params.releaseName === "string" && params.releaseName.trim()
       ? params.releaseName.trim()
@@ -267,7 +359,6 @@ export async function syncDeveloperRepoSubmoduleForReleaseLock(params) {
     `rel_${releaseId}_${Date.now()}`,
   );
   const workDir = path.join(tmpBase, "repo");
-  const submoduleRel = LAUNCHPAD_FRONTEND_SUBMODULE_PATH;
   const authorName =
     (process.env.DEVELOPER_SUBMODULE_COMMITTER_NAME || "Launchpad").trim() || "Launchpad";
   const authorEmail =
