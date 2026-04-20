@@ -1,18 +1,15 @@
 [Unit]
-Description=Launchpad Backend Service
-Documentation=https://pm2.keymetrics.io/
+Description=Launchpad Backend API
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/launchpad/backend
-Environment=PATH=/usr/bin:/usr/local/bin
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/pm2 start ecosystem.config.cjs --env production
-ExecReload=/usr/bin/pm2 reload launchpad-backend
-ExecStop=/usr/bin/pm2 stop launchpad-backend
-Restart=always
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

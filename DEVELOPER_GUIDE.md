@@ -22,7 +22,6 @@ launchpad/
 │   ├── prisma/
 │   │   └── schema.prisma      # Database schema
 │   ├── projects/              # Uploaded project files
-│   ├── ecosystem.config.cjs   # PM2 config (optional; production uses Docker)
 │   └── package.json
 │
 ├── frontend/                   # React + Vite Frontend
@@ -35,7 +34,6 @@ launchpad/
 │   │   ├── pages/
 │   │   ├── context/
 │   │   └── styles/
-│   ├── ecosystem.config.cjs   # PM2 config (optional; production uses Docker)
 │   └── package.json
 │
 └── DEVELOPER_GUIDE.md         # This file
@@ -145,141 +143,9 @@ docker compose up -d --build
 
 ---
 
-## 🔄 PM2 Commands (local / alternative)
+## Non-Docker EC2 (optional)
 
-PM2 is available for running backend and frontend **without Docker** (e.g. local dev or alternative host setup). Production deploy uses Docker; see EC2_DEPLOYMENT.md.
-
-### Quick Reference
-
-| Command | Description |
-|---------|-------------|
-| `npm run start` | Start the app with PM2 |
-| `npm run stop` | Stop the app |
-| `npm run restart` | Restart the app |
-| `npm run reload` | Zero-downtime reload |
-| `npm run delete` | Remove from PM2 |
-| `npm run logs` | View live logs |
-| `npm run monit` | Open PM2 dashboard |
-| `npm run status` | Check process status |
-
-### Backend PM2 Commands
-
-```bash
-cd /home/ubuntu/launchpad/backend
-
-# Start backend with PM2
-pm2 start ecosystem.config.cjs --env production
-
-# Or use npm scripts
-npm run start              # Start with PM2
-npm run stop               # Stop backend
-npm run restart            # Restart backend
-npm run logs               # View backend logs
-npm run status             # Check status
-```
-
-### Frontend PM2 Commands
-
-```bash
-cd /home/ubuntu/launchpad/frontend
-
-# Start frontend with PM2 (runs Vite dev server)
-pm2 start ecosystem.config.cjs --env production
-
-# Or use npm scripts
-npm run start              # Start with PM2
-npm run stop               # Stop frontend
-npm run restart            # Restart frontend
-npm run logs               # View frontend logs
-npm run status             # Check status
-```
-
-### Global PM2 Commands
-
-```bash
-# View all running processes
-pm2 list
-
-# View detailed status
-pm2 show launchpad-backend
-pm2 show launchpad-frontend
-
-# View logs for all processes
-pm2 logs
-
-# View logs for specific process
-pm2 logs launchpad-backend
-pm2 logs launchpad-frontend
-
-# Monitor all processes (CPU, Memory)
-pm2 monit
-
-# Restart all processes
-pm2 restart all
-
-# Stop all processes
-pm2 stop all
-
-# Delete all processes
-pm2 delete all
-
-# Save current process list (auto-start on reboot)
-pm2 save
-
-# Setup PM2 to start on system boot
-pm2 startup
-
-# Flush all logs
-pm2 flush
-```
-
-### Running with PM2 (optional, non-Docker)
-
-```bash
-# Initial setup (run once)
-cd /home/ubuntu/launchpad/backend
-./setup-ec2.sh
-
-cd /home/ubuntu/launchpad/frontend
-./setup-ec2.sh
-
-# Deploy updates
-cd /home/ubuntu/launchpad/backend
-./deploy.sh
-
-cd /home/ubuntu/launchpad/frontend
-./deploy.sh
-```
-
-Production deployment uses Docker + Supabase; see [EC2_DEPLOYMENT.md](./EC2_DEPLOYMENT.md).
-
-### PM2 Process Names
-
-| Service | PM2 Process Name |
-|---------|------------------|
-| Backend | `launchpad-backend` |
-| Frontend | `launchpad-frontend` |
-
-### Useful PM2 Tips
-
-```bash
-# Check if processes are running
-pm2 status
-
-# Expected output:
-# ┌─────────────────────┬────┬─────────┬──────┬───────┐
-# │ Name                │ id │ status  │ cpu  │ memory│
-# ├─────────────────────┼────┼─────────┼──────┼───────┤
-# │ launchpad-backend    │ 0  │ online  │ 0.1% │ 80MB  │
-# │ launchpad-frontend   │ 1  │ online  │ 0.2% │ 60MB  │
-# └─────────────────────┴────┴─────────┴──────┴───────┘
-
-# If a process shows 'errored' or 'stopped', check logs:
-pm2 logs launchpad-backend --lines 50
-
-# Force restart a crashed process
-pm2 restart launchpad-backend --update-env
-```
+Production should follow **[EC2_DEPLOYMENT.md](./EC2_DEPLOYMENT.md)** (Docker). If you still run Node directly on a VM, use **`backend/setup-ec2.sh`** / **`frontend/setup-ec2.sh`** once, then **`deploy.sh`** in each folder (install/build; optional **`launchpad-backend.service`** for the API). For the frontend preview, run **`npm run serve`** or wire your own process manager; no systemd unit is shipped in this repo.
 
 ---
 

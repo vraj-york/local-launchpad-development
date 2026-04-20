@@ -517,6 +517,12 @@ router.post(
   projectController.revertActiveReleaseToBaseline
 );
 
+router.post(
+  "/:id/releases/:releaseId/migrate-frontend",
+  authenticateToken,
+  projectController.migrateFrontendRelease
+);
+
 /**
  * @swagger
  * /projects/public/{slug}:

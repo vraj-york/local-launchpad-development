@@ -456,6 +456,53 @@ function runCommand(command, cwd, options = {}) {
 
 // --- Service Functions ---
 
+function normalizeMigrateFrontendFlowValue(flow) {
+  return String(flow ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function isMigrateFrontendFlowValue(flow) {
+  return normalizeMigrateFrontendFlowValue(flow) === "migrate_frontend";
+}
+
+/**
+ * Latest Migrate Frontend conversion still in progress (Cursor agent or platform merge/deploy).
+ * Excludes completed rows (projectVersionId set) and terminal platform failure.
+ * @param {number} projectId
+ * @param {number[]} releaseIds
+ * @returns {Promise<Map<number, { agentId: string, figmaConversionId: number }>>}
+ */
+async function ongoingMigrateFrontendByReleaseIds(projectId, releaseIds) {
+  const map = new Map();
+  if (!releaseIds.length) return map;
+  const conversions = await prisma.figmaConversion.findMany({
+    where: {
+      projectId: Number(projectId),
+      releaseId: { in: releaseIds },
+    },
+    select: {
+      id: true,
+      releaseId: true,
+      agentId: true,
+      flow: true,
+      status: true,
+      projectVersionId: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  for (const c of conversions) {
+    if (!isMigrateFrontendFlowValue(c.flow)) continue;
+    if (c.projectVersionId != null) continue;
+    if (String(c.status || "").trim() === "MIGRATE_PLATFORM_SYNC_FAILED") continue;
+    const agentId = String(c.agentId || "").trim();
+    if (!agentId) continue;
+    if (!map.has(c.releaseId)) {
+      map.set(c.releaseId, { agentId, figmaConversionId: c.id });
+    }
+  }
+  return map;
+}
+
 /**
  * List releases for a project — all statuses (draft, active, locked).
  * Do not filter to active+locked only; drafts must appear for create/edit flows.
@@ -484,7 +531,13 @@ export const listReleasesService = async (projectId, user) => {
     .filter((r) => r.status === ReleaseStatus.skip)
     .map((r) => r.id);
   const reasonBy = await latestSkipTransitionReasonByReleaseIds(skippedIds);
-  return attachSkipReasonToReleases(rows, reasonBy);
+  const releaseIds = rows.map((r) => r.id);
+  const ongoingByRelease = await ongoingMigrateFrontendByReleaseIds(projectId, releaseIds);
+  const withOngoing = rows.map((r) => ({
+    ...r,
+    ongoingMigrateFrontend: ongoingByRelease.get(r.id) ?? null,
+  }));
+  return attachSkipReasonToReleases(withOngoing, reasonBy);
 };
 
 /**

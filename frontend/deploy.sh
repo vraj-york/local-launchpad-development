@@ -1,46 +1,34 @@
 #!/bin/bash
 
-# Launchpad Frontend Deployment Script for EC2
-# This script handles the complete deployment process
+# Launchpad Frontend deployment for EC2 (non-Docker). Prefer Docker; see EC2_DEPLOYMENT.md.
 
 echo "🚀 Deploying Launchpad Frontend to EC2..."
 
-# Set variables
 FRONTEND_DIR="/home/ubuntu/launchpad/frontend"
 SERVICE_NAME="launchpad-frontend"
 
-# Navigate to frontend directory
-cd $FRONTEND_DIR
+cd "$FRONTEND_DIR" || exit 1
 
-# Pull latest changes (if using git)
 echo "📥 Pulling latest changes..."
 # git pull origin main
 
-# Install/update dependencies
 echo "📦 Installing dependencies..."
 npm install
 
-# Stop existing PM2 process
-echo "🛑 Stopping existing process..."
-pm2 stop $SERVICE_NAME 2>/dev/null || true
+echo "🏗️ Building production assets..."
+npm run build
 
-# Start with PM2
-echo "▶️ Starting frontend application..."
-pm2 start ecosystem.config.cjs --env production
-
-# Save PM2 configuration
-pm2 save
-
-echo "✅ Frontend deployment completed successfully!"
-echo "📊 Current status:"
-pm2 status $SERVICE_NAME
-
-echo ""
-echo "🔧 Useful commands:"
-echo "  pm2 status                    - Check process status"
-echo "  pm2 logs $SERVICE_NAME        - View frontend logs"
-echo "  pm2 restart $SERVICE_NAME     - Restart frontend service"
-echo "  pm2 stop $SERVICE_NAME        - Stop frontend service"
-echo "  pm2 monit                     - Monitor processes"
-echo ""
-echo "🌐 Frontend should be available at: http://43.205.121.85:5173"
+if [ -f /etc/systemd/system/"$SERVICE_NAME".service ]; then
+  echo "🔄 Restarting systemd service: $SERVICE_NAME"
+  sudo systemctl restart "$SERVICE_NAME"
+  echo "✅ Frontend deployment completed."
+  sudo systemctl status "$SERVICE_NAME" --no-pager || true
+  echo ""
+  echo "🔧 Useful commands:"
+  echo "  sudo systemctl status $SERVICE_NAME"
+  echo "  journalctl -u $SERVICE_NAME -f"
+else
+  echo "[WARN] No systemd unit at /etc/systemd/system/$SERVICE_NAME.service — run preview manually:"
+  echo "  npm run serve -- --host 0.0.0.0 --port 5173"
+  echo "Production: use Docker (see EC2_DEPLOYMENT.md)."
+fi

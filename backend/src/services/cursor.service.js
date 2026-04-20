@@ -32,6 +32,7 @@ import { waitForAgentBranchTipSha } from "../utils/agentBranchTipWait.js";
 import { API_BASE_URLS } from "../constants/contstants.js";
 import { ensureFreshFigmaConnection } from "./oauthConnection.service.js";
 import { LAUNCHPAD_FRONTEND_SUBMODULE_PATH } from "./developerRepoSubmodule.service.js";
+import { buildLaunchpadFrontendAlignmentBlock } from "./cursorPrompts.js";
 
 /** Cursor Cloud / cursor-cloud-agent base (e.g. `http://cursor-cloud-agent:3100` in Docker). */
 const CURSOR_BASE_URL = String(process.env.CURSOR_BASE_URL ?? "").trim();
@@ -57,7 +58,7 @@ async function setProjectScratchVersionStatus(projectId, fromScratch, status) {
 }
 
 /** After pipeline errors: mark FAILED only if we had set CREATING (avoids bogus FAILED on pre-pipeline throws). */
-async function markScratchVersionFailedIfCreating(projectId) {
+export async function markScratchVersionFailedIfCreating(projectId) {
   try {
     const row = await prisma.project.findUnique({
       where: { id: projectId },
@@ -80,25 +81,136 @@ async function markScratchVersionFailedIfCreating(projectId) {
 const POLL_INTERVAL_MS = 5000;
 const ENV_GITHUB_USERNAME = process.env.GITHUB_USERNAME;
 
+/** Matches `FigmaConversion.flow` for Migrate Frontend (tolerate casing / stray spaces). */
+function isMigrateFrontendFigmaFlow(flow) {
+  return (
+    String(flow ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_") === "migrate_frontend"
+  );
+}
+
+/** Server-side Migrate Frontend (no Cursor on developer repo); `FigmaConversion.agentId` uses this prefix. */
+export const READONLY_MIGRATE_AGENT_PREFIX = "readonly_migrate_";
+
+export function isReadonlyMigrateAgentId(agentId) {
+  return typeof agentId === "string" && agentId.startsWith(READONLY_MIGRATE_AGENT_PREFIX);
+}
+
+/**
+ * Pipeline UI when migration runs read-only on the server (no cloud agent on developer repo).
+ * @param {{ flow: string|null, status: string|null, projectVersionId: number|null, targetBranchName: string|null, id: number, releaseId: number, agentId?: string|null }} conv
+ */
+export function composeReadonlyMigrateFrontendPipelineUi(conv) {
+  if (!conv || !isMigrateFrontendFigmaFlow(conv.flow) || !isReadonlyMigrateAgentId(conv.agentId))
+    return null;
+  const db = conv.status != null ? String(conv.status) : "";
+
+  if (db === "MIGRATE_PLATFORM_SYNC_FAILED") {
+    return {
+      phase: "platform_failed",
+      headline: "Platform sync failed",
+      detail:
+        "Copying the developer UI into the Launchpad repo or deploy failed. Check backend logs. The developer repository was not modified.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      devBranch: conv.targetBranchName ?? null,
+    };
+  }
+  if (conv.projectVersionId != null) {
+    return {
+      phase: "completed",
+      headline: "Migrate Frontend complete",
+      detail:
+        "Launchpad repository was updated (dedicated migrate branch + launchpad) from a read-only clone of the developer repo. No commits were pushed to the developer repository.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      projectVersionId: conv.projectVersionId,
+      devBranch: conv.targetBranchName ?? null,
+    };
+  }
+  return {
+    phase: "platform_working",
+    headline: "Migrating UI (read-only)",
+    detail:
+      "Cloning the developer repository read-only, copying the frontend layer into Launchpad on a new branch, then updating launchpad and deploy. Nothing is pushed to the developer remote.",
+    figmaConversionId: conv.id,
+    releaseId: conv.releaseId,
+    devBranch: conv.targetBranchName ?? null,
+    agentStatus: "RUNNING",
+  };
+}
+
+/**
+ * UI payload for Migrate Frontend: Cursor agent + platform merge/deploy phases.
+ * @param {{ flow: string|null, status: string|null, projectVersionId: number|null, targetBranchName: string|null, id: number, releaseId: number }} conv
+ * @param {string|null|undefined} cloudAgentStatus — status from Cursor Cloud for this agent
+ * @returns {object|null}
+ */
+export function composeMigrateFrontendPipelineUi(conv, cloudAgentStatus) {
+  if (!conv || !isMigrateFrontendFigmaFlow(conv.flow)) return null;
+  const cloud = cloudAgentStatus != null ? String(cloudAgentStatus) : "";
+  const db = conv.status != null ? String(conv.status) : "";
+
+  if (db === "MIGRATE_PLATFORM_SYNC_FAILED") {
+    return {
+      phase: "platform_failed",
+      headline: "Platform sync failed",
+      detail:
+        "Copying the developer UI into the platform repo or deploy failed. Check backend logs for the error.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      devBranch: conv.targetBranchName ?? null,
+    };
+  }
+  if (isCursorAgentFailureTerminal(cloud)) {
+    return {
+      phase: "agent_failed",
+      headline: "Cursor agent failed",
+      detail: cloud ? `Agent status: ${cloud}` : "Agent did not complete successfully.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      devBranch: conv.targetBranchName ?? null,
+    };
+  }
+  if (!isCursorAgentSuccessTerminal(cloud)) {
+    return {
+      phase: "agent_running",
+      headline: "Cursor agent running",
+      detail:
+        "Working in the development repository. When the agent finishes, the platform launchpad branch will be updated automatically.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      devBranch: conv.targetBranchName ?? null,
+      agentStatus: cloud || null,
+    };
+  }
+  if (conv.projectVersionId != null) {
+    return {
+      phase: "completed",
+      headline: "Migrate Frontend complete",
+      detail:
+        "Platform repository updated on branch launchpad and release pipeline finished.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      projectVersionId: conv.projectVersionId,
+      devBranch: conv.targetBranchName ?? null,
+    };
+  }
+  return {
+    phase: "platform_working",
+    headline: "Syncing to platform…",
+    detail:
+      "Agent finished. Merging UI into the platform repo (launchpad branch) and running deploy—this can take a minute.",
+    figmaConversionId: conv.id,
+    releaseId: conv.releaseId,
+    devBranch: conv.targetBranchName ?? null,
+  };
+}
+
 /** Matches cursor-cloud-agent JSON when no PAT is stored for `?email=`. */
 const CURSOR_CLOUD_GITHUB_PAT_ERROR_CODE = "GITHUB_PAT_NOT_CONFIGURED";
-
-function redactEmailForLog(email) {
-  const e = String(email ?? "").trim();
-  if (!e) return "(none)";
-  const at = e.indexOf("@");
-  if (at < 1) return "***";
-  const local = e.slice(0, at);
-  const domain = e.slice(at + 1);
-  const u = local.length <= 1 ? "*" : `${local[0]}***`;
-  return `${u}@${domain}`;
-}
-
-function tokenPreviewForLog(token) {
-  const t = String(token ?? "").trim();
-  if (!t) return "(empty)";
-  return t.length <= 4 ? `${t}…` : `${t.slice(0, 4)}…`;
-}
 
 /**
  * @param {number | null | undefined} projectId
@@ -174,217 +286,12 @@ async function registerGithubPatWithCursorCloudAgent(project) {
   }
 }
 
-const PROJECT_SELECT_FOR_SCM_PUSH = {
-  id: true,
-  createdById: true,
-  githubConnectionId: true,
-  bitbucketConnectionId: true,
-  githubUsername: true,
-  githubToken: true,
-  bitbucketUsername: true,
-  bitbucketToken: true,
-};
-
-/**
- * Push project creator's GitHub token to cursor-cloud-agent before agent calls (non-fatal; mirrors Figma).
- * Skips non-GitHub projects and missing/invalid SCM without blocking the Cursor request.
- * @param {number} projectId
- */
-async function registerGithubPatWithCursorCloudAgentBestEffort(projectId) {
-  const pid = Number(projectId);
-  if (!Number.isInteger(pid) || pid < 1) return;
-
-  if (!String(CURSOR_BASE_URL ?? "").trim() || !process.env.CURSOR_API_KEY?.trim()) {
-    return;
-  }
-
-  const project = await prisma.project.findUnique({
-    where: { id: pid },
-    select: PROJECT_SELECT_FOR_SCM_PUSH,
-  });
-  if (!project) return;
-
-  let scm;
-  try {
-    scm = await resolveScmCredentialsFromProject(project);
-  } catch (e) {
-    console.warn("[cursor] github MCP: could not resolve SCM for cloud agent PAT push (non-fatal)", {
-      projectId: pid,
-      userId: project.createdById,
-      message: e?.message || String(e),
-    });
-    return;
-  }
-
-  if (scm.provider !== "github") {
-    console.warn(
-      "[cursor] github MCP: project uses non-GitHub SCM (skipping cloud agent PAT push)",
-      { projectId: pid, userId: project.createdById, provider: scm.provider },
-    );
-    return;
-  }
-
-  const token = scm.token?.trim() || "";
-  if (!token) {
-    console.warn("[cursor] github MCP: empty GitHub token (skipping cloud agent PAT push)", {
-      projectId: pid,
-      userId: project.createdById,
-    });
-    return;
-  }
-
-  try {
-    await registerGithubPatWithCursorCloudAgent(project);
-    const user = await prisma.user.findUnique({
-      where: { id: project.createdById },
-      select: { id: true, email: true },
-    });
-    console.log("[cursor] github MCP: pushed PAT for cloud agent", {
-      projectId: pid,
-      userId: user?.id ?? project.createdById,
-      emailRedacted: redactEmailForLog(user?.email),
-      tokenPreview: tokenPreviewForLog(token),
-    });
-  } catch (e) {
-    console.warn("[cursor] github MCP: push to cloud agent failed (non-fatal)", {
-      projectId: pid,
-      userId: project.createdById,
-      message: e?.message || String(e),
-    });
-  }
-}
-
-/**
- * Push project creator's Figma OAuth access token to cursor-cloud-agent (non-fatal on missing row or errors).
- * @param {number} projectId
- */
-async function registerFigmaTokenWithCursorCloudAgent(projectId) {
-  const pid = Number(projectId);
-  if (!Number.isInteger(pid) || pid < 1) return;
-
-  if (!String(CURSOR_BASE_URL ?? "").trim() || !process.env.CURSOR_API_KEY?.trim()) {
-    return;
-  }
-
-  const project = await prisma.project.findUnique({
-    where: { id: pid },
-    select: { id: true, createdById: true },
-  });
-  if (!project) return;
-
-  const row = await prisma.userOAuthConnection.findFirst({
-    where: { userId: project.createdById, provider: "figma" },
-    orderBy: { updatedAt: "desc" },
-  });
-  if (!row) {
-    console.warn(
-      "[cursor] figma MCP: no Figma OAuth row for project creator (skipping cloud agent token push)",
-      { projectId: pid, userId: project.createdById },
-    );
-    return;
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: project.createdById },
-    select: { id: true, email: true },
-  });
-  const email = user?.email?.trim();
-  if (!email) {
-    console.warn("[cursor] figma MCP: creator email missing (skipping)", {
-      projectId: pid,
-      userId: project.createdById,
-    });
-    return;
-  }
-
-  let accessToken = "";
-  let figmaUserId = row.figmaUserId ?? null;
-  try {
-    const fresh = await ensureFreshFigmaConnection(row);
-    accessToken = fresh.accessToken?.trim() || "";
-    figmaUserId = fresh.figmaUserId ?? figmaUserId;
-  } catch (e) {
-    console.warn("[cursor] figma MCP: could not refresh Figma token (non-fatal)", {
-      projectId: pid,
-      userId: project.createdById,
-      emailRedacted: redactEmailForLog(email),
-      message: e?.message || String(e),
-    });
-    return;
-  }
-
-  if (!accessToken) {
-    console.warn("[cursor] figma MCP: empty access token after refresh (non-fatal)", {
-      projectId: pid,
-      userId: project.createdById,
-      emailRedacted: redactEmailForLog(email),
-    });
-    return;
-  }
-
-  try {
-    const { status, data } = await cursorRequest({
-      method: "POST",
-      path: "/v0/credentials/figma",
-      query: { email },
-      body: { figmaAccessToken: accessToken },
-    });
-    if (status < 200 || status >= 300) {
-      const msg =
-        data && typeof data === "object" && data.error
-          ? String(data.error)
-          : `HTTP ${status}`;
-      console.warn("[cursor] figma MCP: cloud agent rejected token push (non-fatal)", {
-        projectId: pid,
-        userId: user.id,
-        emailRedacted: redactEmailForLog(email),
-        message: msg,
-      });
-      return;
-    }
-    console.log("[cursor] figma MCP: pushed token for cloud agent", {
-      projectId: pid,
-      userId: user.id,
-      emailRedacted: redactEmailForLog(email),
-      figmaUserId: figmaUserId ?? undefined,
-      tokenPreview: tokenPreviewForLog(accessToken),
-    });
-  } catch (e) {
-    console.warn("[cursor] figma MCP: push to cloud agent failed (non-fatal)", {
-      projectId: pid,
-      userId: user.id,
-      emailRedacted: redactEmailForLog(email),
-      message: e?.message || String(e),
-    });
-  }
-}
-
 /**
  * On GITHUB_PAT_NOT_CONFIGURED, push OAuth token from the project then retry once.
  * @param {{ method: string, path: string, body?: object, projectId?: number|null }} options
  */
-async function cursorRequestWithProjectAndPatRetry(options) {
+export async function cursorRequestWithProjectAndPatRetry(options) {
   const { method, path, body, projectId } = options;
-
-  if (projectId != null) {
-    try {
-      await registerFigmaTokenWithCursorCloudAgent(projectId);
-    } catch (e) {
-      console.warn("[cursor] figma MCP: registerFigmaTokenWithCursorCloudAgent failed (non-fatal)", {
-        projectId,
-        message: e?.message || String(e),
-      });
-    }
-    try {
-      await registerGithubPatWithCursorCloudAgentBestEffort(projectId);
-    } catch (e) {
-      console.warn(
-        "[cursor] github MCP: registerGithubPatWithCursorCloudAgentBestEffort failed (non-fatal)",
-        { projectId, message: e?.message || String(e) },
-      );
-    }
-  }
-
   const query = await getCreatorEmailQueryForProject(projectId);
   let result = await cursorRequest({ method, path, body, query });
   if (!responseIndicatesGithubPatNotConfigured(result.status, result.data) || projectId == null) {
@@ -581,6 +488,42 @@ export async function getCursorAgentById(agentId, projectId) {
   if (!id) {
     return { status: 400, data: { error: "Agent id is required" } };
   }
+  if (isReadonlyMigrateAgentId(id)) {
+    const conv = await prisma.figmaConversion.findFirst({
+      where: { agentId: id },
+      select: {
+        id: true,
+        projectId: true,
+        releaseId: true,
+        flow: true,
+        status: true,
+        projectVersionId: true,
+        targetBranchName: true,
+        agentId: true,
+      },
+    });
+    if (!conv) {
+      return { status: 404, data: { error: "Agent not found or not linked to a project" } };
+    }
+    const pipeline = composeReadonlyMigrateFrontendPipelineUi(conv);
+    const phase = pipeline?.phase;
+    const statusStr =
+      phase === "completed"
+        ? "FINISHED"
+        : phase === "platform_failed"
+          ? "FAILED"
+          : "RUNNING";
+    return {
+      status: 200,
+      data: {
+        id,
+        status: statusStr,
+        target: {
+          branchName: conv.targetBranchName?.trim() || null,
+        },
+      },
+    };
+  }
   let pid =
     projectId != null && Number.isInteger(Number(projectId)) ? Number(projectId) : null;
   if (pid == null) {
@@ -687,10 +630,54 @@ function buildBackendPlanPrompt(projectVersionId, releaseId, opts = {}) {
   const sub = raw || LAUNCHPAD_FRONTEND_SUBMODULE_PATH;
   const subSlash = sub.endsWith("/") ? sub : `${sub}/`;
   return (
-    `You are working in the developer integration repository, which includes the Launchpad platform UI as a git submodule at ${subSlash}.\n\n` +
-    `Use ${subSlash} as the reference for Launchpad patterns and behavior. Compare ${subSlash} with Frontend/ in this repository (for example using git diff or an equivalent approach) and apply the necessary changes under the Frontend/ folder so it aligns with or correctly reflects patterns from the submodule.\n\n` +
+    buildLaunchpadFrontendAlignmentBlock() +
     `Create a Plan named backend-v${projectVersionId}-release${releaseId}.md in the backend/plan (or equivalent) folder at the repository root that documents how to implement or connect a backend that supports this Frontend: APIs, data contracts, auth or session notes if relevant, deployment considerations, and concrete integration steps.`
   );
+}
+
+/**
+ * Force remote `launchpad` to point at headSha (GitHub or Bitbucket).
+ * @param {{ provider: 'github'|'bitbucket', owner: string, repo: string, headSha: string, token: string }} p
+ */
+export async function forceUpdateLaunchpadBranch(p) {
+  const { provider, owner, repo, headSha, token } = p;
+  const baseBranch = "launchpad";
+  if (provider === "github") {
+    const ensureResult = await ensureBranchFrom(owner, repo, baseBranch, "main", token);
+    if (!ensureResult.ok) {
+      throw new Error(ensureResult.error || "Could not ensure launchpad branch");
+    }
+
+    let updateResult = await updateRef(owner, repo, "heads/launchpad", headSha, true, token);
+    if (!updateResult.ok && updateResult.status === 404) {
+      const createResult = await createBranch(owner, repo, baseBranch, headSha, token);
+      if (!createResult.ok) {
+        throw new Error(createResult.message || "Could not create launchpad branch at SHA");
+      }
+    } else if (!updateResult.ok) {
+      throw new Error(updateResult.message || "Failed to force-update launchpad branch");
+    }
+  } else {
+    const meta = await scmGetRepositoryMetadata(provider, owner, repo, token);
+    const defaultBranch = meta.ok ? meta.defaultBranch || "main" : "main";
+    const mainTip = await scmGetBranchSha(provider, owner, repo, defaultBranch, token);
+    if (!mainTip?.sha) {
+      throw new Error(
+        `Default branch "${defaultBranch}" not found; cannot ensure "${baseBranch}" on Bitbucket.`,
+      );
+    }
+    const launchpadTip = await scmGetBranchSha(provider, owner, repo, baseBranch, token);
+    if (!launchpadTip?.sha) {
+      const created = await createBitbucketBranchAt(owner, repo, baseBranch, mainTip.sha, token);
+      if (!created.ok) {
+        throw new Error(created.message || "Could not create launchpad branch on Bitbucket");
+      }
+    }
+    const moved = await setBitbucketBranchTip(owner, repo, baseBranch, headSha, token);
+    if (!moved.ok) {
+      throw new Error(moved.message || "Failed to move launchpad branch on Bitbucket");
+    }
+  }
 }
 
 /**
@@ -1160,12 +1147,18 @@ async function findReleaseAnchorVersionForClientLinkMerge(projectId, releaseId) 
  * @param {object} conversion — row with id, projectId, releaseId, attemptedById
  * @param {string} headSha
  * @param {string} headBranchName — agent branch name (for DB)
- * @param {{ skipShaDedupe?: boolean, prUrl?: string|null, reuseExistingReleaseTag?: boolean }} options
+ * @param {{ skipShaDedupe?: boolean, prUrl?: string|null, reuseExistingReleaseTag?: boolean, explicitAnchorProjectVersionId?: number|null }} options
  * @param {boolean} [options.reuseExistingReleaseTag] — client-link only: move this release’s existing
  *   version tag to headSha and update that ProjectVersion row (no new tag / no new revision row).
+ * @param {number|null} [options.explicitAnchorProjectVersionId] — when reusing a tag, pin to this ProjectVersion id (must belong to the same project and release).
  */
 export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranchName, options = {}) {
-  const { skipShaDedupe = false, prUrl = null, reuseExistingReleaseTag = false } = options;
+  const {
+    skipShaDedupe = false,
+    prUrl = null,
+    reuseExistingReleaseTag = false,
+    explicitAnchorProjectVersionId = null,
+  } = options;
 
   const project = await prisma.project.findUnique({
     where: { id: conversion.projectId },
@@ -1253,43 +1246,7 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
     }
   }
 
-  const baseBranch = "launchpad";
-  if (provider === "github") {
-    const ensureResult = await ensureBranchFrom(owner, repo, baseBranch, "main", token);
-    if (!ensureResult.ok) {
-      throw new Error(ensureResult.error || "Could not ensure launchpad branch");
-    }
-
-    let updateResult = await updateRef(owner, repo, "heads/launchpad", headSha, true, token);
-    if (!updateResult.ok && updateResult.status === 404) {
-      const createResult = await createBranch(owner, repo, baseBranch, headSha, token);
-      if (!createResult.ok) {
-        throw new Error(createResult.message || "Could not create launchpad branch at SHA");
-      }
-    } else if (!updateResult.ok) {
-      throw new Error(updateResult.message || "Failed to force-update launchpad branch");
-    }
-  } else {
-    const meta = await scmGetRepositoryMetadata(provider, owner, repo, token);
-    const defaultBranch = meta.ok ? meta.defaultBranch || "main" : "main";
-    const mainTip = await scmGetBranchSha(provider, owner, repo, defaultBranch, token);
-    if (!mainTip?.sha) {
-      throw new Error(
-        `Default branch "${defaultBranch}" not found; cannot ensure "${baseBranch}" on Bitbucket.`,
-      );
-    }
-    const launchpadTip = await scmGetBranchSha(provider, owner, repo, baseBranch, token);
-    if (!launchpadTip?.sha) {
-      const created = await createBitbucketBranchAt(owner, repo, baseBranch, mainTip.sha, token);
-      if (!created.ok) {
-        throw new Error(created.message || "Could not create launchpad branch on Bitbucket");
-      }
-    }
-    const moved = await setBitbucketBranchTip(owner, repo, baseBranch, headSha, token);
-    if (!moved.ok) {
-      throw new Error(moved.message || "Failed to move launchpad branch on Bitbucket");
-    }
-  }
+  await forceUpdateLaunchpadBranch({ provider, owner, repo, headSha, token });
 
   const releaseId = conversion.releaseId;
 
@@ -1299,14 +1256,33 @@ export async function executeLaunchpadHeadDeploy(conversion, headSha, headBranch
   let existingVersion = null;
 
   if (reuseExistingReleaseTag) {
-    anchorVersion = await findReleaseAnchorVersionForClientLinkMerge(
-      conversion.projectId,
-      releaseId,
-    );
+    const explicitId = Number(explicitAnchorProjectVersionId);
+    if (
+      explicitAnchorProjectVersionId != null &&
+      Number.isInteger(explicitId) &&
+      explicitId > 0
+    ) {
+      anchorVersion = await prisma.projectVersion.findFirst({
+        where: {
+          id: explicitId,
+          projectId: conversion.projectId,
+          releaseId: conversion.releaseId,
+        },
+        select: { id: true, gitTag: true, version: true, isActive: true },
+      });
+    }
+    if (!anchorVersion) {
+      anchorVersion = await findReleaseAnchorVersionForClientLinkMerge(
+        conversion.projectId,
+        releaseId,
+      );
+    }
     const gt = anchorVersion?.gitTag?.trim() || "";
     if (!anchorVersion || !gt) {
       throw new Error(
-        "No published version with a git tag exists for this release. Add or activate a version for this release before merging chat changes.",
+        explicitAnchorProjectVersionId != null
+          ? "The selected revision was not found for this release, or it has no git tag."
+          : "No published version with a git tag exists for this release. Add or activate a version for this release before merging chat changes.",
       );
     }
     tagName = gt;
@@ -1651,6 +1627,7 @@ export function startAgentPolling(agentId) {
   if (!agentId || typeof agentId !== "string" || !agentId.trim()) return;
 
   const id = agentId.trim();
+  if (isReadonlyMigrateAgentId(id)) return;
   let timeoutId = null;
 
   const poll = async () => {
@@ -1677,6 +1654,8 @@ export function startAgentPolling(agentId) {
           releaseId: true,
           deferLaunchpadMerge: true,
           skipLaunchpadAutomation: true,
+          flow: true,
+          projectVersionId: true,
           project: { select: { fromScratch: true } },
         },
       });
@@ -1713,6 +1692,36 @@ export function startAgentPolling(agentId) {
       }
 
       if (isCursorAgentSuccessTerminal(agentStatus)) {
+        if (isMigrateFrontendFigmaFlow(convRow?.flow)) {
+          try {
+            const { runMigrateFrontendPhaseBFromPoller } = await import(
+              "./migrateFrontend.service.js"
+            );
+            await runMigrateFrontendPhaseBFromPoller({
+              agentId: id,
+              agentData,
+              convRow,
+            });
+          } catch (migrateErr) {
+            const msg = migrateErr?.message || migrateErr;
+            console.error("[cursor] poll: migrate frontend phase B failed", {
+              agentId: id,
+              error: msg,
+            });
+            try {
+              await prisma.figmaConversion.updateMany({
+                where: { agentId: id },
+                data: { status: "MIGRATE_PLATFORM_SYNC_FAILED" },
+              });
+            } catch (persistErr) {
+              console.error("[cursor] poll: could not persist migrate sync failure status", {
+                agentId: id,
+                error: persistErr?.message || persistErr,
+              });
+            }
+          }
+          return;
+        }
         if (convRow?.skipLaunchpadAutomation) {
           console.log(
             "[cursor] poll: agent complete — skipLaunchpadAutomation (no platform merge)",

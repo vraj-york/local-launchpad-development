@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
-import { getProjectsDir } from "./utils/instanceRoot.js";
+import { getBackendRoot, getProjectsDir } from "./utils/instanceRoot.js";
 import authRoutes from "./routes/auth.routes.js";
 import projectRoutes from "./routes/project.routes.js";
 import releaseRoutes from "./routes/release.routes.js";

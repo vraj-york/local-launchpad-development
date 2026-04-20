@@ -2,7 +2,7 @@
  * Deletes abandoned FeedbackRecordingSession rows: status uploading, never completed
  * (chunkCount still null), older than FEEDBACK_RECORDING_STALE_SESSION_HOURS (default 36).
  *
- * Invoked automatically after deploy: backend entrypoint.sh (Docker) and backend/deploy.sh (PM2).
+ * Invoked automatically after deploy: backend entrypoint.sh (Docker) and backend/deploy.sh (non-Docker).
  * Manual: npm run cron:cleanup-feedback-sessions. Optional crontab: scripts/cron-cleanup-stale-feedback-sessions.sh
  */
 import "dotenv/config";

@@ -108,6 +108,8 @@ model Project {
   scratchAgentStatus    String?
   /// Post-agent merge/tag/build phase for from-scratch projects (CREATING | FAILED | null).
   scratchVersionStatus  String?
+  /// Creator opted into Migrate Frontend / import UI on project create (intent; independent of follow-up success).
+  migrateFrontend Boolean @default(false)
 
   githubConnectionId   Int?
   bitbucketConnectionId Int?
@@ -196,13 +198,16 @@ model ProjectVersion {
   gitTag      String   // Git tag / ref for checkout & activate (primary)
   buildUrl    String
   isActive    Boolean  @default(false) // Only one version can be active per project
+  /// User confirmed Migrate Frontend / opt-in for this revision (set when deploy completes after migrate_frontend with acknowledgment).
+  migrateFrontend Boolean @default(false)
   uploadedBy  Int
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   release     Release? @relation(fields: [releaseId], references: [id], onDelete: Cascade)
   uploader    User     @relation("VersionUploader", fields: [uploadedBy], references: [id])
-  figmaConversions FigmaConversion[]
+  figmaConversionsMerged    FigmaConversion[] @relation("FigmaConversionToMergedProjectVersion")
+  figmaConversionsMigrateTarget FigmaConversion[] @relation("FigmaConversionToMigrateTargetVersion")
 }
 
 
@@ -289,6 +294,8 @@ model FigmaConversion {
   status           String?
   targetBranchName String?
   projectVersionId Int?
+  /// When set (migrate_frontend flow), deploy moves this revision's git tag to the new launchpad SHA instead of creating a new ProjectVersion row.
+  migrateTargetProjectVersionId Int?
   /// User chat message waiting for this agent turn's commit SHA.
   pendingClientChatMessageId Int?
   /// When true (client-link flows), agent FINISHED does not auto-merge; user must confirm.
@@ -296,13 +303,18 @@ model FigmaConversion {
   awaitingLaunchpadConfirmation Boolean  @default(false)
   /// When true (e.g. post-lock developer-repo agent), poller does not merge to platform launchpad.
   skipLaunchpadAutomation       Boolean  @default(false)
+  /// Discriminator for non-Figma flows reusing this table (e.g. migrate_frontend).
+  flow                          String?
+  /// Client asserted Migrate Frontend confirmation; applied to ProjectVersion after migrate deploy.
+  migrateFrontend Boolean @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   release        Release         @relation(fields: [releaseId], references: [id], onDelete: Cascade)
   attemptedBy    User            @relation("FigmaConversionAttemptedBy", fields: [attemptedById], references: [id])
-  projectVersion ProjectVersion? @relation(fields: [projectVersionId], references: [id], onDelete: SetNull)
+  projectVersion ProjectVersion? @relation("FigmaConversionToMergedProjectVersion", fields: [projectVersionId], references: [id], onDelete: SetNull)
+  migrateTargetProjectVersion ProjectVersion? @relation("FigmaConversionToMigrateTargetVersion", fields: [migrateTargetProjectVersionId], references: [id], onDelete: SetNull)
   linkedChatMessages ChatHistory[]
 }
 

@@ -92,6 +92,8 @@ const CreateProject = () => {
 
   const [startFromScratch, setStartFromScratch] = useState(false);
   const [scratchPrompt, setScratchPrompt] = useState("");
+  const [importUiFromDevelopmentRepo, setImportUiFromDevelopmentRepo] =
+    useState(false);
 
   // UI State
   const [error, setError] = useState("");
@@ -154,6 +156,8 @@ const CreateProject = () => {
         setStartFromScratch(parsed.startFromScratch);
       if (typeof parsed.scratchPrompt === "string")
         setScratchPrompt(parsed.scratchPrompt);
+      if (typeof parsed.importUiFromDevelopmentRepo === "boolean")
+        setImportUiFromDevelopmentRepo(parsed.importUiFromDevelopmentRepo);
 
       const oauth =
         parsed.oauth && typeof parsed.oauth === "object" ? parsed.oauth : {};
@@ -195,6 +199,7 @@ const CreateProject = () => {
         stakeholderEmailTags,
         startFromScratch,
         scratchPrompt,
+        importUiFromDevelopmentRepo,
         oauth: oauthDraftSnapshot ?? {},
       };
       try {
@@ -224,6 +229,7 @@ const CreateProject = () => {
     stakeholderEmailTags,
     startFromScratch,
     scratchPrompt,
+    importUiFromDevelopmentRepo,
   ]);
 
   const loadIntegrations = async () => {
@@ -274,6 +280,9 @@ const CreateProject = () => {
       if (typeof d.scratchPrompt === "string") {
         setScratchPrompt(d.scratchPrompt);
       }
+      if (typeof d.importUiFromDevelopmentRepo === "boolean") {
+        setImportUiFromDevelopmentRepo(d.importUiFromDevelopmentRepo);
+      }
     } catch {
       try {
         sessionStorage.removeItem(PM_CREATE_BODY_OAUTH_DRAFT);
@@ -295,6 +304,7 @@ const CreateProject = () => {
           stakeholderEmailTags,
           startFromScratch,
           scratchPrompt,
+          importUiFromDevelopmentRepo,
         }),
       );
     } catch {
@@ -307,6 +317,7 @@ const CreateProject = () => {
     stakeholderEmailTags,
     startFromScratch,
     scratchPrompt,
+    importUiFromDevelopmentRepo,
   ]);
 
   useEffect(() => {
@@ -426,6 +437,8 @@ const CreateProject = () => {
         if (sp) {
           projectData.prompt = sp;
         }
+      } else if (importUiFromDevelopmentRepo) {
+        projectData.importUiFromDevelopmentRepo = true;
       }
       const response = await createProject(projectData);
       clearStoredCreateProjectDraft();
@@ -438,7 +451,13 @@ const CreateProject = () => {
         toast.success("Project created — add your prompt on the project page");
         navigate(`/projects/details/${response.id}`);
       } else {
-        toast.success("Project created successfully");
+        if (response?.importUiFromDevelopmentRepoScheduled) {
+          toast.success(
+            "Project created. Migrate Frontend started in the background (see Release Management). The new revision stays off the live site until a release is active.",
+          );
+        } else {
+          toast.success("Project created successfully");
+        }
         navigate("/dashboard");
       }
     } catch (err) {
@@ -619,6 +638,39 @@ const CreateProject = () => {
                   </div>
                 )}
               </div>
+
+              {!startFromScratch && (
+                <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-4">
+                  <Checkbox
+                    id="import-ui-from-dev"
+                    checked={importUiFromDevelopmentRepo}
+                    onCheckedChange={(v) =>
+                      setImportUiFromDevelopmentRepo(v === true)
+                    }
+                    className="mt-0.5"
+                  />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <Label
+                      htmlFor="import-ui-from-dev"
+                      className="cursor-pointer font-medium text-foreground"
+                    >
+                      Import UI from development repository
+                    </Label>
+                    <p className="max-w-prose text-xs text-muted-foreground">
+                      After the project is created, start{" "}
+                      <strong>Migrate Frontend</strong> automatically: copy the
+                      integration UI from your GitHub dev repo into the platform
+                      repository (requires Cursor API on the server). If the project
+                      has no releases yet, a draft{" "}
+                      <code className="text-xs">1.0.0</code> release is created first.
+                      The new platform revision is attached to that draft release, so
+                      it is <strong>not</strong> the live site version until you set a
+                      release to <strong>active</strong> (the app only marks one
+                      revision live per project, on the active release).
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">

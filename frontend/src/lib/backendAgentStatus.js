@@ -36,3 +36,13 @@ export function isBackendAgentPollActive(status) {
   }
   return true;
 }
+
+/** Migrate Frontend pipeline phases from GET /api/cursor/agents/:id → migrateFrontendPipeline.phase */
+export function isMigrateFrontendPipelineTerminal(phase) {
+  if (!phase || typeof phase !== "string") return false;
+  return (
+    phase === "completed" ||
+    phase === "platform_failed" ||
+    phase === "agent_failed"
+  );
+}

@@ -3,9 +3,12 @@ import { ReleaseStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import {
+  composeMigrateFrontendPipelineUi,
+  composeReadonlyMigrateFrontendPipelineUi,
   createAgentForProjectRelease,
   cursorRequest,
   getCursorAgentById,
+  isReadonlyMigrateAgentId,
   postCursorAgentFollowup,
   performMergeToLaunchpad,
 } from "../services/cursor.service.js";
@@ -179,14 +182,54 @@ router.post(
 );
 
 /** GET /api/cursor/agents/:id - Get agent status */
-router.get("/agents/:id", authenticateToken, requireCursorKey, async (req, res) => {
+router.get("/agents/:id", authenticateToken, async (req, res) => {
   const id = typeof req.params.id === "string" ? req.params.id.trim() : "";
   if (!id) {
     return res.status(400).json({ error: "Agent id is required" });
   }
 
+  if (!isReadonlyMigrateAgentId(id) && !process.env.CURSOR_API_KEY?.trim()) {
+    return res.status(503).json({ error: "Cursor API key not configured" });
+  }
+
   try {
     const { status, data } = await getCursorAgentById(id);
+    if (status === 200 && data && typeof data === "object") {
+      const conv = await prisma.figmaConversion.findFirst({
+        where: { agentId: id },
+        select: {
+          id: true,
+          projectId: true,
+          releaseId: true,
+          flow: true,
+          status: true,
+          projectVersionId: true,
+          targetBranchName: true,
+          agentId: true,
+        },
+      });
+      if (conv?.projectId) {
+        try {
+          await assertProjectAccess(conv.projectId, req.user);
+        } catch (err) {
+          if (err instanceof ApiError) {
+            return res.status(err.statusCode).json({ error: err.message });
+          }
+          throw err;
+        }
+        if (isReadonlyMigrateAgentId(id)) {
+          const roPipe = composeReadonlyMigrateFrontendPipelineUi(conv);
+          if (roPipe) {
+            data.migrateFrontendPipeline = roPipe;
+          }
+        } else {
+          const pipeline = composeMigrateFrontendPipelineUi(conv, data.status);
+          if (pipeline) {
+            data.migrateFrontendPipeline = pipeline;
+          }
+        }
+      }
+    }
     return res.status(status).json(data);
   } catch (err) {
     if (err.code === "CURSOR_KEY_MISSING") {

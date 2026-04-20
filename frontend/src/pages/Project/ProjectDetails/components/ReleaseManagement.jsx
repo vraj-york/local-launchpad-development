@@ -13,6 +13,8 @@ import {
   importCursorRulesFolders,
   createProjectCustomCursorRule,
   fetchProjectCustomCursorRules,
+  startMigrateFrontend,
+  fetchCursorAgentById,
 } from "@/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -36,6 +38,7 @@ import {
   PenLine,
   Library,
   RotateCcw,
+  ArrowRightLeft,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -72,6 +75,7 @@ import {
   isBackendAgentFailureTerminal,
   isBackendAgentPollActive,
   isBackendAgentSuccessTerminal,
+  isMigrateFrontendPipelineTerminal,
   normalizeBackendAgentStatus,
 } from "@/lib/backendAgentStatus";
 
@@ -99,6 +103,7 @@ const CHANGELOG_FIELD_LABELS = {
   clientReviewAiSummary: "Review checklist (client link)",
   showClientReviewSummary: "Show checklist on client link",
   clientReviewAiGenerationContext: "AI-only instructions (not shown to clients)",
+  migrateFrontend: "Migrate Frontend",
 };
 
 function actualShipDateChanged(prevDate, nextDate) {
@@ -271,6 +276,27 @@ function maxReleaseTupleFromList(releasesList) {
   return maxTuple;
 }
 
+/** Prefer the active release; else the highest dot-version release name; else the first row. */
+function pickDefaultMigrateRelease(releasesList, activeRel) {
+  if (!Array.isArray(releasesList) || releasesList.length === 0) return null;
+  if (
+    activeRel &&
+    releasesList.some((r) => Number(r?.id) === Number(activeRel.id))
+  ) {
+    return activeRel;
+  }
+  let best = null;
+  let bestTuple = null;
+  for (const r of releasesList) {
+    const t = parseReleaseNameToTuple(r?.name);
+    if (t && (!bestTuple || compareTuples(t, bestTuple) > 0)) {
+      bestTuple = t;
+      best = r;
+    }
+  }
+  return best ?? releasesList[0];
+}
+
 /** Default patch bump for placeholder / autofill (any greater version is allowed). */
 function getSuggestedPatchReleaseNameFromList(releasesList) {
   const maxTuple = maxReleaseTupleFromList(releasesList);
@@ -292,6 +318,15 @@ function userCanManageReleasesForProject(user, project) {
   if (!userEmail) return false;
   const assigned = storageStringToEmailsArray(project?.assignedUserEmails);
   return assigned.some((a) => normalizeEmailForAccess(a) === userEmail);
+}
+
+/** Developer repo URL is GitHub (HTTPS or git@github.com:…). */
+function isGithubDevelopmentRepoUrl(raw) {
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (!s) return false;
+  if (s.includes("github.com")) return true;
+  if (s.startsWith("git@github.com:")) return true;
+  return false;
 }
 
 const ReleaseManagement = ({ projectId, projectName, project }) => {
@@ -380,6 +415,59 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
   const hasDeveloperRepo = Boolean(
     String(project?.developmentRepoUrl ?? "").trim(),
   );
+
+  const hasPlatformRepo = Boolean(String(project?.gitRepoPath ?? "").trim());
+
+  const developmentRepoIsGithubCompatible = useMemo(
+    () => isGithubDevelopmentRepoUrl(project?.developmentRepoUrl),
+    [project?.developmentRepoUrl],
+  );
+
+  const canMigrateFrontend =
+    canManageReleases &&
+    hasDeveloperRepo &&
+    hasPlatformRepo &&
+    developmentRepoIsGithubCompatible;
+
+  const migrateFrontendDisabledReason = useMemo(() => {
+    if (canMigrateFrontend) return null;
+    if (!canManageReleases) {
+      return "You need permission to manage releases (project creator, admin, or listed assignee).";
+    }
+    if (!hasDeveloperRepo) {
+      return "Set a developer repository URL on the project.";
+    }
+    if (!hasPlatformRepo) {
+      return "Set the platform Git repository path (gitRepoPath) on the project.";
+    }
+    if (!developmentRepoIsGithubCompatible) {
+      return "Developer repository must be on GitHub (https URL or git@github.com:…).";
+    }
+    return null;
+  }, [
+    canMigrateFrontend,
+    canManageReleases,
+    hasDeveloperRepo,
+    hasPlatformRepo,
+    developmentRepoIsGithubCompatible,
+  ]);
+
+  const [migrateFrontendConfirmRelease, setMigrateFrontendConfirmRelease] =
+    useState(null);
+  const [migrateFrontendSubmitting, setMigrateFrontendSubmitting] =
+    useState(false);
+  const [migrateFrontendProgressByRelease, setMigrateFrontendProgressByRelease] =
+    useState({});
+  /** Dedupe resume polls after refresh: `${releaseId}:${agentId}` */
+  const migrateFrontendResumePollRef = useRef(new Set());
+  const [migrateReleasePickerOpen, setMigrateReleasePickerOpen] =
+    useState(false);
+  const [migratePickerReleaseId, setMigratePickerReleaseId] = useState("");
+  const [migrateConfirmAcknowledged, setMigrateConfirmAcknowledged] =
+    useState(false);
+  /** `"__new__"` = create next revision; else numeric ProjectVersion id string. */
+  const [migrateSelectedProjectVersionId, setMigrateSelectedProjectVersionId] =
+    useState("__new__");
 
   const lastRelease = latestReleaseTuple
     ? latestReleaseTuple.map(String).join(".")
@@ -554,6 +642,207 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     }
   }, [projectId]);
 
+  const pollMigrateFrontendAgent = useCallback(
+    async (releaseId, agentId) => {
+      const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (;;) {
+        try {
+          const data = await fetchCursorAgentById(agentId);
+          const st = data?.status != null ? String(data.status) : "";
+          const pipe = data?.migrateFrontendPipeline ?? null;
+          setMigrateFrontendProgressByRelease((prev) => ({
+            ...prev,
+            [releaseId]: { agentId, lastStatus: st, pipeline: pipe },
+          }));
+
+          if (pipe && isMigrateFrontendPipelineTerminal(pipe.phase)) {
+            if (pipe.phase === "completed") {
+              toast.success(
+                pipe.detail ? `${pipe.headline}: ${pipe.detail}` : pipe.headline,
+              );
+            } else {
+              toast.error(
+                pipe.detail ? `${pipe.headline}: ${pipe.detail}` : pipe.headline,
+              );
+            }
+            setMigrateFrontendProgressByRelease((prev) => {
+              const next = { ...prev };
+              delete next[releaseId];
+              return next;
+            });
+            await loadReleases();
+            setTimeout(() => {
+              loadReleases().catch(() => {});
+            }, 25000);
+            return;
+          }
+
+          if (!pipe && isBackendAgentSuccessTerminal(st)) {
+            toast.success(
+              "Migrate Frontend finished. If the platform repo did not update, check the launchpad branch on GitHub or backend logs.",
+            );
+            setMigrateFrontendProgressByRelease((prev) => {
+              const next = { ...prev };
+              delete next[releaseId];
+              return next;
+            });
+            await loadReleases();
+            setTimeout(() => {
+              loadReleases().catch(() => {});
+            }, 25000);
+            return;
+          }
+          if (!pipe && isBackendAgentFailureTerminal(st)) {
+            toast.error(
+              `Migrate Frontend did not succeed (${String(st || "unknown")}).`,
+            );
+            setMigrateFrontendProgressByRelease((prev) => {
+              const next = { ...prev };
+              delete next[releaseId];
+              return next;
+            });
+            return;
+          }
+        } catch (err) {
+          toast.error(
+            err?.error || err?.message || "Failed to poll migration status",
+          );
+          setMigrateFrontendProgressByRelease((prev) => {
+            const next = { ...prev };
+            delete next[releaseId];
+            return next;
+          });
+          return;
+        }
+        await delay(5000);
+      }
+    },
+    [loadReleases],
+  );
+
+  useEffect(() => {
+    if (!Array.isArray(releases) || releases.length === 0) return;
+    for (const rel of releases) {
+      const o = rel?.ongoingMigrateFrontend;
+      if (!o?.agentId) continue;
+      const dedupeKey = `${rel.id}:${o.agentId}`;
+      if (migrateFrontendResumePollRef.current.has(dedupeKey)) continue;
+      migrateFrontendResumePollRef.current.add(dedupeKey);
+      void pollMigrateFrontendAgent(rel.id, o.agentId).finally(() => {
+        migrateFrontendResumePollRef.current.delete(dedupeKey);
+      });
+    }
+  }, [releases, pollMigrateFrontendAgent]);
+
+  useEffect(() => {
+    if (migrateFrontendConfirmRelease?.id == null) return;
+    setMigrateConfirmAcknowledged(false);
+    const versions = Array.isArray(migrateFrontendConfirmRelease.versions)
+      ? migrateFrontendConfirmRelease.versions
+      : [];
+    const tagged = versions.filter((v) => String(v?.gitTag || "").trim());
+    if (!tagged.length) {
+      setMigrateSelectedProjectVersionId("__new__");
+      return;
+    }
+    const active = tagged.find((v) => v.isActive);
+    const sorted = [...tagged].sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime(),
+    );
+    const pick = active ?? sorted[0];
+    setMigrateSelectedProjectVersionId(
+      pick?.id != null ? String(pick.id) : "__new__",
+    );
+  }, [migrateFrontendConfirmRelease?.id]);
+
+  const openMigrateFrontendFromHeader = useCallback(() => {
+    if (!canMigrateFrontend) return;
+    if (!releases.length) {
+      toast.error(
+        "Create a release first. Migrate Frontend runs per release and updates the platform Launchpad branch.",
+      );
+      return;
+    }
+    if (releases.length === 1) {
+      setMigrateFrontendConfirmRelease(releases[0]);
+      return;
+    }
+    const def = pickDefaultMigrateRelease(releases, activeRelease);
+    setMigratePickerReleaseId(
+      def?.id != null ? String(def.id) : String(releases[0].id),
+    );
+    setMigrateReleasePickerOpen(true);
+  }, [canMigrateFrontend, releases, activeRelease]);
+
+  const confirmMigrateReleasePicker = useCallback(() => {
+    const id = Number(migratePickerReleaseId);
+    const rel = releases.find((r) => Number(r.id) === id);
+    if (!rel) {
+      toast.error("Choose a release.");
+      return;
+    }
+    setMigrateReleasePickerOpen(false);
+    setMigrateFrontendConfirmRelease(rel);
+  }, [migratePickerReleaseId, releases]);
+
+  const submitMigrateFrontend = useCallback(async () => {
+    const rel = migrateFrontendConfirmRelease;
+    if (!rel?.id) return;
+    if (!migrateConfirmAcknowledged) {
+      toast.error("Check the confirmation box before starting.");
+      return;
+    }
+    setMigrateFrontendSubmitting(true);
+    try {
+      const pvRaw =
+        migrateSelectedProjectVersionId &&
+        migrateSelectedProjectVersionId !== "__new__"
+          ? Number(migrateSelectedProjectVersionId)
+          : null;
+      const projectVersionId =
+        pvRaw != null && Number.isInteger(pvRaw) && pvRaw > 0 ? pvRaw : undefined;
+      const data = await startMigrateFrontend(projectId, rel.id, {
+        projectVersionId,
+        migrateFrontend: migrateConfirmAcknowledged,
+      });
+      const agentId = data?.agentId;
+      if (!agentId) {
+        toast.error("Migrate Frontend started but no run id was returned.");
+        setMigrateFrontendConfirmRelease(null);
+        return;
+      }
+      setMigrateFrontendConfirmRelease(null);
+      setMigrateFrontendProgressByRelease((prev) => ({
+        ...prev,
+        [rel.id]: { agentId, lastStatus: "CREATING" },
+      }));
+      toast.success(
+        "Migrate Frontend started. The developer repository is read-only; changes apply only to your platform repo.",
+      );
+      const dedupeKey = `${rel.id}:${agentId}`;
+      migrateFrontendResumePollRef.current.add(dedupeKey);
+      void pollMigrateFrontendAgent(rel.id, agentId).finally(() => {
+        migrateFrontendResumePollRef.current.delete(dedupeKey);
+      });
+    } catch (err) {
+      toast.error(
+        (typeof err === "object" && err && err.error) ||
+          err?.message ||
+          "Could not start Migrate Frontend",
+      );
+    } finally {
+      setMigrateFrontendSubmitting(false);
+    }
+  }, [
+    migrateFrontendConfirmRelease,
+    migrateConfirmAcknowledged,
+    migrateSelectedProjectVersionId,
+    projectId,
+    pollMigrateFrontendAgent,
+  ]);
+
   const submitRevertActiveToBaseline = useCallback(async () => {
     if (!revertBaselineDialog || !activeRelease) return;
     const reason = revertBaselineReason.trim();
@@ -642,6 +931,19 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     const intervalId = setInterval(() => void loadReleasesSilent(), 4000);
     return () => clearInterval(intervalId);
   }, [projectId, needsBackendAgentPoll, loadReleasesSilent]);
+
+  const needsMigrateFrontendPoll = useMemo(
+    () =>
+      Object.keys(migrateFrontendProgressByRelease).length > 0 ||
+      releases.some((r) => r?.ongoingMigrateFrontend?.agentId),
+    [migrateFrontendProgressByRelease, releases],
+  );
+
+  useEffect(() => {
+    if (!projectId || !needsMigrateFrontendPoll) return undefined;
+    const intervalId = setInterval(() => void loadReleasesSilent(), 6000);
+    return () => clearInterval(intervalId);
+  }, [projectId, needsMigrateFrontendPoll, loadReleasesSilent]);
 
   const loadChangelog = async (releaseId) => {
     setChangelogLoadingId(releaseId);
@@ -1075,6 +1377,36 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
             <Plus />
             Create Release
           </Button>
+          {canMigrateFrontend ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2 border-slate-200 bg-white/80 hover:bg-slate-50"
+              onClick={() => void openMigrateFrontendFromHeader()}
+            >
+              <ArrowRightLeft className="h-4 w-4 shrink-0" />
+              Migrate Frontend
+            </Button>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-block cursor-not-allowed">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2 border-slate-200 bg-white/80"
+                    disabled
+                  >
+                    <ArrowRightLeft className="h-4 w-4 shrink-0" />
+                    Migrate Frontend
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs text-left">
+                {migrateFrontendDisabledReason}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
         )}
       </PageHeader>
@@ -1252,7 +1584,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                                 </time>
                               </span>
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               {canEditRelease && (
                                 <Button
                                   type="button"
@@ -1267,6 +1599,54 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                                     : "Edit Release"}
                                 </Button>
                               )}
+                              {canMigrateFrontend ? (
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="sm"
+                                  className="w-fit gap-2 bg-slate-100/70 text-slate-700 ring-1 ring-slate-200/60"
+                                  onClick={() =>
+                                    setMigrateFrontendConfirmRelease(release)
+                                  }
+                                  disabled={Boolean(
+                                    migrateFrontendProgressByRelease[
+                                      release.id
+                                    ],
+                                  )}
+                                >
+                                  <ArrowRightLeft className="size-3.5" />
+                                  Migrate Frontend
+                                </Button>
+                              ) : null}
+                              {migrateFrontendProgressByRelease[release.id] ? (
+                                <span className="inline-flex max-w-[min(100%,18rem)] flex-col gap-0.5 rounded-md border border-amber-200/80 bg-amber-50/90 px-2 py-1 text-[11px] font-medium text-amber-950">
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Loader2
+                                      className="size-3.5 shrink-0 animate-spin"
+                                      aria-hidden
+                                    />
+                                    <span className="leading-tight">
+                                      {migrateFrontendProgressByRelease[release.id]
+                                        ?.pipeline?.headline ??
+                                        `Migrate Frontend: ${normalizeBackendAgentStatus(
+                                          migrateFrontendProgressByRelease[
+                                            release.id
+                                          ]?.lastStatus,
+                                        )}`}
+                                    </span>
+                                  </span>
+                                  {migrateFrontendProgressByRelease[release.id]
+                                    ?.pipeline?.detail ? (
+                                    <span className="pl-[1.375rem] text-[10px] font-normal leading-snug text-amber-900/85">
+                                      {
+                                        migrateFrontendProgressByRelease[
+                                          release.id
+                                        ].pipeline.detail
+                                      }
+                                    </span>
+                                  ) : null}
+                                </span>
+                              ) : null}
                               <span className="inline-flex min-w-0 max-w-full items-center gap-2 sm:max-w-44 md:max-w-52">
                                 <HubProfileAvatar
                                   email={release.creator?.email}
@@ -1784,6 +2164,169 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                 </>
               ) : (
                 "Confirm revert"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={migrateReleasePickerOpen}
+        onOpenChange={(open) => {
+          setMigrateReleasePickerOpen(open);
+          if (!open) setMigratePickerReleaseId("");
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Migrate Frontend — choose release</DialogTitle>
+            <DialogDescription className="text-left leading-relaxed">
+              Pick which release this migration applies to (build and changelog are
+              stored on that release). With multiple releases, the selector
+              defaults to the <strong>active</strong> one when it exists;
+              otherwise to the <strong>highest</strong> dot-version name (for
+              example <span className="font-mono text-xs">2.1.0</span> over{" "}
+              <span className="font-mono text-xs">1.0.0</span>). If no name
+              matches that pattern, the first release in the list is selected.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <Label htmlFor="migrate-release-select">Release</Label>
+            <Select
+              value={migratePickerReleaseId || undefined}
+              onValueChange={(v) => setMigratePickerReleaseId(v)}
+            >
+              <SelectTrigger id="migrate-release-select" className="w-full">
+                <SelectValue placeholder="Select a release" />
+              </SelectTrigger>
+              <SelectContent>
+                {releases.map((r) => (
+                  <SelectItem key={r.id} value={String(r.id)}>
+                    {r.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setMigrateReleasePickerOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="text-white"
+              onClick={() => void confirmMigrateReleasePicker()}
+            >
+              Continue
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(migrateFrontendConfirmRelease)}
+        onOpenChange={(open) => {
+          if (!open) setMigrateFrontendConfirmRelease(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Migrate Frontend from developer repo?</DialogTitle>
+            <DialogDescription className="text-left leading-relaxed">
+              <strong>Read-only</strong> clone of your GitHub dev repo: UI folder
+              (e.g. <code className="text-xs">frontend/</code>) is copied into the
+              platform repo (<code className="text-xs">launchpad</code> + migrate
+              branch), then tagged and deployed for{" "}
+              <strong>{migrateFrontendConfirmRelease?.name ?? "—"}</strong>. Pick a
+              platform revision below: <strong>new</strong> tag or{" "}
+              <strong>reuse</strong> an existing one.
+            </DialogDescription>
+          </DialogHeader>
+          {(() => {
+            const rel = migrateFrontendConfirmRelease;
+            const tagged = Array.isArray(rel?.versions)
+              ? rel.versions.filter((v) => String(v?.gitTag || "").trim())
+              : [];
+            if (!tagged.length) {
+              return (
+                <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  No tagged revisions on this release yet. The migration will
+                  create a <strong>new</strong> platform revision when deploy
+                  completes.
+                </p>
+              );
+            }
+            return (
+              <div className="grid gap-2 py-1">
+                <Label htmlFor="migrate-revision-select">Platform revision</Label>
+                <Select
+                  value={migrateSelectedProjectVersionId}
+                  onValueChange={(v) => setMigrateSelectedProjectVersionId(v)}
+                >
+                  <SelectTrigger id="migrate-revision-select" className="w-full">
+                    <SelectValue placeholder="Choose revision" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__new__">
+                      New revision (next tag on this release)
+                    </SelectItem>
+                    {tagged.map((v) => (
+                      <SelectItem key={v.id} value={String(v.id)}>
+                        {v.version}
+                        {v.isActive ? " (Active)" : ""} — tag {v.gitTag}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            );
+          })()}
+          <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-3">
+            <Checkbox
+              id="migrate-frontend-ack"
+              checked={migrateConfirmAcknowledged}
+              onCheckedChange={(v) =>
+                setMigrateConfirmAcknowledged(Boolean(v === true))
+              }
+              className="mt-0.5"
+            />
+            <Label
+              htmlFor="migrate-frontend-ack"
+              className="cursor-pointer text-sm font-medium leading-snug text-slate-800"
+            >
+              Frontend migrate: I understand this updates the Launchpad UI for this
+              release from the developer repo (UI/integration code only, not the
+              backend tree).
+            </Label>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setMigrateFrontendConfirmRelease(null)}
+              disabled={migrateFrontendSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="text-white"
+              onClick={() => void submitMigrateFrontend()}
+              disabled={
+                migrateFrontendSubmitting || !migrateConfirmAcknowledged
+              }
+            >
+              {migrateFrontendSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  Starting…
+                </>
+              ) : (
+                "Start migration"
               )}
             </Button>
           </DialogFooter>
