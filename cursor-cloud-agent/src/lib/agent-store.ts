@@ -102,7 +102,8 @@ export function applyLaunchDefaults(body: CloudLaunchRequest): {
   const target = body.target ?? {};
   return {
     model: body.model?.trim() || "default",
-    sourceRef: body.source.ref?.trim() || "main",
+    /** Empty string = use remote default branch after clone (see ensureWorkspace). */
+    sourceRef: body.source.ref?.trim() ?? "",
     target: {
       autoCreatePr: target.autoCreatePr ?? true,
       openAsCursorGithubApp: target.openAsCursorGithubApp ?? false,
@@ -163,6 +164,16 @@ export async function setAgentSessionId(id: string, cursorSessionId: string): Pr
   const conn = await getDb();
   const now = Date.now();
   conn.run("UPDATE agents SET cursor_session_id = ?, updated_at = ? WHERE id = ?", [cursorSessionId, now, id]);
+  persistDb();
+}
+
+/** Persist the branch actually checked out (e.g. remote default) when source.ref was omitted. */
+export async function setAgentResolvedSourceRef(id: string, sourceRef: string): Promise<void> {
+  const ref = sourceRef.trim();
+  if (!ref) return;
+  const conn = await getDb();
+  const now = Date.now();
+  conn.run("UPDATE agents SET source_ref = ?, updated_at = ? WHERE id = ?", [ref, now, id]);
   persistDb();
 }
 
@@ -299,7 +310,8 @@ export function mapRowToCloudAgent(row: Record<string, SqlValue>, origin: string
   const id = row.id as string;
   const createdAtMs = row.created_at as number;
   const sourceRepo = (row.source_repository as string | null) ?? (row.workspace as string);
-  const sourceRef = (row.source_ref as string | null) ?? "main";
+  const rawRef = (row.source_ref as string | null)?.trim();
+  const sourceRef = rawRef && rawRef.length > 0 ? rawRef : "(repo-default)";
 
   const source: CloudAgentListItem["source"] = { repository: sourceRepo, ref: sourceRef };
   const sourcePr = row.source_pr_url as string | null;
@@ -431,7 +443,7 @@ export async function getAgentFollowupContext(
     workspace: row.workspace as string,
     cursorSessionId,
     model: (row.model as string | null)?.trim() || "default",
-    sourceRef: (row.source_ref as string | null)?.trim() || "main",
+    sourceRef: (row.source_ref as string | null)?.trim() || "",
     workBranch: (row.target_branch_name as string | null)?.trim() || null,
     autoCreatePr: intToBool(row.auto_create_pr),
     webhookUrl: (row.webhook_url as string | null)?.trim() || null,

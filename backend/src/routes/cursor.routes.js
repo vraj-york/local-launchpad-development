@@ -3,6 +3,7 @@ import { ReleaseStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import {
+  composeMigrateFrontendPipelineUi,
   createAgentForProjectRelease,
   cursorRequest,
   getCursorAgentById,
@@ -187,6 +188,34 @@ router.get("/agents/:id", authenticateToken, requireCursorKey, async (req, res) 
 
   try {
     const { status, data } = await getCursorAgentById(id);
+    if (status === 200 && data && typeof data === "object") {
+      const conv = await prisma.figmaConversion.findFirst({
+        where: { agentId: id },
+        select: {
+          id: true,
+          projectId: true,
+          releaseId: true,
+          flow: true,
+          status: true,
+          projectVersionId: true,
+          targetBranchName: true,
+        },
+      });
+      if (conv?.projectId) {
+        try {
+          await assertProjectAccess(conv.projectId, req.user);
+        } catch (err) {
+          if (err instanceof ApiError) {
+            return res.status(err.statusCode).json({ error: err.message });
+          }
+          throw err;
+        }
+        const pipeline = composeMigrateFrontendPipelineUi(conv, data.status);
+        if (pipeline) {
+          data.migrateFrontendPipeline = pipeline;
+        }
+      }
+    }
     return res.status(status).json(data);
   } catch (err) {
     if (err.code === "CURSOR_KEY_MISSING") {

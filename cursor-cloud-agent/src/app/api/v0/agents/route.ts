@@ -198,7 +198,7 @@ export async function POST(req: Request) {
     status: "CREATING",
     source: {
       repository: sourceRepository || repoWorkspace,
-      ref: sourceRef,
+      ref: sourceRef || "(repo-default)",
       ...(sourcePrUrl ? { prUrl: sourcePrUrl } : {}),
     },
     target: {

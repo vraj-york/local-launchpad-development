@@ -21,6 +21,7 @@ import {
   getAgentUserEmail,
   getDecryptedApiKeyForAgent,
   setAgentConversation,
+  setAgentResolvedSourceRef,
   setAgentResultFields,
   setAgentSessionId,
   updateAgentStatus,
@@ -217,6 +218,25 @@ async function getPrContext(
   }
 }
 
+/** Remote HEAD symref or current branch — used when launch omitted source.ref. */
+async function inferRemoteDefaultBranch(
+  cwd: string,
+  apiKey: string,
+  githubPat: string | null,
+): Promise<string> {
+  const sym = await runCmdAllowFail(
+    "git",
+    ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"],
+    cwd,
+    apiKey,
+    githubPat,
+  );
+  const fromSym = sym?.replace(/^origin\//, "").trim();
+  if (fromSym) return fromSym;
+  const head = await runCmdAllowFail("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd, apiKey, githubPat);
+  return (head || "").trim();
+}
+
 async function ensureWorkspace(
   input: LaunchAgentBackgroundInput,
   apiKey: string,
@@ -271,7 +291,10 @@ async function ensureWorkspace(
   const prCtx = input.request.source.prUrl
     ? await getPrContext(input.request.source.prUrl, cwd, k, githubPat)
     : {};
-  const baseRef = prCtx.baseRefName || input.sourceRef || "main";
+  let baseRef = (prCtx.baseRefName || input.sourceRef?.trim() || "").trim();
+  if (!baseRef) {
+    baseRef = (await inferRemoteDefaultBranch(cwd, k, githubPat)) || "main";
+  }
   let workBranch = input.branchName;
 
   if (input.request.source.prUrl && input.request.target?.autoBranch === false) {
@@ -360,11 +383,16 @@ async function tryPublishCloudAgentChanges(
   }
   const wb = workBranch.trim();
 
+  let effectiveBase = baseRef?.trim() || "";
+  if (!effectiveBase) {
+    effectiveBase = (await inferRemoteDefaultBranch(cwd, apiKey, githubPat)) || "main";
+  }
+
   logGit("publish.begin", {
     agentId,
     cwd,
     workBranch: wb,
-    baseRef,
+    baseRef: effectiveBase,
     autoCreatePr,
   });
 
@@ -410,12 +438,12 @@ async function tryPublishCloudAgentChanges(
   }
 
   try {
-    logGit("pr.attempt", { agentId, baseRef, head: wb });
+    logGit("pr.attempt", { agentId, baseRef: effectiveBase, head: wb });
     const prTitle = summary ? summary.slice(0, 120) : `Cloud agent ${agentId}`;
     const prBody = summary || `Automated changes from cloud agent ${agentId}.`;
     const prOutput = await runCmd(
       "gh",
-      ["pr", "create", "--base", baseRef, "--head", wb, "--title", prTitle, "--body", prBody],
+      ["pr", "create", "--base", effectiveBase, "--head", wb, "--title", prTitle, "--body", prBody],
       cwd,
       apiKey,
       githubPat,
@@ -618,6 +646,7 @@ export async function launchAgentInBackground(input: LaunchAgentBackgroundInput)
     const { cwd, baseRef, workBranch } = await ensureWorkspace(input, apiKey, githubPat);
     if (await abortRunIfStopRequested(input.id, whUrl, whSecret)) return;
     logRun("workspace.ready", { agentId: input.id, cwd, baseRef, workBranch });
+    await setAgentResolvedSourceRef(input.id, baseRef);
 
     const figmaResolved = await resolveFigmaApiKeyForAgentId(input.id);
     logRun("mcp.figma", {

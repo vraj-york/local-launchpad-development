@@ -778,7 +778,10 @@ export const startMigrateFrontend = async (projectId, releaseId, opts = {}) => {
   }
 };
 
-/** GET /api/cursor/agents/:id — Cursor Cloud agent payload (status, branch, etc.). */
+/**
+ * GET /api/cursor/agents/:id — Cursor Cloud agent payload (status, branch, etc.).
+ * Migrate Frontend jobs may include `migrateFrontendPipeline` (phase, headline, detail).
+ */
 export const fetchCursorAgentById = async (agentId) => {
   try {
     const enc = encodeURIComponent(String(agentId || "").trim());

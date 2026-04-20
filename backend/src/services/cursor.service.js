@@ -84,6 +84,83 @@ export async function markScratchVersionFailedIfCreating(projectId) {
 const POLL_INTERVAL_MS = 5000;
 const ENV_GITHUB_USERNAME = process.env.GITHUB_USERNAME;
 
+/** Matches `FigmaConversion.flow` for Migrate Frontend (tolerate casing / stray spaces). */
+function isMigrateFrontendFigmaFlow(flow) {
+  return (
+    String(flow ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_") === "migrate_frontend"
+  );
+}
+
+/**
+ * UI payload for Migrate Frontend: Cursor agent + platform merge/deploy phases.
+ * @param {{ flow: string|null, status: string|null, projectVersionId: number|null, targetBranchName: string|null, id: number, releaseId: number }} conv
+ * @param {string|null|undefined} cloudAgentStatus — status from Cursor Cloud for this agent
+ * @returns {object|null}
+ */
+export function composeMigrateFrontendPipelineUi(conv, cloudAgentStatus) {
+  if (!conv || !isMigrateFrontendFigmaFlow(conv.flow)) return null;
+  const cloud = cloudAgentStatus != null ? String(cloudAgentStatus) : "";
+  const db = conv.status != null ? String(conv.status) : "";
+
+  if (db === "MIGRATE_PLATFORM_SYNC_FAILED") {
+    return {
+      phase: "platform_failed",
+      headline: "Platform sync failed",
+      detail:
+        "Copying the developer UI into the platform repo or deploy failed. Check backend logs for the error.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      devBranch: conv.targetBranchName ?? null,
+    };
+  }
+  if (isCursorAgentFailureTerminal(cloud)) {
+    return {
+      phase: "agent_failed",
+      headline: "Cursor agent failed",
+      detail: cloud ? `Agent status: ${cloud}` : "Agent did not complete successfully.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      devBranch: conv.targetBranchName ?? null,
+    };
+  }
+  if (!isCursorAgentSuccessTerminal(cloud)) {
+    return {
+      phase: "agent_running",
+      headline: "Cursor agent running",
+      detail:
+        "Working in the development repository. When the agent finishes, the platform launchpad branch will be updated automatically.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      devBranch: conv.targetBranchName ?? null,
+      agentStatus: cloud || null,
+    };
+  }
+  if (conv.projectVersionId != null) {
+    return {
+      phase: "completed",
+      headline: "Migrate Frontend complete",
+      detail:
+        "Platform repository updated on branch launchpad and release pipeline finished.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      projectVersionId: conv.projectVersionId,
+      devBranch: conv.targetBranchName ?? null,
+    };
+  }
+  return {
+    phase: "platform_working",
+    headline: "Syncing to platform…",
+    detail:
+      "Agent finished. Merging UI into the platform repo (launchpad branch) and running deploy—this can take a minute.",
+    figmaConversionId: conv.id,
+    releaseId: conv.releaseId,
+    devBranch: conv.targetBranchName ?? null,
+  };
+}
+
 /** Matches cursor-cloud-agent JSON when no PAT is stored for `?email=`. */
 const CURSOR_CLOUD_GITHUB_PAT_ERROR_CODE = "GITHUB_PAT_NOT_CONFIGURED";
 
@@ -165,7 +242,7 @@ async function registerGithubPatWithCursorCloudAgent(project) {
  * On GITHUB_PAT_NOT_CONFIGURED, push OAuth token from the project then retry once.
  * @param {{ method: string, path: string, body?: object, projectId?: number|null }} options
  */
-async function cursorRequestWithProjectAndPatRetry(options) {
+export async function cursorRequestWithProjectAndPatRetry(options) {
   const { method, path, body, projectId } = options;
   const query = await getCreatorEmailQueryForProject(projectId);
   let result = await cursorRequest({ method, path, body, query });
@@ -1530,7 +1607,7 @@ export function startAgentPolling(agentId) {
       }
 
       if (isCursorAgentSuccessTerminal(agentStatus)) {
-        if (convRow?.flow === "migrate_frontend") {
+        if (isMigrateFrontendFigmaFlow(convRow?.flow)) {
           try {
             const { runMigrateFrontendPhaseBFromPoller } = await import(
               "./migrateFrontend.service.js"
@@ -1541,10 +1618,22 @@ export function startAgentPolling(agentId) {
               convRow,
             });
           } catch (migrateErr) {
+            const msg = migrateErr?.message || migrateErr;
             console.error("[cursor] poll: migrate frontend phase B failed", {
               agentId: id,
-              error: migrateErr?.message || migrateErr,
+              error: msg,
             });
+            try {
+              await prisma.figmaConversion.updateMany({
+                where: { agentId: id },
+                data: { status: "MIGRATE_PLATFORM_SYNC_FAILED" },
+              });
+            } catch (persistErr) {
+              console.error("[cursor] poll: could not persist migrate sync failure status", {
+                agentId: id,
+                error: persistErr?.message || persistErr,
+              });
+            }
           }
           return;
         }

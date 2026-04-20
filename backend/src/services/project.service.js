@@ -2539,12 +2539,7 @@ export const switchProjectVersion = async (
     const projectsDir = getProjectsDir();
 
     const gitDir = path.join(projectsDir, ".git");
-    if (!fs.existsSync(gitDir)) {
-      throw new ApiError(
-        503,
-        "Preview unavailable: git repo not found. Deploy at least one release first."
-      );
-    }
+    const hasSharedGit = fs.existsSync(gitDir);
 
     const previewDir = path.join(backendRoot, "_preview", `project_${projectId}`);
     const previewRepo = path.join(previewDir, "repo");
@@ -2582,71 +2577,119 @@ export const switchProjectVersion = async (
       await fs.remove(previewDir).catch(() => { });
       await fs.ensureDir(previewDir);
 
-      runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
-      deleteLocalGitTag(gitDir, tag);
-      // Fetch tag: prefer project's repo (e.g. projects/Launchpad → binalc-web/launchpad) when set
-      const fetchFromProjectRepo = () => {
-        if (!project.gitRepoPath?.trim() || !ghTokenPreview?.trim()) return false;
-        const parsed = parseGitRepoPath(project.gitRepoPath.trim());
-        if (!parsed) return false;
-        const { owner, repo } = parsed;
-        const token = ghTokenPreview.trim();
-        const fetchUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
-        const gitArgs = (refspec) => ["--git-dir", gitDir, "fetch", fetchUrl, refspec];
-        try {
-          execFileSync("git", gitArgs(`refs/tags/${tag}:refs/tags/${tag}`), {
-            cwd: backendRoot,
-            encoding: "utf8",
-            timeout: 120000,
-          });
-          return true;
-        } catch {
+      if (hasSharedGit) {
+        runCommand(`git --git-dir="${gitDir}" worktree prune`, backendRoot);
+        deleteLocalGitTag(gitDir, tag);
+        // Fetch tag: prefer project's repo (e.g. projects/Launchpad → binalc-web/launchpad) when set
+        const fetchFromProjectRepo = () => {
+          if (!project.gitRepoPath?.trim() || !ghTokenPreview?.trim()) return false;
+          const parsed = parseGitRepoPath(project.gitRepoPath.trim());
+          if (!parsed) return false;
+          const { owner, repo } = parsed;
+          const token = ghTokenPreview.trim();
+          const fetchUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+          const gitArgs = (refspec) => ["--git-dir", gitDir, "fetch", fetchUrl, refspec];
           try {
-            execFileSync("git", [...gitArgs("tag"), tag], {
+            execFileSync("git", gitArgs(`refs/tags/${tag}:refs/tags/${tag}`), {
               cwd: backendRoot,
               encoding: "utf8",
               timeout: 120000,
             });
             return true;
           } catch {
-            return false;
+            try {
+              execFileSync("git", [...gitArgs("tag"), tag], {
+                cwd: backendRoot,
+                encoding: "utf8",
+                timeout: 120000,
+              });
+              return true;
+            } catch {
+              return false;
+            }
+          }
+        };
+        const fetchedFromProject = fetchFromProjectRepo();
+        if (!fetchedFromProject) {
+          try {
+            runCommand(
+              `git --git-dir="${gitDir}" fetch origin "refs/tags/${tag}:refs/tags/${tag}"`,
+              backendRoot,
+            );
+          } catch {
+            try {
+              runCommand(
+                `git --git-dir="${gitDir}" fetch origin tag "${tag}"`,
+                backendRoot,
+              );
+            } catch (_) {
+              // Tag may already exist locally (e.g. from ZIP upload)
+            }
           }
         }
-      };
-      const fetchedFromProject = fetchFromProjectRepo();
-      if (!fetchedFromProject) {
+        // Ensure tag exists locally so we give a clear error instead of "invalid reference"
         try {
           runCommand(
-            `git --git-dir="${gitDir}" fetch origin "refs/tags/${tag}:refs/tags/${tag}"`,
+            `git --git-dir="${gitDir}" rev-parse --verify "refs/tags/${tag}"`,
             backendRoot,
           );
         } catch {
+          const hint = project.gitRepoPath
+            ? "Ensure the tag exists on the project's GitHub repo and that gitRepoPath + githubToken are set for this project."
+            : "Ensure the tag exists on the remote and that projects/.git remote \"origin\" points to the correct repository, or set the project's gitRepoPath + githubToken.";
+          throw new ApiError(
+            400,
+            `Tag "${tag}" not found. ${hint}`
+          );
+        }
+        runCommand(`git --git-dir="${gitDir}" worktree add "${previewRepo}" "${tag}"`, backendRoot);
+      } else {
+        if (!ghTokenPreview?.trim() || !project.gitRepoPath?.trim()) {
+          throw new ApiError(
+            503,
+            "Preview unavailable: set gitRepoPath and GitHub credentials on the project, or upload a release once to initialize the server git cache (projects/.git)."
+          );
+        }
+        const parsed = parseGitRepoPath(project.gitRepoPath.trim());
+        if (!parsed) {
+          throw new ApiError(400, "Invalid gitRepoPath; cannot clone for preview.");
+        }
+        const { owner, repo } = parsed;
+        const token = ghTokenPreview.trim();
+        const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+        await fs.ensureDir(previewRepo);
+        try {
+          execFileSync("git", ["clone", cloneUrl, "."], {
+            cwd: previewRepo,
+            encoding: "utf8",
+            stdio: "pipe",
+            timeout: 300000,
+          });
           try {
-            runCommand(
-              `git --git-dir="${gitDir}" fetch origin tag "${tag}"`,
-              backendRoot,
+            execFileSync(
+              "git",
+              ["fetch", "origin", `refs/tags/${tag}:refs/tags/${tag}`],
+              { cwd: previewRepo, encoding: "utf8", stdio: "pipe", timeout: 120000 },
             );
-          } catch (_) {
-            // Tag may already exist locally (e.g. from ZIP upload)
+          } catch {
+            execFileSync("git", ["fetch", "origin", "tag", tag], {
+              cwd: previewRepo,
+              encoding: "utf8",
+              stdio: "pipe",
+              timeout: 120000,
+            });
           }
+          execFileSync("git", ["checkout", tag], {
+            cwd: previewRepo,
+            encoding: "utf8",
+            stdio: "pipe",
+            timeout: 60000,
+          });
+        } catch (e) {
+          await fs.remove(previewRepo).catch(() => {});
+          throw e;
         }
       }
-      // Ensure tag exists locally so we give a clear error instead of "invalid reference"
-      try {
-        runCommand(
-          `git --git-dir="${gitDir}" rev-parse --verify "refs/tags/${tag}"`,
-          backendRoot,
-        );
-      } catch {
-        const hint = project.gitRepoPath
-          ? "Ensure the tag exists on the project's GitHub repo and that gitRepoPath + githubToken are set for this project."
-          : "Ensure the tag exists on the remote and that projects/.git remote \"origin\" points to the correct repository, or set the project's gitRepoPath + githubToken.";
-        throw new ApiError(
-          400,
-          `Tag "${tag}" not found. ${hint}`
-        );
-      }
-      runCommand(`git --git-dir="${gitDir}" worktree add "${previewRepo}" "${tag}"`, backendRoot);
 
       const sourceRoot = findProjectRoot(previewRepo);
       const buildOutputPath = await runBuildSequence(sourceRoot, {
@@ -2663,12 +2706,16 @@ export const switchProjectVersion = async (
       );
 
       try {
-        runCommand(
-          `git --git-dir="${gitDir}" worktree remove "${previewRepo}" --force`,
-          backendRoot
-        );
+        if (hasSharedGit) {
+          runCommand(
+            `git --git-dir="${gitDir}" worktree remove "${previewRepo}" --force`,
+            backendRoot
+          );
+        } else {
+          await fs.remove(previewRepo).catch(() => {});
+        }
       } catch (e) {
-        await fs.remove(previewRepo).catch(() => { });
+        await fs.remove(previewRepo).catch(() => {});
       }
 
       const domain = config.getBuildUrlHost();
@@ -2682,11 +2729,15 @@ export const switchProjectVersion = async (
     } catch (err) {
       if (err instanceof ApiError) throw err;
       try {
-        runCommand(
-          `git --git-dir="${gitDir}" worktree remove "${previewRepo}" --force`,
-          backendRoot
-        );
-      } catch (_) { }
+        if (hasSharedGit) {
+          runCommand(
+            `git --git-dir="${gitDir}" worktree remove "${previewRepo}" --force`,
+            backendRoot
+          );
+        } else {
+          await fs.remove(previewRepo).catch(() => {});
+        }
+      } catch (_) {}
       await fs.remove(previewDir).catch(() => { });
       console.error("[switchProjectVersion] Preview failed:", err.message);
       throw new ApiError(

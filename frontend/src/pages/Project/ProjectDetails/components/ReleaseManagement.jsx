@@ -75,6 +75,7 @@ import {
   isBackendAgentFailureTerminal,
   isBackendAgentPollActive,
   isBackendAgentSuccessTerminal,
+  isMigrateFrontendPipelineTerminal,
   normalizeBackendAgentStatus,
 } from "@/lib/backendAgentStatus";
 
@@ -625,13 +626,37 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
         try {
           const data = await fetchCursorAgentById(agentId);
           const st = data?.status != null ? String(data.status) : "";
+          const pipe = data?.migrateFrontendPipeline ?? null;
           setMigrateFrontendProgressByRelease((prev) => ({
             ...prev,
-            [releaseId]: { agentId, lastStatus: st },
+            [releaseId]: { agentId, lastStatus: st, pipeline: pipe },
           }));
-          if (isBackendAgentSuccessTerminal(st)) {
+
+          if (pipe && isMigrateFrontendPipelineTerminal(pipe.phase)) {
+            if (pipe.phase === "completed") {
+              toast.success(
+                pipe.detail ? `${pipe.headline}: ${pipe.detail}` : pipe.headline,
+              );
+            } else {
+              toast.error(
+                pipe.detail ? `${pipe.headline}: ${pipe.detail}` : pipe.headline,
+              );
+            }
+            setMigrateFrontendProgressByRelease((prev) => {
+              const next = { ...prev };
+              delete next[releaseId];
+              return next;
+            });
+            await loadReleases();
+            setTimeout(() => {
+              loadReleases().catch(() => {});
+            }, 25000);
+            return;
+          }
+
+          if (!pipe && isBackendAgentSuccessTerminal(st)) {
             toast.success(
-              "Migrate Frontend: agent finished. The platform repo is being updated and deployed; refresh the client link in a minute if needed.",
+              "Migrate Frontend finished (agent). If the platform repo did not update, upgrade the backend for pipeline status, or check the launchpad branch on GitHub.",
             );
             setMigrateFrontendProgressByRelease((prev) => {
               const next = { ...prev };
@@ -644,7 +669,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
             }, 25000);
             return;
           }
-          if (isBackendAgentFailureTerminal(st)) {
+          if (!pipe && isBackendAgentFailureTerminal(st)) {
             toast.error(
               `Migrate Frontend agent did not succeed (${String(st || "unknown")}).`,
             );
@@ -1546,17 +1571,32 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                                 </Button>
                               ) : null}
                               {migrateFrontendProgressByRelease[release.id] ? (
-                                <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-200/80 bg-amber-50/90 px-2 py-1 text-[11px] font-medium text-amber-950">
-                                  <Loader2
-                                    className="size-3.5 shrink-0 animate-spin"
-                                    aria-hidden
-                                  />
-                                  Migrate Frontend:{" "}
-                                  {normalizeBackendAgentStatus(
-                                    migrateFrontendProgressByRelease[
-                                      release.id
-                                    ]?.lastStatus,
-                                  )}
+                                <span className="inline-flex max-w-[min(100%,18rem)] flex-col gap-0.5 rounded-md border border-amber-200/80 bg-amber-50/90 px-2 py-1 text-[11px] font-medium text-amber-950">
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Loader2
+                                      className="size-3.5 shrink-0 animate-spin"
+                                      aria-hidden
+                                    />
+                                    <span className="leading-tight">
+                                      {migrateFrontendProgressByRelease[release.id]
+                                        ?.pipeline?.headline ??
+                                        `Migrate Frontend: ${normalizeBackendAgentStatus(
+                                          migrateFrontendProgressByRelease[
+                                            release.id
+                                          ]?.lastStatus,
+                                        )}`}
+                                    </span>
+                                  </span>
+                                  {migrateFrontendProgressByRelease[release.id]
+                                    ?.pipeline?.detail ? (
+                                    <span className="pl-[1.375rem] text-[10px] font-normal leading-snug text-amber-900/85">
+                                      {
+                                        migrateFrontendProgressByRelease[
+                                          release.id
+                                        ].pipeline.detail
+                                      }
+                                    </span>
+                                  ) : null}
                                 </span>
                               ) : null}
                               <span className="inline-flex min-w-0 max-w-full items-center gap-2 sm:max-w-44 md:max-w-52">

@@ -1,5 +1,6 @@
 import path from "path";
 import fs from "fs-extra";
+import { ReleaseStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
 import { assertProjectAccess } from "./project.service.js";
@@ -18,7 +19,7 @@ import {
 import { getBackendRoot } from "../utils/instanceRoot.js";
 import { buildMigrateFrontendPrompt } from "./cursorPrompts.js";
 import {
-  cursorRequest,
+  cursorRequestWithProjectAndPatRetry,
   startAgentPolling,
   executeLaunchpadHeadDeploy,
   markScratchVersionFailedIfCreating,
@@ -82,8 +83,134 @@ function normalizeMigrateDestRelEnv() {
   return s;
 }
 
-/** Prefer `frontend/` / `Frontend/`, then other common UI roots. Submodules are not cloned or copied. */
-const UI_ROOT_CANDIDATES = ["frontend", "Frontend", "client", "web", "ui", "app"];
+/**
+ * Prefer conventional names, then other common monorepo / app roots.
+ * Submodules are not cloned or copied.
+ */
+const UI_ROOT_CANDIDATES = [
+  "frontend",
+  "Frontend",
+  "client",
+  "web",
+  "ui",
+  "app",
+  "www",
+  "site",
+  "portal",
+  "website",
+  "apps/web",
+  "apps/client",
+  "apps/frontend",
+  "packages/web",
+  "packages/app",
+  "packages/client",
+  "packages/ui",
+];
+
+const SKIP_TOP_LEVEL_DIR = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "out",
+  ".next",
+  "coverage",
+  "tmp",
+  "temp",
+  "__MACOSX",
+]);
+
+/**
+ * @param {string} absDir
+ * @returns {Promise<object|null>}
+ */
+async function readPackageJson(absDir) {
+  const p = path.join(absDir, "package.json");
+  if (!(await fs.pathExists(p))) return null;
+  try {
+    return JSON.parse(await fs.readFile(p, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Heuristic: directory looks like an app/UI package (react, vue, vite, next, etc.).
+ * @param {object|null} pkg
+ */
+function packageLooksLikeAppUi(pkg) {
+  if (!pkg || typeof pkg !== "object") return false;
+  const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  const keys = Object.keys(deps).join(" ").toLowerCase();
+  if (
+    /react|vue|svelte|angular|@angular|next|nuxt|vite|webpack|remix|astro|solid-js|preact|gatsby|ember/.test(
+      keys,
+    )
+  ) {
+    return true;
+  }
+  if (pkg.scripts && typeof pkg.scripts === "object") {
+    const s = Object.values(pkg.scripts).join(" ").toLowerCase();
+    if (/vite|next|nuxt|webpack|react-scripts|astro|remix/.test(s)) return true;
+  }
+  return false;
+}
+
+/**
+ * @param {string} absDir
+ * @returns {Promise<number>}
+ */
+async function scoreUiCandidate(absDir) {
+  const pkg = await readPackageJson(absDir);
+  if (!pkg || !packageLooksLikeAppUi(pkg)) return 0;
+  if (!(await dirHasMigratableContent(absDir))) return 0;
+  return 10;
+}
+
+/**
+ * Discover integration UI root when no env override and no conventional folder name.
+ * Prefers nested apps/* / packages/* with a UI-looking package.json, then other top-level dirs, then repo root.
+ * @param {string} devDir
+ * @returns {Promise<string|null>} repo-relative path using `/` ("" = repo root)
+ */
+async function discoverUiRootHeuristic(devDir) {
+  let best = { score: 0, rel: "" };
+  const nestedPrefixes = ["apps", "packages", "projects", "services"];
+
+  for (const prefix of nestedPrefixes) {
+    const base = path.join(devDir, prefix);
+    if (!(await fs.pathExists(base))) continue;
+    const entries = await fs.readdir(base, { withFileTypes: true }).catch(() => []);
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const name = ent.name;
+      if (name.startsWith(".") || SKIP_TOP_LEVEL_DIR.has(name)) continue;
+      const abs = path.join(base, name);
+      const score = await scoreUiCandidate(abs);
+      const rel = path.posix.join(prefix, name);
+      if (score > best.score) best = { score, rel };
+    }
+  }
+  if (best.score > 0) return best.rel;
+
+  const top = await fs.readdir(devDir, { withFileTypes: true }).catch(() => []);
+  for (const ent of top) {
+    if (!ent.isDirectory()) continue;
+    const name = ent.name;
+    if (name.startsWith(".") || SKIP_TOP_LEVEL_DIR.has(name)) continue;
+    if (nestedPrefixes.includes(name)) continue;
+    const abs = path.join(devDir, name);
+    const score = await scoreUiCandidate(abs);
+    if (score > best.score) best = { score, rel: name };
+  }
+  if (best.score > 0) return best.rel;
+
+  const rootPkg = await readPackageJson(devDir);
+  if (rootPkg && packageLooksLikeAppUi(rootPkg) && (await dirHasMigratableContent(devDir))) {
+    return "";
+  }
+  return null;
+}
 
 /**
  * Resolve relative path to integration UI in dev clone (env or first matching candidate with content).
@@ -110,10 +237,10 @@ async function resolveDevUiSourceRelPath(devDir) {
         `MIGRATE_FRONTEND_SOURCE_DIR="${envPath}" has no migratable files (empty or only git metadata).`,
       );
     }
-    return envPath;
+    return envPath.split(path.sep).join("/");
   }
   for (const rel of UI_ROOT_CANDIDATES) {
-    const abs = path.join(devDir, rel);
+    const abs = path.join(devDir, ...rel.split("/"));
     if (await fs.pathExists(abs)) {
       const st = await fs.stat(abs).catch(() => null);
       if (st?.isDirectory() && (await dirHasMigratableContent(abs))) {
@@ -121,10 +248,14 @@ async function resolveDevUiSourceRelPath(devDir) {
       }
     }
   }
+
+  const discovered = await discoverUiRootHeuristic(devDir);
+  if (discovered !== null) return discovered;
+
   throw new ApiError(
     400,
-    `Could not find an integration UI directory in the developer repository (tried: ${UI_ROOT_CANDIDATES.join(", ")}). ` +
-      "Set MIGRATE_FRONTEND_SOURCE_DIR to the correct relative path (e.g. apps/web).",
+    `Could not find an integration UI directory in the developer repository (tried common names under apps/, packages/, and package.json heuristics). ` +
+      "Set MIGRATE_FRONTEND_SOURCE_DIR to the correct relative path (e.g. apps/your-app), or ensure the Cursor agent pushed a UI tree with a recognizable frontend stack.",
   );
 }
 
@@ -169,8 +300,18 @@ function isSensitiveMigrateLeafName(name) {
  * destination paths missing from the source. Skips nested `.git` and sensitive leaf names.
  * @param {string} srcDir — resolved dev UI root (e.g. …/dev/Frontend)
  * @param {string} destDir — platform target directory (e.g. …/platform or …/platform/apps/web)
+ * @param {string} platGitRoot — absolute root of the platform git clone (for `git add -f` paths)
+ * @returns {Promise<string[]>} repo-relative POSIX paths for each file or symlink written
  */
-async function mergeUiTreeIntoPlatform(srcDir, destDir) {
+async function mergeUiTreeIntoPlatform(srcDir, destDir, platGitRoot) {
+  const platResolved = path.resolve(platGitRoot);
+  const written = [];
+  function recordWritten(absTo) {
+    const rel = path.relative(platResolved, path.resolve(absTo));
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return;
+    written.push(rel.split(path.sep).join("/"));
+  }
+
   await fs.mkdir(destDir, { recursive: true });
   async function walk(rel) {
     const abs = path.join(srcDir, rel);
@@ -189,13 +330,26 @@ async function mergeUiTreeIntoPlatform(srcDir, destDir) {
         const link = await fs.readlink(from);
         await fs.remove(to).catch(() => {});
         await fs.symlink(link, to);
+        recordWritten(to);
       } else {
         await fs.ensureDir(path.dirname(to));
         await fs.copyFile(from, to);
+        recordWritten(to);
       }
     }
   }
   await walk("");
+  return written;
+}
+
+/** Stage migrated paths even when the platform repo `.gitignore` would otherwise hide them. */
+async function gitAddMergedPaths(platDir, repoRelPaths) {
+  const uniq = [...new Set(repoRelPaths.filter(Boolean))];
+  const BATCH = 80;
+  for (let i = 0; i < uniq.length; i += BATCH) {
+    const batch = uniq.slice(i, i + BATCH);
+    await git(platDir, ["add", "-f", ...batch]);
+  }
 }
 
 /** True if directory exists and has at least one entry other than `.git` (submodule gitlink). */
@@ -358,21 +512,24 @@ export async function startMigrateFrontendForRelease({
   }
 
   const refBranch =
-    (meta.defaultBranch && String(meta.defaultBranch).trim()) ||
     (typeof CURSOR_AGENT_SOURCE_REF_ENV === "string" && CURSOR_AGENT_SOURCE_REF_ENV.trim()
       ? CURSOR_AGENT_SOURCE_REF_ENV.trim()
-      : "main");
+      : null) ||
+    (meta.defaultBranch && String(meta.defaultBranch).trim()) ||
+    "main";
 
   const promptText = buildMigrateFrontendPrompt();
+  const migrateWorkBranch = `cursor/migrate-frontend-p${pid}-r${rid}-${Date.now().toString(36)}`;
 
-  const { status, data } = await cursorRequest({
+  const { status, data } = await cursorRequestWithProjectAndPatRetry({
     method: "POST",
     path: "/v0/agents",
     body: {
       prompt: { text: promptText },
       source: { repository: repositoryUrl, ref: refBranch },
-      target: { autoBranch: true },
+      target: { autoBranch: true, branchName: migrateWorkBranch },
     },
+    projectId: pid,
   });
 
   if (status < 200 || status >= 300 || !data?.id) {
@@ -419,8 +576,16 @@ export async function startMigrateFrontendForRelease({
  * Called from cursor.service poller when a migrate_frontend agent reaches a success terminal state.
  * @param {{ agentId: string, agentData: object, convRow: { id: number, projectId: number, releaseId: number, projectVersionId: number|null, flow: string|null } }} params
  */
+function normalizeMigrateFlowValue(flow) {
+  return String(flow ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+}
+
 export async function runMigrateFrontendPhaseBFromPoller({ agentId, agentData, convRow }) {
-  if (!convRow?.id || convRow.flow !== FIGMA_CONVERSION_FLOW_MIGRATE_FRONTEND) return;
+  if (!convRow?.id || normalizeMigrateFlowValue(convRow.flow) !== FIGMA_CONVERSION_FLOW_MIGRATE_FRONTEND)
+    return;
   if (convRow.projectVersionId != null) return;
 
   const id = String(agentId || "").trim();
@@ -593,15 +758,22 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
     const destUiRoot = path.join(destBase, destRel);
     await fs.ensureDir(destBase);
     const mergeTargetSummary = formatPlatformMergeTargetSummary(platformSubdir, destRel);
-    await mergeUiTreeIntoPlatform(devUiRoot, destUiRoot);
+    const mergedRelPaths = await mergeUiTreeIntoPlatform(devUiRoot, destUiRoot, platDir);
 
     const copyTargets = [mergeTargetSummary];
 
     await git(platDir, ["add", "-A"]);
+    if (mergedRelPaths.length) {
+      await gitAddMergedPaths(platDir, mergedRelPaths);
+    }
     const statusPorcelain = await git(platDir, ["status", "--porcelain"]);
     if (!String(statusPorcelain.stdout || "").trim()) {
       throw new Error(
-        `Migrate Frontend: no changes to commit — contents of ${sourceRel}/ already match platform at ${mergeTargetSummary}.`,
+        `Migrate Frontend: no changes to commit after merge (${mergedRelPaths.length} file(s) copied). ` +
+          `Usually: (1) dev UI at "${sourceRel}/" already matches platform at "${mergeTargetSummary}", ` +
+          `(2) set MIGRATE_FRONTEND_SOURCE_DIR / MIGRATE_FRONTEND_DEST_REL / MIGRATE_FRONTEND_PLATFORM_SUBDIR if paths are wrong, ` +
+          `(3) confirm the Cursor agent pushed commits to the developer branch. ` +
+          `Successful pushes update the platform repo branch **launchpad** (not necessarily default/main).`,
       );
     }
     const commitSubject = `chore: merge UI ${sourceRel}/* → ${mergeTargetSummary} from dev ${devOwner}/${devRepo} @ ${devTipSha.slice(0, 12)}`;
@@ -676,12 +848,43 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
       throw deployErr;
     }
 
-    const { syncProjectActiveVersionForProject } = await import(
-      "./release.service.js",
-    );
-    await prisma.$transaction(async (tx) => {
-      await syncProjectActiveVersionForProject(tx, conversion.projectId);
+    const { setReleaseStatusService, syncProjectActiveVersionForProject } =
+      await import("./release.service.js");
+
+    /** Single-release projects: after first Migrate Frontend, make that release + latest version live. */
+    let activatedSoleDraftRelease = false;
+    const releaseCount = await prisma.release.count({
+      where: { projectId: conversion.projectId },
     });
+    if (releaseCount === 1) {
+      const rel = await prisma.release.findFirst({
+        where: { id: conversion.releaseId, projectId: conversion.projectId },
+        select: { id: true, status: true },
+      });
+      if (rel?.status === ReleaseStatus.draft) {
+        const actor = await prisma.user.findUnique({
+          where: { id: conversion.attemptedById },
+          select: { id: true, email: true, role: true },
+        });
+        if (actor?.id) {
+          await setReleaseStatusService(
+            conversion.releaseId,
+            ReleaseStatus.active,
+            actor,
+            {
+              reason:
+                "First release: activated automatically after Migrate Frontend completed.",
+            },
+          );
+          activatedSoleDraftRelease = true;
+        }
+      }
+    }
+    if (!activatedSoleDraftRelease) {
+      await prisma.$transaction(async (tx) => {
+        await syncProjectActiveVersionForProject(tx, conversion.projectId);
+      });
+    }
 
     if (disclaimerAck) {
       const convAfter = await prisma.figmaConversion.findUnique({

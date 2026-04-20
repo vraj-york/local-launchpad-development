@@ -12,8 +12,8 @@ RUN apk add --no-cache nginx git ffmpeg \
 
 COPY nginx-docker.conf /etc/nginx/nginx.conf
 
-# Install dependencies
-COPY package.json package-lock.json* ./
+# Install dependencies — require package-lock.json (no glob; avoids cached layers without the lockfile)
+COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 # Prisma generate (needs schema at build time)
