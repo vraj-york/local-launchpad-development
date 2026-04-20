@@ -33,6 +33,7 @@ import { API_BASE_URLS } from "../constants/contstants.js";
 import { ensureFreshFigmaConnection } from "./oauthConnection.service.js";
 import { LAUNCHPAD_FRONTEND_SUBMODULE_PATH } from "./developerRepoSubmodule.service.js";
 import { buildLaunchpadFrontendAlignmentBlock } from "./cursorPrompts.js";
+import { ensureFreshFigmaConnection } from "./oauthConnection.service.js";
 
 /** Cursor Cloud / cursor-cloud-agent base (e.g. `http://cursor-cloud-agent:3100` in Docker). */
 const CURSOR_BASE_URL = String(process.env.CURSOR_BASE_URL ?? "").trim();

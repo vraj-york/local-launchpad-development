@@ -15,6 +15,8 @@ import {
   deleteGithubConnection,
   deleteBitbucketConnection,
   deleteJiraConnection,
+  deleteFigmaConnection,
+  completeFigmaOAuth,
   assertGithubConnectionRowForListing,
   assertBitbucketConnectionRowForListing,
   assertJiraConnectionRowForListing,
@@ -35,6 +37,24 @@ import { figmaOAuthController } from "../controllers/figmaOAuth.controller.js";
 const router = express.Router();
 
 const FRONTEND = () => getPublicFrontendBaseUrl();
+
+/** Default Figma REST OAuth scopes (override with `FIGMA_OAUTH_SCOPES`). Space-separated. */
+const DEFAULT_FIGMA_OAUTH_SCOPES = [
+  "current_user:read",
+  "file_comments:read",
+  "file_comments:write",
+  "file_content:read",
+  "file_metadata:read",
+  "file_versions:read",
+  "library_assets:read",
+  "library_content:read",
+  "team_library_content:read",
+  "file_dev_resources:read",
+  "file_dev_resources:write",
+  "projects:read",
+  "webhooks:read",
+  "webhooks:write",
+].join(" ");
 
 function redirectWithError(res, provider, message, returnPath = null) {
   const q = new URLSearchParams({ provider, error: message.slice(0, 200) });
