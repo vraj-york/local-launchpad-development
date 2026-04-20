@@ -30,6 +30,7 @@ enum OAuthProvider {
   github
   jira_atlassian
   bitbucket
+  figma
 }
 
 /// Multiple OAuth connections per user per provider; projects pick a specific connection id.
@@ -49,6 +50,12 @@ model UserOAuthConnection {
   jiraBaseUrl            String?
   atlassianAccountEmail  String?
   atlassianCloudId       String?
+  /// Figma REST API user id (`user_id_string` from token response); use string, not JS Number.
+  figmaUserId            String?
+  /// Figma display name from `GET /v1/me` (`handle`).
+  figmaHandle            String?
+  /// Figma account email from `GET /v1/me` (only present on that endpoint).
+  figmaEmail             String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -60,6 +67,7 @@ model UserOAuthConnection {
 
   @@index([userId])
   @@index([userId, provider])
+  @@index([userId, figmaUserId])
 }
 
 model Project {
@@ -238,6 +246,10 @@ model Release {
   backendAgentId     String?
   /// Last known Cursor agent status for backend plan (polled server-side).
   backendAgentStatus String?
+  /// Relative path in developer repo where platform submodule was placed at lock (default launchpad-frontend).
+  developerSubmodulePath String?
+  /// Git ref on developer repo for post-lock Cursor agent `source.ref` when set at lock; null uses default-branch/env/main resolution.
+  developerAgentRef String?
 
   createdBy   Int
   createdAt   DateTime @default(now())

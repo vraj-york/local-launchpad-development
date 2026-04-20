@@ -1379,14 +1379,21 @@ export const getProjectByIdService = async (
         id: true,
         name: true,
         scratchPrompt: true,
+        developmentRepoUrl: true,
         versions: versionsQuery,
         releases: releasesQuery,
       },
     });
-    if (!project?.releases?.length) return project;
+    if (!project) return null;
+    const hasDevelopmentRepo = Boolean(
+      String(project.developmentRepoUrl || "").trim(),
+    );
+    const { developmentRepoUrl: _devUrl, ...publicProject } = project;
+    const withFlag = { ...publicProject, hasDevelopmentRepo };
+    if (!withFlag.releases?.length) return withFlag;
     return {
-      ...project,
-      releases: project.releases.map((r) =>
+      ...withFlag,
+      releases: withFlag.releases.map((r) =>
         r.showClientReviewSummary === false
           ? {
               ...r,

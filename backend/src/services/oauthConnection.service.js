@@ -4,6 +4,7 @@ import { encryptToken, decryptToken } from "../utils/tokenVault.js";
 import ApiError from "../utils/apiError.js";
 import { prisma } from "../lib/prisma.js";
 import { API_BASE_URLS, API_ENDPOINTS } from "../constants/contstants.js";
+import { getPublicFrontendBaseUrl } from "../utils/publicFrontendUrl.js";
 
 const EXPIRY_SKEW_MS = 60_000;
 
@@ -68,6 +69,139 @@ export function verifyOAuthState(token) {
       rcid != null && rcid !== "" && !Number.isNaN(Number(rcid)) ? Number(rcid) : null,
     returnPath: sanitizeOAuthReturnPath(payload.rp),
   };
+}
+
+/** @param {import("express").Request["query"]} query */
+export function parseOAuthReconnectIdFromQuery(query) {
+  const raw = query?.reconnectId ?? query?.reconnect_id;
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** @param {import("express").Request["query"]} query */
+export function parseOAuthReturnToFromQuery(query) {
+  const raw = query?.returnTo ?? query?.return_to;
+  if (raw == null || raw === "") return null;
+  return sanitizeOAuthReturnPath(raw);
+}
+
+function safeReturnPathFromOAuthState(state) {
+  if (!state) return null;
+  try {
+    return verifyOAuthState(state).returnPath || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * SPA integrations callback URL (same path for all providers).
+ * @param {string} provider
+ * @param {{ error?: string, ok?: boolean, returnPath?: string | null }} opts
+ */
+export function buildIntegrationsOAuthCallbackRedirectUrl(provider, opts = {}) {
+  const q = new URLSearchParams({ provider });
+  if (opts.ok) q.set("ok", "1");
+  if (opts.error != null && opts.error !== "") {
+    q.set("error", String(opts.error).slice(0, 200));
+  }
+  if (opts.returnPath) q.set("return_to", opts.returnPath);
+  return `${getPublicFrontendBaseUrl()}/integrations/callback?${q.toString()}`;
+}
+
+/** Default Figma REST OAuth scopes (override with `FIGMA_OAUTH_SCOPES`). Space-separated. */
+const DEFAULT_FIGMA_OAUTH_SCOPES = [
+  "current_user:read",
+  "file_comments:read",
+  "file_comments:write",
+  "file_content:read",
+  "file_metadata:read",
+  "file_versions:read",
+  "library_assets:read",
+  "library_content:read",
+  "team_library_content:read",
+  "file_dev_resources:read",
+  "file_dev_resources:write",
+  "projects:read",
+  "webhooks:read",
+  "webhooks:write",
+].join(" ");
+
+/**
+ * Build Figma authorize URL for GET /integrations/figma/start.
+ * @param {number} userId
+ * @param {import("express").Request["query"]} query
+ * @returns {{ ok: true, authorizeUrl: string } | { ok: false, status: number, clientMessage: string }}
+ */
+export function getFigmaOAuthStartResult(userId, query) {
+  const clientId = process.env.FIGMA_OAUTH_CLIENT_ID;
+  const redirectUri = process.env.FIGMA_OAUTH_REDIRECT_URI;
+  if (!clientId || !redirectUri) {
+    return {
+      ok: false,
+      status: 503,
+      clientMessage: "Figma OAuth is not configured on the server",
+    };
+  }
+  const reconnectId = parseOAuthReconnectIdFromQuery(query);
+  const returnPath = parseOAuthReturnToFromQuery(query);
+  const state = signOAuthState(userId, "figma", reconnectId, returnPath);
+  const scope = process.env.FIGMA_OAUTH_SCOPES?.trim() || DEFAULT_FIGMA_OAUTH_SCOPES;
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope,
+    state,
+    response_type: "code",
+  });
+  const authorizeUrl = `https://www.figma.com/oauth?${params.toString()}`;
+  return { ok: true, authorizeUrl };
+}
+
+/**
+ * Run Figma OAuth callback logic and return the frontend callback redirect URL.
+ * @param {import("express").Request["query"]} query
+ * @returns {Promise<string>}
+ */
+export async function completeFigmaOAuthCallbackRedirect(query) {
+  const code = typeof query.code === "string" ? query.code : "";
+  const state = typeof query.state === "string" ? query.state : "";
+  const oauthError = typeof query.error === "string" ? query.error : "";
+  const returnPathOnError = safeReturnPathFromOAuthState(state);
+
+  if (oauthError) {
+    return buildIntegrationsOAuthCallbackRedirectUrl("figma", {
+      error: oauthError,
+      returnPath: returnPathOnError,
+    });
+  }
+  if (!code || !state) {
+    return buildIntegrationsOAuthCallbackRedirectUrl("figma", {
+      error: "missing_code_or_state",
+      returnPath: returnPathOnError,
+    });
+  }
+  try {
+    const decoded = verifyOAuthState(state);
+    if (decoded.provider !== "figma") {
+      return buildIntegrationsOAuthCallbackRedirectUrl("figma", {
+        error: "invalid_state",
+        returnPath: decoded.returnPath || null,
+      });
+    }
+    await completeFigmaOAuth(code, state);
+    return buildIntegrationsOAuthCallbackRedirectUrl("figma", {
+      ok: true,
+      returnPath: decoded.returnPath || null,
+    });
+  } catch (e) {
+    const rp = safeReturnPathFromOAuthState(state);
+    return buildIntegrationsOAuthCallbackRedirectUrl("figma", {
+      error: e?.message || "oauth_failed",
+      returnPath: rp,
+    });
+  }
 }
 
 function tokenExpiryDate(expiresInSec) {
@@ -504,12 +638,16 @@ export async function getIntegrationsStatus(userId) {
       jiraBaseUrl: true,
       atlassianAccountEmail: true,
       atlassianCloudId: true,
+      figmaUserId: true,
+      figmaHandle: true,
+      figmaEmail: true,
       accessTokenExpiresAt: true,
     },
   });
   const gh = rows.filter((r) => r.provider === "github");
   const bb = rows.filter((r) => r.provider === "bitbucket");
   const ji = rows.filter((r) => r.provider === "jira_atlassian");
+  const fg = rows.filter((r) => r.provider === "figma");
   return {
     github: {
       connections: gh.map((r) => ({
@@ -534,6 +672,16 @@ export async function getIntegrationsStatus(userId) {
         baseUrl: r.jiraBaseUrl || null,
         cloudId: r.atlassianCloudId || null,
         accountEmail: r.atlassianAccountEmail || null,
+        expiresAt: r.accessTokenExpiresAt?.toISOString() || null,
+      })),
+    },
+    figma: {
+      connections: fg.map((r) => ({
+        id: r.id,
+        label: r.label,
+        figmaUserId: r.figmaUserId || null,
+        handle: r.figmaHandle || null,
+        email: r.figmaEmail || null,
         expiresAt: r.accessTokenExpiresAt?.toISOString() || null,
       })),
     },
@@ -979,6 +1127,236 @@ export async function completeBitbucketOAuth(code, stateToken) {
     tokens.expiresIn,
   );
   return userId;
+}
+
+/* ---------- Figma REST API OAuth ---------- */
+
+/**
+ * @returns {{ id: string; handle: string; email: string }}
+ */
+async function fetchFigmaUserProfile(accessToken) {
+  const empty = { id: "", handle: "", email: "" };
+  if (!accessToken) return empty;
+  try {
+    const { data, status } = await axios.get("https://api.figma.com/v1/me", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      validateStatus: () => true,
+    });
+    if (status !== 200 || !data || typeof data !== "object") return empty;
+    const id = data.id != null ? String(data.id).trim() : "";
+    const handle = typeof data.handle === "string" ? data.handle.trim() : "";
+    const email = typeof data.email === "string" ? data.email.trim() : "";
+    return { id, handle, email };
+  } catch {
+    return empty;
+  }
+}
+
+function figmaBasicAuthHeader() {
+  const clientId = process.env.FIGMA_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.FIGMA_OAUTH_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+  const b64 = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64");
+  return `Basic ${b64}`;
+}
+
+async function exchangeFigmaCode(code) {
+  const redirectUri = process.env.FIGMA_OAUTH_REDIRECT_URI;
+  const auth = figmaBasicAuthHeader();
+  if (!auth || !redirectUri) {
+    throw new Error("Figma OAuth env not configured");
+  }
+  const body = new URLSearchParams({
+    redirect_uri: redirectUri,
+    code,
+    grant_type: "authorization_code",
+  });
+  const { data } = await axios.post("https://api.figma.com/v1/oauth/token", body.toString(), {
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: auth,
+    },
+  });
+  if (data.error) {
+    throw new Error(data.error_description || data.error || String(data.error));
+  }
+  const userIdString =
+    data.user_id_string != null && data.user_id_string !== ""
+      ? String(data.user_id_string).trim()
+      : "";
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || "",
+    expiresIn: data.expires_in,
+    userIdString,
+  };
+}
+
+async function refreshFigmaTokens(refreshTokenPlain) {
+  const auth = figmaBasicAuthHeader();
+  if (!auth || !refreshTokenPlain) {
+    throw new Error("Cannot refresh Figma token");
+  }
+  const body = new URLSearchParams({ refresh_token: refreshTokenPlain });
+  const { data } = await axios.post("https://api.figma.com/v1/oauth/refresh", body.toString(), {
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: auth,
+    },
+  });
+  if (data.error) {
+    throw new Error(data.error_description || data.error || String(data.error));
+  }
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || refreshTokenPlain,
+    expiresIn: data.expires_in,
+  };
+}
+
+export async function createFigmaConnectionRecord(
+  userId,
+  accessToken,
+  refreshToken,
+  expiresInSec,
+  { figmaUserId, figmaHandle, figmaEmail },
+) {
+  return prisma.userOAuthConnection.create({
+    data: {
+      userId,
+      provider: "figma",
+      encryptedAccessToken: encryptToken(accessToken),
+      encryptedRefreshToken: encryptToken(refreshToken || ""),
+      accessTokenExpiresAt: tokenExpiryDate(expiresInSec),
+      figmaUserId: figmaUserId || null,
+      figmaHandle: figmaHandle || null,
+      figmaEmail: figmaEmail || null,
+    },
+  });
+}
+
+export async function updateFigmaConnectionTokens(
+  connectionId,
+  userId,
+  accessToken,
+  refreshToken,
+  expiresInSec,
+  { figmaUserId, figmaHandle, figmaEmail },
+) {
+  const row = await prisma.userOAuthConnection.findFirst({
+    where: { id: connectionId, userId, provider: "figma" },
+  });
+  if (!row) throw new Error("Figma connection not found");
+  return prisma.userOAuthConnection.update({
+    where: { id: connectionId },
+    data: {
+      encryptedAccessToken: encryptToken(accessToken),
+      encryptedRefreshToken: encryptToken(refreshToken || ""),
+      accessTokenExpiresAt: tokenExpiryDate(expiresInSec),
+      figmaUserId: figmaUserId || row.figmaUserId,
+      figmaHandle: figmaHandle != null && figmaHandle !== "" ? figmaHandle : row.figmaHandle,
+      figmaEmail: figmaEmail != null && figmaEmail !== "" ? figmaEmail : row.figmaEmail,
+    },
+  });
+}
+
+function resolveFigmaProfileFields(tokens, profile) {
+  const figmaUserId =
+    (profile.id && profile.id.trim()) || (tokens.userIdString && tokens.userIdString.trim()) || "";
+  const figmaHandle = profile.handle || "";
+  const figmaEmail = profile.email || "";
+  return {
+    figmaUserId: figmaUserId || null,
+    figmaHandle: figmaHandle || null,
+    figmaEmail: figmaEmail || null,
+  };
+}
+
+export async function completeFigmaOAuth(code, stateToken) {
+  const { userId, reconnectConnectionId } = verifyOAuthState(stateToken);
+  const tokens = await exchangeFigmaCode(code);
+  const profile = await fetchFigmaUserProfile(tokens.accessToken);
+  const meta = resolveFigmaProfileFields(tokens, profile);
+
+  if (reconnectConnectionId != null) {
+    await updateFigmaConnectionTokens(
+      reconnectConnectionId,
+      userId,
+      tokens.accessToken,
+      tokens.refreshToken,
+      tokens.expiresIn,
+      meta,
+    );
+    return userId;
+  }
+  if (meta.figmaUserId) {
+    const existing = await prisma.userOAuthConnection.findFirst({
+      where: { userId, provider: "figma", figmaUserId: meta.figmaUserId },
+    });
+    if (existing) {
+      await updateFigmaConnectionTokens(
+        existing.id,
+        userId,
+        tokens.accessToken,
+        tokens.refreshToken,
+        tokens.expiresIn,
+        meta,
+      );
+      return userId;
+    }
+  }
+  await createFigmaConnectionRecord(
+    userId,
+    tokens.accessToken,
+    tokens.refreshToken,
+    tokens.expiresIn,
+    meta,
+  );
+  return userId;
+}
+
+export async function ensureFreshFigmaConnection(row) {
+  const access = decryptToken(row.encryptedAccessToken);
+  const refresh = row.encryptedRefreshToken ? decryptToken(row.encryptedRefreshToken) : "";
+  const exp = row.accessTokenExpiresAt ? row.accessTokenExpiresAt.getTime() : null;
+  const expiredOrSoon = exp != null && exp - EXPIRY_SKEW_MS <= Date.now();
+
+  if (expiredOrSoon && refresh) {
+    const t = await refreshFigmaTokens(refresh);
+    const profile = await fetchFigmaUserProfile(t.accessToken);
+    const data = {
+      encryptedAccessToken: encryptToken(t.accessToken),
+      encryptedRefreshToken: encryptToken(t.refreshToken || ""),
+      accessTokenExpiresAt: tokenExpiryDate(t.expiresIn),
+    };
+    if (profile.id) data.figmaUserId = profile.id.trim();
+    if (profile.handle) data.figmaHandle = profile.handle;
+    if (profile.email) data.figmaEmail = profile.email;
+    const updated = await prisma.userOAuthConnection.update({
+      where: { id: row.id },
+      data,
+    });
+    return {
+      accessToken: decryptToken(updated.encryptedAccessToken),
+      figmaUserId: updated.figmaUserId,
+    };
+  }
+
+  if (expiredOrSoon && !refresh) {
+    throw new Error("Figma token expired; reconnect OAuth in Integrations.");
+  }
+  if (!access) throw new Error("Figma connection has no access token");
+  return { accessToken: access, figmaUserId: row.figmaUserId };
+}
+
+export async function deleteFigmaConnection(userId, connectionId) {
+  const n = Number(connectionId);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new ApiError(400, "Invalid connection id");
+  }
+  await prisma.userOAuthConnection.deleteMany({
+    where: { id: n, userId, provider: "figma" },
+  });
 }
 
 export async function ensureFreshBitbucketConnection(row) {

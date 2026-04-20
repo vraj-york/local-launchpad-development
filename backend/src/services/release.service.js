@@ -675,12 +675,14 @@ async function deactivateProjectVersionsForRelease(tx, releaseId) {
  * Shared lock: optional dev-repo submodule sync, lock row, deactivate release versions,
  * sync project active version, then fire Cursor backend plan agent when dev URL + active version exist.
  * Caller must enforce auth / stakeholder checks.
- * @param {{ releaseId: number, lockedByEmail?: string|null, attemptedById: number }} opts
+ * @param {{ releaseId: number, lockedByEmail?: string|null, attemptedById: number, developerSubmodulePath?: string|null, developerAgentRef?: string|null }} opts
  */
 async function performReleaseLockPipeline({
   releaseId,
   lockedByEmail = null,
   attemptedById,
+  developerSubmodulePath: developerSubmodulePathOpt = null,
+  developerAgentRef: developerAgentRefOpt = null,
 }) {
   const release = await prisma.release.findUnique({
     where: { id: releaseId },
@@ -711,15 +713,38 @@ async function performReleaseLockPipeline({
   }
 
   const devUrl = String(projectFull.developmentRepoUrl || "").trim();
+  let lockDeveloperSubmodulePath = null;
+  let lockDeveloperAgentRef = null;
+
   if (devUrl) {
-    const { syncDeveloperRepoSubmoduleForReleaseLock } = await import(
-      "./developerRepoSubmodule.service.js",
-    );
+    const {
+      syncDeveloperRepoSubmoduleForReleaseLock,
+      resolveDeveloperSubmodulePathForLock,
+      normalizeDeveloperAgentRefForLock,
+      assertDeveloperAgentRefResolvable,
+    } = await import("./developerRepoSubmodule.service.js");
+
+    lockDeveloperSubmodulePath = resolveDeveloperSubmodulePathForLock(developerSubmodulePathOpt);
+    lockDeveloperAgentRef = normalizeDeveloperAgentRefForLock(developerAgentRefOpt);
+
+    if (lockDeveloperAgentRef) {
+      await assertDeveloperAgentRefResolvable(projectFull, lockDeveloperAgentRef);
+    }
+
     await syncDeveloperRepoSubmoduleForReleaseLock({
       releaseId,
       project: projectFull,
       releaseName: releaseRow?.name ?? release.name,
+      developerSubmodulePath: lockDeveloperSubmodulePath,
     });
+  } else if (
+    (developerSubmodulePathOpt != null && String(developerSubmodulePathOpt).trim() !== "") ||
+    (developerAgentRefOpt != null && String(developerAgentRefOpt).trim() !== "")
+  ) {
+    throw new ApiError(
+      400,
+      "developerSubmodulePath and developerAgentRef require a development repository URL on the project.",
+    );
   }
 
   const activeVersion = await prisma.projectVersion.findFirst({
@@ -739,6 +764,15 @@ async function performReleaseLockPipeline({
       data: {
         status: ReleaseStatus.locked,
         ...lockedByData,
+        ...(devUrl
+          ? {
+              developerSubmodulePath: lockDeveloperSubmodulePath,
+              developerAgentRef: lockDeveloperAgentRef,
+            }
+          : {
+              developerSubmodulePath: null,
+              developerAgentRef: null,
+            }),
       },
     });
     await deactivateProjectVersionsForRelease(tx, releaseId);
@@ -851,6 +885,8 @@ export const setReleaseStatusService = async (releaseId, status, user, options =
       releaseId,
       lockedByEmail: null,
       attemptedById: userId,
+      developerSubmodulePath: options?.developerSubmodulePath ?? null,
+      developerAgentRef: options?.developerAgentRef ?? null,
     });
     return prisma.release.findUnique({
       where: { id: releaseId },
@@ -953,7 +989,7 @@ export const setReleaseStatusService = async (releaseId, status, user, options =
  * Lock a release (one-way). Clears isActive on all versions for this release only.
  * Unlock is not supported.
  */
-export const lockReleaseService = async (releaseId, locked, user) => {
+export const lockReleaseService = async (releaseId, locked, user, lockOptions = {}) => {
   const { id: userId } = user;
 
   if (locked !== true) {
@@ -983,6 +1019,8 @@ export const lockReleaseService = async (releaseId, locked, user) => {
     releaseId,
     lockedByEmail: null,
     attemptedById: userId,
+    developerSubmodulePath: lockOptions?.developerSubmodulePath ?? null,
+    developerAgentRef: lockOptions?.developerAgentRef ?? null,
   });
 };
 
@@ -2042,7 +2080,7 @@ export const getReleaseInfoService = async (releaseId) => {
  * Public lock a release (one-way). Clears isActive on all versions for this release only.
  * Unlock is not supported. Caller supplies `lockedBy` email.
  */
-export const publicLockReleaseService = async (releaseId, lockedBy) => {
+export const publicLockReleaseService = async (releaseId, lockedBy, lockOptions = {}) => {
   const release = await prisma.release.findUnique({
     where: { id: releaseId },
     select: {
@@ -2081,6 +2119,8 @@ export const publicLockReleaseService = async (releaseId, lockedBy) => {
     releaseId,
     lockedByEmail: email,
     attemptedById: release.createdBy,
+    developerSubmodulePath: lockOptions?.developerSubmodulePath ?? null,
+    developerAgentRef: lockOptions?.developerAgentRef ?? null,
   });
 
   return {

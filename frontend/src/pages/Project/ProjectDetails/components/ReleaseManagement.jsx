@@ -75,6 +75,9 @@ import {
   normalizeBackendAgentStatus,
 } from "@/lib/backendAgentStatus";
 
+/** Default platform submodule directory under the developer integration repo (matches backend). */
+const DEFAULT_LOCK_DEVELOPER_SUBMODULE_PATH = "launchpad-frontend";
+
 const RELEASE_STATUS_CHANGELOG_LABELS = {
   draft: "Draft",
   active: "Active",
@@ -853,6 +856,9 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       fromStatus: normalizeReleaseStatus(rel),
       toStatus: newStatus,
       statusReason: "",
+      lockDeveloperSubmodulePath: DEFAULT_LOCK_DEVELOPER_SUBMODULE_PATH,
+      lockAgentRefPreset: "default",
+      lockAgentRefCustom: "",
     });
   };
 
@@ -874,11 +880,35 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     try {
       setStatusConfirmSubmitting(true);
       setStatusUpdatingId(releaseId);
-      await updateReleaseStatus(
-        releaseId,
-        toStatus,
-        toStatus === "locked" ? undefined : reason,
-      );
+      if (toStatus === "locked") {
+        const subPath = (
+          (statusConfirm.lockDeveloperSubmodulePath || "").trim() ||
+          DEFAULT_LOCK_DEVELOPER_SUBMODULE_PATH
+        );
+        let developerAgentRef;
+        if (hasDeveloperRepo) {
+          const preset = statusConfirm.lockAgentRefPreset || "default";
+          if (preset === "custom") {
+            const c = (statusConfirm.lockAgentRefCustom || "").trim();
+            if (c) developerAgentRef = c;
+          } else if (preset !== "default") {
+            developerAgentRef = preset;
+          }
+        }
+        await updateReleaseStatus(releaseId, "locked", {
+          reason: "",
+          ...(hasDeveloperRepo
+            ? {
+                developerSubmodulePath: subPath,
+                ...(developerAgentRef != null
+                  ? { developerAgentRef }
+                  : {}),
+              }
+            : {}),
+        });
+      } else {
+        await updateReleaseStatus(releaseId, toStatus, reason);
+      }
       toast.success(`Release status set to ${toStatus}`);
       setStatusConfirm(null);
       await loadReleases();
@@ -2992,6 +3022,94 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                     options will be disabled.
                   </p>
                 )}
+                {statusConfirm?.toStatus === "locked" && hasDeveloperRepo ? (
+                  <div className="space-y-3 border-t border-slate-200 pt-3">
+                    <p className="text-xs text-slate-600">
+                      Developer repo is configured. Set the platform submodule path
+                      and optional git ref for the post-lock Cursor agent (branch or
+                      tag). Leave the ref on the default to use the repository&apos;s
+                      default branch.
+                    </p>
+                    <div className="space-y-2">
+                      <Label htmlFor="lock-dev-submodule-path">
+                        Submodule path (repo-relative)
+                      </Label>
+                      <Input
+                        id="lock-dev-submodule-path"
+                        placeholder={DEFAULT_LOCK_DEVELOPER_SUBMODULE_PATH}
+                        value={statusConfirm?.lockDeveloperSubmodulePath ?? ""}
+                        onChange={(e) =>
+                          setStatusConfirm((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  lockDeveloperSubmodulePath: e.target.value,
+                                }
+                              : prev,
+                          )
+                        }
+                        disabled={statusConfirmSubmitting}
+                        className="transition-all duration-200"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="lock-cursor-agent-ref-preset">
+                        Cursor agent branch / tag
+                      </Label>
+                      <Select
+                        value={statusConfirm?.lockAgentRefPreset ?? "default"}
+                        onValueChange={(v) =>
+                          setStatusConfirm((prev) =>
+                            prev ? { ...prev, lockAgentRefPreset: v } : prev,
+                          )
+                        }
+                        disabled={statusConfirmSubmitting}
+                      >
+                        <SelectTrigger
+                          id="lock-cursor-agent-ref-preset"
+                          className="w-full transition-all duration-200"
+                        >
+                          <SelectValue placeholder="Default branch" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">
+                            Default (GitHub default branch)
+                          </SelectItem>
+                          <SelectItem value="main">main</SelectItem>
+                          <SelectItem value="master">master</SelectItem>
+                          <SelectItem value="develop">develop</SelectItem>
+                          <SelectItem value="custom">Custom…</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {statusConfirm?.lockAgentRefPreset === "custom" ? (
+                        <Input
+                          id="lock-cursor-agent-ref-custom"
+                          placeholder="e.g. release/1.2 or v1.0.0"
+                          value={statusConfirm?.lockAgentRefCustom ?? ""}
+                          onChange={(e) =>
+                            setStatusConfirm((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    lockAgentRefCustom: e.target.value,
+                                  }
+                                : prev,
+                            )
+                          }
+                          disabled={statusConfirmSubmitting}
+                          className="transition-all duration-200"
+                        />
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+                {statusConfirm?.toStatus === "locked" && !hasDeveloperRepo ? (
+                  <p className="rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2 text-xs text-slate-600">
+                    No development repository URL on this project — submodule sync
+                    and Cursor agent ref options apply only when that URL is set in
+                    project settings.
+                  </p>
+                ) : null}
                 {statusConfirm?.toStatus === "skip" && (
                   <p className="rounded-lg border border-violet-200/80 bg-linear-to-br from-violet-50/90 to-indigo-50/80 px-3 py-2 text-indigo-950/90">
                     Any other active release in this project becomes draft, and

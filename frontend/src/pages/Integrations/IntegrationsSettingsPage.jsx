@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   disconnectBitbucketIntegration,
+  disconnectFigmaIntegration,
   disconnectGithubIntegration,
   disconnectJiraIntegration,
   fetchCursorIntegrationStatus,
   fetchIntegrationsStatus,
   getBitbucketOAuthAuthorizeUrl,
+  getFigmaOAuthAuthorizeUrl,
   getGithubOAuthAuthorizeUrl,
   getJiraOAuthAuthorizeUrl,
   syncCursorGithubPatFromOAuth,
@@ -18,6 +20,7 @@ import { Loader2, Unplug, Plus, RefreshCw, Cloud } from "lucide-react";
 import githubMarkSvg from "@/assets/apps/GitHub.svg";
 import bitbucketMarkSvg from "@/assets/apps/BitBucket.svg";
 import jiraMarkSvg from "@/assets/apps/Jira.svg";
+import figmaMarkSvg from "@/assets/apps/Figma.svg";
 import { cn } from "@/lib/utils";
 
 /** Brand mark for integration cards (matches ProjectGitJiraOAuthCard). */
@@ -97,6 +100,7 @@ const IntegrationsSettingsPage = () => {
   const ghList = status?.github?.connections ?? [];
   const bbList = status?.bitbucket?.connections ?? [];
   const jiList = status?.jira?.connections ?? [];
+  const fgList = status?.figma?.connections ?? [];
 
   const connectGithubNew = async () => {
     setBusy("gh-new");
@@ -197,11 +201,44 @@ const IntegrationsSettingsPage = () => {
     }
   };
 
+  const connectFigmaNew = async () => {
+    setBusy("fg-new");
+    try {
+      window.location.href = await getFigmaOAuthAuthorizeUrl();
+    } catch (e) {
+      toast.error(e.message || "Could not start Figma OAuth");
+      setBusy(null);
+    }
+  };
+
+  const reconnectFigma = async (connectionId) => {
+    setBusy(`fg-${connectionId}`);
+    try {
+      window.location.href = await getFigmaOAuthAuthorizeUrl(connectionId);
+    } catch (e) {
+      toast.error(e.message || "Could not start Figma OAuth");
+      setBusy(null);
+    }
+  };
+
+  const disconnectFg = async (connectionId) => {
+    setBusy(`disc-fg-${connectionId}`);
+    try {
+      await disconnectFigmaIntegration(connectionId);
+      toast.success("Figma connection removed");
+      await load();
+    } catch {
+      toast.error("Failed to disconnect Figma");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="container mx-auto max-w-2xl space-y-6">
       <PageHeader
         title="Integrations"
-        description="Connect GitHub, Bitbucket, and Jira. Each project picks one code host (GitHub or Bitbucket) plus Jira. Signing in again with an account you already linked refreshes that connection instead of adding a duplicate."
+        description="Connect GitHub, Bitbucket, Jira, and Figma (REST API). Each project picks one code host (GitHub or Bitbucket) plus Jira. Signing in again with an account you already linked refreshes that connection instead of adding a duplicate."
       />
       {loading ? (
         <div className="flex justify-center py-12">
@@ -487,6 +524,93 @@ const IntegrationsSettingsPage = () => {
                           onClick={() => disconnectJi(c.id)}
                         >
                           {busy === `disc-ji-${c.id}` ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <Unplug className="mr-1 h-4 w-4" />
+                              Remove
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <IntegrationBrandMark src={figmaMarkSvg} className="size-6" />
+                <CardTitle className="text-lg">Figma</CardTitle>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={Boolean(busy)}
+                onClick={connectFigmaNew}
+              >
+                {busy === "fg-new" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Plus className="mr-1 h-4 w-4" />
+                    Add account
+                  </>
+                )}
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Links your Figma account for REST API access (separate from the Figma plugin login flow).
+              </p>
+              {fgList.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No Figma accounts connected.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {fgList.map((c) => (
+                    <li
+                      key={c.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-3"
+                    >
+                      <div className="min-w-0 text-sm">
+                        <span className="font-medium text-foreground">
+                          {c.label || c.handle || `Connection #${c.id}`}
+                        </span>
+                        {c.email ? (
+                          <span className="block break-all text-muted-foreground">{c.email}</span>
+                        ) : null}
+                        {c.figmaUserId ? (
+                          <span className="block break-all text-muted-foreground">
+                            ID {c.figmaUserId}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={Boolean(busy)}
+                          onClick={() => reconnectFigma(c.id)}
+                        >
+                          {busy === `fg-${c.id}` ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            "Reconnect"
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
+                          disabled={Boolean(busy)}
+                          onClick={() => disconnectFg(c.id)}
+                        >
+                          {busy === `disc-fg-${c.id}` ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
                             <>

@@ -30,6 +30,7 @@ import {
   getCursorIntegrationStatus,
   syncCursorGithubPatForUser,
 } from "../services/cursorIntegration.service.js";
+import { figmaOAuthController } from "../controllers/figmaOAuth.controller.js";
 
 const router = express.Router();
 
@@ -348,6 +349,12 @@ router.get("/jira/start", authenticateToken, (req, res) => {
   res.redirect(302, url);
 });
 
+/** GET /api/integrations/figma/start — JSON { url } or 302 redirect */
+router.get("/figma/start", authenticateToken, figmaOAuthController.start);
+
+/** GET /api/integrations/figma/callback */
+router.get("/figma/callback", figmaOAuthController.callback);
+
 /** GET /api/integrations/jira/callback */
 router.get("/jira/callback", async (req, res) => {
   const code = typeof req.query.code === "string" ? req.query.code : "";
@@ -431,5 +438,11 @@ router.delete("/jira/:connectionId", authenticateToken, async (req, res, next) =
     next(e);
   }
 });
+
+router.delete(
+  "/figma/:connectionId",
+  authenticateToken,
+  figmaOAuthController.deleteConnection,
+);
 
 export default router;

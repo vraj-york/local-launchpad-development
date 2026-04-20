@@ -7,7 +7,12 @@ import { createHmac } from "crypto";
 import { spawnAgent } from "@/lib/cursor-cli";
 import { buildAgentPromptWithImageRefs, writePromptReferenceImages } from "@/lib/prompt-reference-images";
 import { applyTemporaryMcpFromHost } from "@/lib/temporary-mcp-config";
+import { registerCloudAgentChild } from "@/lib/cloud-agent-child-registry";
 import { markCloudAgentFinished, markCloudAgentRunning } from "@/lib/cloud-agent-registry";
+import {
+  clearCloudAgentStopRequest,
+  isCloudAgentStopRequested,
+} from "@/lib/cloud-agent-stop-request";
 import { drainFollowupQueueAfterRun } from "@/lib/followup-queue";
 import {
   applyLaunchDefaults,
@@ -21,6 +26,7 @@ import {
   updateAgentStatus,
 } from "@/lib/agent-store";
 import { getGithubPatForEmail } from "@/lib/github-credentials-store";
+import { getFigmaAccessTokenForEmail } from "@/lib/figma-credentials-store";
 import type {
   CloudConversationMessage,
   CloudFollowupRequest,
@@ -70,6 +76,17 @@ async function resolveGithubPatForAgentId(agentId: string): Promise<string | nul
   const fromDb = userEmail ? await getGithubPatForEmail(userEmail) : null;
   const fromEnv = process.env.GITHUB_PAT_TOKEN?.trim() ?? null;
   return (fromDb ?? fromEnv) || null;
+}
+
+async function resolveFigmaApiKeyForAgentId(
+  agentId: string,
+): Promise<{ key: string | null; source: "db" | "env" | "none" }> {
+  const userEmail = await getAgentUserEmail(agentId);
+  const fromDb = userEmail ? await getFigmaAccessTokenForEmail(userEmail) : null;
+  if (fromDb?.trim()) return { key: fromDb.trim(), source: "db" };
+  const fromEnv = process.env.FIGMA_API_KEY?.trim() ?? null;
+  if (fromEnv) return { key: fromEnv, source: "env" };
+  return { key: null, source: "none" };
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -420,7 +437,7 @@ async function tryPublishCloudAgentChanges(
   }
 }
 
-async function postAgentWebhook(
+export async function postAgentWebhook(
   webhookUrl: string | null | undefined,
   webhookSecret: string | null | undefined,
   payload: Record<string, unknown>,
@@ -434,6 +451,31 @@ async function postAgentWebhook(
     headers["X-Webhook-Signature"] = createHmac("sha256", secret).update(body).digest("hex");
   }
   await fetch(url, { method: "POST", headers, body });
+}
+
+export async function finalizeAgentStoppedByApi(
+  agentId: string,
+  webhookUrl: string | null | undefined,
+  webhookSecret: string | null | undefined,
+): Promise<void> {
+  clearCloudAgentStopRequest(agentId);
+  await updateAgentStatus(agentId, "STOPPED", "Stopped by API");
+  await postAgentWebhook(webhookUrl, webhookSecret, {
+    id: agentId,
+    status: "STOPPED",
+    timestamp: Date.now(),
+  });
+  logRun("agent.stopped", { agentId, source: "api" });
+}
+
+async function abortRunIfStopRequested(
+  agentId: string,
+  webhookUrl: string | null | undefined,
+  webhookSecret: string | null | undefined,
+): Promise<boolean> {
+  if (!isCloudAgentStopRequested(agentId)) return false;
+  await finalizeAgentStoppedByApi(agentId, webhookUrl, webhookSecret);
+  return true;
 }
 
 function nextMessageSeq(messages: CloudConversationMessage[]): { nextId: string; nextSeq: { n: number } } {
@@ -568,11 +610,36 @@ export async function launchAgentInBackground(input: LaunchAgentBackgroundInput)
     await postAgentWebhook(whUrl, whSecret, { id: input.id, status: "RUNNING", timestamp: Date.now() });
     logRun("agent.status", { agentId: input.id, status: "RUNNING" });
 
+    if (await abortRunIfStopRequested(input.id, whUrl, whSecret)) return;
+
     const githubPat = await resolveGithubPatForAgentId(input.id);
+    if (await abortRunIfStopRequested(input.id, whUrl, whSecret)) return;
+
     const { cwd, baseRef, workBranch } = await ensureWorkspace(input, apiKey, githubPat);
+    if (await abortRunIfStopRequested(input.id, whUrl, whSecret)) return;
     logRun("workspace.ready", { agentId: input.id, cwd, baseRef, workBranch });
 
-    const mcpTemp = await applyTemporaryMcpFromHost(cwd);
+    const figmaResolved = await resolveFigmaApiKeyForAgentId(input.id);
+    logRun("mcp.figma", {
+      agentId: input.id,
+      source: figmaResolved.source,
+      configured: Boolean(figmaResolved.key),
+      tokenLen: figmaResolved.key?.length ?? 0,
+    });
+    const mcpTemp = await applyTemporaryMcpFromHost(
+      cwd,
+      figmaResolved.key ? { FIGMA_API_KEY: figmaResolved.key } : undefined,
+    );
+    if (await abortRunIfStopRequested(input.id, whUrl, whSecret)) {
+      if (mcpTemp) {
+        try {
+          await mcpTemp.cleanup();
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
     try {
       const { dir: promptRefDir, relPaths } = await writePromptReferenceImages(
         cwd,
@@ -596,6 +663,8 @@ export async function launchAgentInBackground(input: LaunchAgentBackgroundInput)
         workspace: cwd,
         model: input.model === "default" ? "default" : input.model,
       });
+      if (await abortRunIfStopRequested(input.id, whUrl, whSecret)) return;
+
       const child = await spawnAgent({
         prompt: agentPrompt,
         workspace: cwd,
@@ -604,6 +673,7 @@ export async function launchAgentInBackground(input: LaunchAgentBackgroundInput)
           CURSOR_API_KEY: apiKey,
         },
       });
+      registerCloudAgentChild(input.id, child);
 
       try {
         summary = await consumeAgentStream(child, input.id, conversationMessages, nextSeq, "launch");
@@ -653,10 +723,14 @@ export async function launchAgentInBackground(input: LaunchAgentBackgroundInput)
       timestamp: Date.now(),
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Launch failed";
-    logRun("launch.complete", { agentId: input.id, status: "FAILED", error: message });
-    await updateAgentStatus(input.id, "FAILED", message);
-    await postAgentWebhook(whUrl, whSecret, { id: input.id, status: "FAILED", error: message, timestamp: Date.now() });
+    if (isCloudAgentStopRequested(input.id)) {
+      await finalizeAgentStoppedByApi(input.id, whUrl, whSecret);
+    } else {
+      const message = err instanceof Error ? err.message : "Launch failed";
+      logRun("launch.complete", { agentId: input.id, status: "FAILED", error: message });
+      await updateAgentStatus(input.id, "FAILED", message);
+      await postAgentWebhook(whUrl, whSecret, { id: input.id, status: "FAILED", error: message, timestamp: Date.now() });
+    }
   } finally {
     markCloudAgentFinished(input.id);
     void drainFollowupQueueAfterRun(input.id);
@@ -718,10 +792,33 @@ export async function followupAgentInBackground(input: FollowupAgentBackgroundIn
     await postAgentWebhook(ctx.webhookUrl, ctx.webhookSecret, { id, status: "RUNNING", timestamp: Date.now() });
     logRun("agent.status", { agentId: id, status: "RUNNING", mode: "followup" });
 
+    if (await abortRunIfStopRequested(id, ctx.webhookUrl, ctx.webhookSecret)) return;
+
     const cwd = ctx.workspace;
     const githubPat = await resolveGithubPatForAgentId(id);
+    if (await abortRunIfStopRequested(id, ctx.webhookUrl, ctx.webhookSecret)) return;
     logRun("workspace.ready", { agentId: id, cwd, workBranch: ctx.workBranch ?? null, sourceRef: ctx.sourceRef });
-    const mcpTemp = await applyTemporaryMcpFromHost(cwd);
+    const figmaResolved = await resolveFigmaApiKeyForAgentId(id);
+    logRun("mcp.figma", {
+      agentId: id,
+      source: figmaResolved.source,
+      configured: Boolean(figmaResolved.key),
+      tokenLen: figmaResolved.key?.length ?? 0,
+    });
+    const mcpTemp = await applyTemporaryMcpFromHost(
+      cwd,
+      figmaResolved.key ? { FIGMA_API_KEY: figmaResolved.key } : undefined,
+    );
+    if (await abortRunIfStopRequested(id, ctx.webhookUrl, ctx.webhookSecret)) {
+      if (mcpTemp) {
+        try {
+          await mcpTemp.cleanup();
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
     try {
       const { dir: promptRefDir, relPaths } = await writePromptReferenceImages(cwd, id, prompt.images);
       const agentPrompt =
@@ -741,6 +838,8 @@ export async function followupAgentInBackground(input: FollowupAgentBackgroundIn
         resumeSession: ctx.cursorSessionId,
         model: ctx.model === "default" ? "default" : ctx.model,
       });
+      if (await abortRunIfStopRequested(id, ctx.webhookUrl, ctx.webhookSecret)) return;
+
       const child = await spawnAgent({
         prompt: agentPrompt,
         workspace: cwd,
@@ -750,6 +849,7 @@ export async function followupAgentInBackground(input: FollowupAgentBackgroundIn
           CURSOR_API_KEY: apiKey,
         },
       });
+      registerCloudAgentChild(id, child);
 
       try {
         summary = await consumeAgentStream(child, id, conversationMessages, nextSeq, "followup");
@@ -798,16 +898,20 @@ export async function followupAgentInBackground(input: FollowupAgentBackgroundIn
       timestamp: Date.now(),
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Follow-up failed";
-    logRun("followup.complete", { agentId: id, status: "FAILED", error: message });
-    await updateAgentStatus(id, "FAILED", message);
-    const ctx = await getAgentFollowupContext(id, apiKeyFingerprint, userEmailNormalized);
-    await postAgentWebhook(ctx?.webhookUrl, ctx?.webhookSecret, {
-      id,
-      status: "FAILED",
-      error: message,
-      timestamp: Date.now(),
-    });
+    const ctxFail = await getAgentFollowupContext(id, apiKeyFingerprint, userEmailNormalized);
+    if (isCloudAgentStopRequested(id)) {
+      await finalizeAgentStoppedByApi(id, ctxFail?.webhookUrl, ctxFail?.webhookSecret);
+    } else {
+      const message = err instanceof Error ? err.message : "Follow-up failed";
+      logRun("followup.complete", { agentId: id, status: "FAILED", error: message });
+      await updateAgentStatus(id, "FAILED", message);
+      await postAgentWebhook(ctxFail?.webhookUrl, ctxFail?.webhookSecret, {
+        id,
+        status: "FAILED",
+        error: message,
+        timestamp: Date.now(),
+      });
+    }
   } finally {
     markCloudAgentFinished(id);
     void drainFollowupQueueAfterRun(id);
