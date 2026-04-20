@@ -28,7 +28,7 @@ if [ -f /etc/systemd/system/"$SERVICE_NAME".service ]; then
   echo "  sudo systemctl status $SERVICE_NAME"
   echo "  journalctl -u $SERVICE_NAME -f"
 else
-  echo "[WARN] systemd unit not installed. After build, run preview manually:"
+  echo "[WARN] No systemd unit at /etc/systemd/system/$SERVICE_NAME.service — run preview manually:"
   echo "  npm run serve -- --host 0.0.0.0 --port 5173"
-  echo "Or: sudo cp launchpad-frontend.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now $SERVICE_NAME"
+  echo "Production: use Docker (see EC2_DEPLOYMENT.md)."
 fi

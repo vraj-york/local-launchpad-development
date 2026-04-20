@@ -26,21 +26,3 @@ npm install
 
 echo "🏗️ Building production assets..."
 npm run build
-
-echo "⚙️ Installing systemd service..."
-sudo cp /home/ubuntu/launchpad/frontend/launchpad-frontend.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable launchpad-frontend
-
-echo "▶️ Starting Launchpad Frontend..."
-sudo systemctl start launchpad-frontend
-sudo systemctl status launchpad-frontend --no-pager || true
-
-echo ""
-echo "✅ Frontend setup completed."
-echo "🔧 Service commands:"
-echo "  sudo systemctl restart launchpad-frontend"
-echo "  sudo systemctl status launchpad-frontend"
-echo "  journalctl -u launchpad-frontend -f"
-echo ""
-echo "🌐 Preview URL (default): http://<host>:5173"

@@ -145,7 +145,7 @@ docker compose up -d --build
 
 ## Non-Docker EC2 (optional)
 
-Production should follow **[EC2_DEPLOYMENT.md](./EC2_DEPLOYMENT.md)** (Docker). If you still run Node directly on a VM, use **`backend/setup-ec2.sh`** / **`frontend/setup-ec2.sh`** once, then **`deploy.sh`** in each folder; services are **systemd** units (`launchpad-backend.service`, `launchpad-frontend.service`) in those directories.
+Production should follow **[EC2_DEPLOYMENT.md](./EC2_DEPLOYMENT.md)** (Docker). If you still run Node directly on a VM, use **`backend/setup-ec2.sh`** / **`frontend/setup-ec2.sh`** once, then **`deploy.sh`** in each folder (install/build; optional **`launchpad-backend.service`** for the API). For the frontend preview, run **`npm run serve`** or wire your own process manager; no systemd unit is shipped in this repo.
 
 ---
 
