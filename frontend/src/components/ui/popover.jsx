@@ -9,11 +9,19 @@ function Popover({
   return <PopoverPrimitive.Root data-slot="popover" {...props} />;
 }
 
-function PopoverTrigger({
-  ...props
-}) {
-  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />;
-}
+const PopoverTrigger = React.forwardRef(function PopoverTrigger(
+  { ...props },
+  ref,
+) {
+  return (
+    <PopoverPrimitive.Trigger
+      ref={ref}
+      data-slot="popover-trigger"
+      {...props}
+    />
+  );
+});
+PopoverTrigger.displayName = "PopoverTrigger";
 
 function PopoverContent({
   className,

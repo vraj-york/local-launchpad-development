@@ -174,6 +174,30 @@ export function startProjectServer(port, projectPathOrDir, projectId = null) {
 }
 
 /**
+ * Stop the static server for a project port (e.g. on project delete).
+ * @param {number} port
+ * @returns {Promise<void>}
+ */
+export function stopProjectServer(port) {
+  if (!port || port < 1) return Promise.resolve();
+  const server = activeServers.get(port);
+  if (!server) return Promise.resolve();
+  return new Promise((resolve) => {
+    if (typeof server.closeAllConnections === "function") {
+      try {
+        server.closeAllConnections();
+      } catch {
+        // ignore
+      }
+    }
+    server.close(() => {
+      activeServers.delete(port);
+      resolve();
+    });
+  });
+}
+
+/**
  * Start static servers for all projects that have a port and projectPath.
  * Call once on backend startup. Retries once after delay if DB isn't ready.
  */

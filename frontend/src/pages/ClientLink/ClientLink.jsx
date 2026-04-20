@@ -23,6 +23,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -113,6 +120,9 @@ export const ClientLink = () => {
   /** Combined release notes + what to review (client view only). */
   const [releaseDetailsOpen, setReleaseDetailsOpen] = useState(false);
   const [previewStageWidth, setPreviewStageWidth] = useState(0);
+  /** Current path inside the preview iframe (same-origin / proxied only). */
+  const [iframeBrowsePath, setIframeBrowsePath] = useState("");
+  const [previewPathPopoverOpen, setPreviewPathPopoverOpen] = useState(false);
   const [responsivePreset, setResponsivePreset] = useState(
     /** @type {'desktop' | 'tablet' | 'mobile' | 'custom'} */ ("desktop"),
   );
@@ -432,10 +442,30 @@ export const ClientLink = () => {
     setResponsiveCustomWidth(w);
   }, []);
 
+  const syncIframeBrowsePath = useCallback(() => {
+    const iframe = previewIframeRef.current;
+    if (!iframe || !canAccessIframeDocument(iframe)) {
+      setIframeBrowsePath("");
+      return;
+    }
+    try {
+      const loc = iframe.contentWindow?.location;
+      if (!loc) {
+        setIframeBrowsePath("");
+        return;
+      }
+      const next = `${loc.pathname}${loc.search}${loc.hash}`;
+      setIframeBrowsePath((prev) => (prev === next ? prev : next));
+    } catch {
+      setIframeBrowsePath("");
+    }
+  }, []);
+
   const handlePreviewIframeLoad = useCallback(() => {
     const iframe = previewIframeRef.current;
     setPreviewIframeAccessible(canAccessIframeDocument(iframe));
-  }, []);
+    syncIframeBrowsePath();
+  }, [syncIframeBrowsePath]);
 
   const handlePreviewPinnedChange = useCallback((ctx) => {
     setPickedElementContext(ctx);
@@ -487,9 +517,38 @@ export const ClientLink = () => {
     setPickedElementContext(null);
     setVisualPickMode(false);
     setPreviewIframeAccessible(null);
+    setIframeBrowsePath("");
+    setPreviewPathPopoverOpen(false);
     setStagedChatReplacementImage(null);
     setStagedChatReferenceImages([]);
   }, [iframeSrc]);
+
+  /** Clicks inside the preview iframe don't bubble to this document; Radix won't dismiss otherwise. */
+  useEffect(() => {
+    if (!previewPathPopoverOpen || previewIframeAccessible !== true) {
+      return undefined;
+    }
+    const iframe = previewIframeRef.current;
+    if (!iframe || !canAccessIframeDocument(iframe)) return undefined;
+    const doc = iframe.contentDocument;
+    if (!doc) return undefined;
+    const close = () => setPreviewPathPopoverOpen(false);
+    doc.addEventListener("pointerdown", close, true);
+    return () => doc.removeEventListener("pointerdown", close, true);
+  }, [previewPathPopoverOpen, previewIframeAccessible, iframeSrc]);
+
+  useEffect(() => {
+    if (previewIframeAccessible !== true) {
+      setIframeBrowsePath("");
+    }
+  }, [previewIframeAccessible]);
+
+  useEffect(() => {
+    if (!iframeSrc || previewIframeAccessible !== true) return undefined;
+    syncIframeBrowsePath();
+    const id = setInterval(syncIframeBrowsePath, 600);
+    return () => clearInterval(id);
+  }, [iframeSrc, previewIframeAccessible, syncIframeBrowsePath]);
 
   useEffect(() => {
     if (!chatOpen || !iframeSrc) return;
@@ -632,6 +691,41 @@ export const ClientLink = () => {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
+            {iframeSrc && previewIframeAccessible === true ? (
+              <Popover
+                modal
+                open={previewPathPopoverOpen}
+                onOpenChange={(open) => {
+                  setPreviewPathPopoverOpen(open);
+                  if (open) syncIframeBrowsePath();
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-7 shrink-0 border-slate-200/90 bg-white/90 p-0 text-slate-700 shadow-sm hover:bg-white"
+                    aria-label="Show preview path"
+                    title="Preview path"
+                  >
+                    /
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-[min(100vw-2rem,22rem)] border-slate-200 p-3"
+                  align="end"
+                  sideOffset={6}
+                  onInteractOutside={() => setPreviewPathPopoverOpen(false)}
+                >
+                  <PopoverHeader className="gap-2 space-y-0">
+                    <p className="break-all font-mono text-xs leading-relaxed text-slate-700">
+                    Preview path: <span className="font-bold">{iframeBrowsePath.trim() ? iframeBrowsePath : "—"}</span>
+                    </p>
+                  </PopoverHeader>
+                </PopoverContent>
+              </Popover>
+            ) : null}
             {iframeSrc ? (
               <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-200/90 bg-white/90 p-0.5 shadow-sm">
                 <Tooltip>
