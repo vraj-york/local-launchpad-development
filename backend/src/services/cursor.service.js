@@ -94,6 +94,57 @@ function isMigrateFrontendFigmaFlow(flow) {
   );
 }
 
+/** Server-side Migrate Frontend (no Cursor on developer repo); `FigmaConversion.agentId` uses this prefix. */
+export const READONLY_MIGRATE_AGENT_PREFIX = "readonly_migrate_";
+
+export function isReadonlyMigrateAgentId(agentId) {
+  return typeof agentId === "string" && agentId.startsWith(READONLY_MIGRATE_AGENT_PREFIX);
+}
+
+/**
+ * Pipeline UI when migration runs read-only on the server (no cloud agent on developer repo).
+ * @param {{ flow: string|null, status: string|null, projectVersionId: number|null, targetBranchName: string|null, id: number, releaseId: number, agentId?: string|null }} conv
+ */
+export function composeReadonlyMigrateFrontendPipelineUi(conv) {
+  if (!conv || !isMigrateFrontendFigmaFlow(conv.flow) || !isReadonlyMigrateAgentId(conv.agentId))
+    return null;
+  const db = conv.status != null ? String(conv.status) : "";
+
+  if (db === "MIGRATE_PLATFORM_SYNC_FAILED") {
+    return {
+      phase: "platform_failed",
+      headline: "Platform sync failed",
+      detail:
+        "Copying the developer UI into the Launchpad repo or deploy failed. Check backend logs. The developer repository was not modified.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      devBranch: conv.targetBranchName ?? null,
+    };
+  }
+  if (conv.projectVersionId != null) {
+    return {
+      phase: "completed",
+      headline: "Migrate Frontend complete",
+      detail:
+        "Launchpad repository was updated (dedicated migrate branch + launchpad) from a read-only clone of the developer repo. No commits were pushed to the developer repository.",
+      figmaConversionId: conv.id,
+      releaseId: conv.releaseId,
+      projectVersionId: conv.projectVersionId,
+      devBranch: conv.targetBranchName ?? null,
+    };
+  }
+  return {
+    phase: "platform_working",
+    headline: "Migrating UI (read-only)",
+    detail:
+      "Cloning the developer repository read-only, copying the frontend layer into Launchpad on a new branch, then updating launchpad and deploy. Nothing is pushed to the developer remote.",
+    figmaConversionId: conv.id,
+    releaseId: conv.releaseId,
+    devBranch: conv.targetBranchName ?? null,
+    agentStatus: "RUNNING",
+  };
+}
+
 /**
  * UI payload for Migrate Frontend: Cursor agent + platform merge/deploy phases.
  * @param {{ flow: string|null, status: string|null, projectVersionId: number|null, targetBranchName: string|null, id: number, releaseId: number }} conv
@@ -439,6 +490,42 @@ export async function getCursorAgentById(agentId, projectId) {
       : String(agentId ?? "").trim();
   if (!id) {
     return { status: 400, data: { error: "Agent id is required" } };
+  }
+  if (isReadonlyMigrateAgentId(id)) {
+    const conv = await prisma.figmaConversion.findFirst({
+      where: { agentId: id },
+      select: {
+        id: true,
+        projectId: true,
+        releaseId: true,
+        flow: true,
+        status: true,
+        projectVersionId: true,
+        targetBranchName: true,
+        agentId: true,
+      },
+    });
+    if (!conv) {
+      return { status: 404, data: { error: "Agent not found or not linked to a project" } };
+    }
+    const pipeline = composeReadonlyMigrateFrontendPipelineUi(conv);
+    const phase = pipeline?.phase;
+    const statusStr =
+      phase === "completed"
+        ? "FINISHED"
+        : phase === "platform_failed"
+          ? "FAILED"
+          : "RUNNING";
+    return {
+      status: 200,
+      data: {
+        id,
+        status: statusStr,
+        target: {
+          branchName: conv.targetBranchName?.trim() || null,
+        },
+      },
+    };
   }
   let pid =
     projectId != null && Number.isInteger(Number(projectId)) ? Number(projectId) : null;
@@ -1543,6 +1630,7 @@ export function startAgentPolling(agentId) {
   if (!agentId || typeof agentId !== "string" || !agentId.trim()) return;
 
   const id = agentId.trim();
+  if (isReadonlyMigrateAgentId(id)) return;
   let timeoutId = null;
 
   const poll = async () => {

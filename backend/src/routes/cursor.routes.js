@@ -4,9 +4,11 @@ import { prisma } from "../lib/prisma.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import {
   composeMigrateFrontendPipelineUi,
+  composeReadonlyMigrateFrontendPipelineUi,
   createAgentForProjectRelease,
   cursorRequest,
   getCursorAgentById,
+  isReadonlyMigrateAgentId,
   postCursorAgentFollowup,
   performMergeToLaunchpad,
 } from "../services/cursor.service.js";
@@ -180,10 +182,14 @@ router.post(
 );
 
 /** GET /api/cursor/agents/:id - Get agent status */
-router.get("/agents/:id", authenticateToken, requireCursorKey, async (req, res) => {
+router.get("/agents/:id", authenticateToken, async (req, res) => {
   const id = typeof req.params.id === "string" ? req.params.id.trim() : "";
   if (!id) {
     return res.status(400).json({ error: "Agent id is required" });
+  }
+
+  if (!isReadonlyMigrateAgentId(id) && !process.env.CURSOR_API_KEY?.trim()) {
+    return res.status(503).json({ error: "Cursor API key not configured" });
   }
 
   try {
@@ -199,6 +205,7 @@ router.get("/agents/:id", authenticateToken, requireCursorKey, async (req, res) 
           status: true,
           projectVersionId: true,
           targetBranchName: true,
+          agentId: true,
         },
       });
       if (conv?.projectId) {
@@ -210,9 +217,16 @@ router.get("/agents/:id", authenticateToken, requireCursorKey, async (req, res) 
           }
           throw err;
         }
-        const pipeline = composeMigrateFrontendPipelineUi(conv, data.status);
-        if (pipeline) {
-          data.migrateFrontendPipeline = pipeline;
+        if (isReadonlyMigrateAgentId(id)) {
+          const roPipe = composeReadonlyMigrateFrontendPipelineUi(conv);
+          if (roPipe) {
+            data.migrateFrontendPipeline = roPipe;
+          }
+        } else {
+          const pipeline = composeMigrateFrontendPipelineUi(conv, data.status);
+          if (pipeline) {
+            data.migrateFrontendPipeline = pipeline;
+          }
         }
       }
     }

@@ -1,5 +1,6 @@
 import path from "path";
 import fs from "fs-extra";
+import { randomUUID } from "crypto";
 import { ReleaseStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import ApiError from "../utils/apiError.js";
@@ -17,12 +18,11 @@ import {
   configureGithubHttpExtraHeader,
 } from "../utils/developerRepoGit.util.js";
 import { getBackendRoot } from "../utils/instanceRoot.js";
-import { buildMigrateFrontendPrompt } from "./cursorPrompts.js";
 import {
-  cursorRequestWithProjectAndPatRetry,
-  startAgentPolling,
   executeLaunchpadHeadDeploy,
   markScratchVersionFailedIfCreating,
+  isReadonlyMigrateAgentId,
+  READONLY_MIGRATE_AGENT_PREFIX,
 } from "./cursor.service.js";
 
 export const FIGMA_CONVERSION_FLOW_MIGRATE_FRONTEND = "migrate_frontend";
@@ -295,6 +295,43 @@ function isSensitiveMigrateLeafName(name) {
   return false;
 }
 
+/** Skip backend-ish / CI / env paths when copying the integration UI tree (POSIX rel under UI root). */
+function isExcludedFromFrontendMigrateCopy(relPosix, isDir) {
+  const parts = String(relPosix || "")
+    .split("/")
+    .filter(Boolean);
+  const lowerParts = parts.map((p) => p.toLowerCase());
+  for (const p of lowerParts) {
+    if (
+      p === "node_modules" ||
+      p === ".git" ||
+      p === ".github" ||
+      p === ".husky" ||
+      p === ".circleci" ||
+      p === "coverage" ||
+      p === "cypress" ||
+      p === "playwright-report" ||
+      p === "test-results"
+    ) {
+      return true;
+    }
+  }
+  if (!isDir && parts.length) {
+    const leaf = parts[parts.length - 1].toLowerCase();
+    if (
+      leaf === "dockerfile" ||
+      leaf === "docker-compose.yml" ||
+      leaf === "docker-compose.yaml" ||
+      leaf === "jenkinsfile" ||
+      leaf === ".gitlab-ci.yml" ||
+      leaf === ".travis.yml"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Merge dev UI tree **into** an existing platform directory: add/overwrite files, do not delete
  * destination paths missing from the source. Skips nested `.git` and sensitive leaf names.
@@ -321,6 +358,8 @@ async function mergeUiTreeIntoPlatform(srcDir, destDir, platGitRoot) {
       if (name === ".git") continue;
       if (isSensitiveMigrateLeafName(name)) continue;
       const relChild = rel ? path.join(rel, name) : name;
+      const relPosix = relChild.split(path.sep).join("/");
+      if (isExcludedFromFrontendMigrateCopy(relPosix, ent.isDirectory())) continue;
       const from = path.join(srcDir, relChild);
       const to = path.join(destDir, relChild);
       if (ent.isDirectory()) {
@@ -374,10 +413,6 @@ export async function startMigrateFrontendForRelease({
   targetProjectVersionId: targetProjectVersionIdRaw = null,
   migrateFrontend: migrateFrontendRaw = null,
 }) {
-  if (!process.env.CURSOR_API_KEY?.trim()) {
-    throw new ApiError(503, "Cursor API key not configured");
-  }
-
   const migrateFrontendAck =
     migrateFrontendRaw === true ||
     String(migrateFrontendRaw || "").toLowerCase() === "true";
@@ -497,7 +532,6 @@ export async function startMigrateFrontendForRelease({
     );
   }
 
-  const repositoryUrl = `https://github.com/${devParsed.owner}/${devParsed.repo}`;
   const meta = await scmGetRepositoryMetadata(
     "github",
     devParsed.owner,
@@ -518,29 +552,7 @@ export async function startMigrateFrontendForRelease({
     (meta.defaultBranch && String(meta.defaultBranch).trim()) ||
     "main";
 
-  const promptText = buildMigrateFrontendPrompt();
-  const migrateWorkBranch = `cursor/migrate-frontend-p${pid}-r${rid}-${Date.now().toString(36)}`;
-
-  const { status, data } = await cursorRequestWithProjectAndPatRetry({
-    method: "POST",
-    path: "/v0/agents",
-    body: {
-      prompt: { text: promptText },
-      source: { repository: repositoryUrl, ref: refBranch },
-      target: { autoBranch: true, branchName: migrateWorkBranch },
-    },
-    projectId: pid,
-  });
-
-  if (status < 200 || status >= 300 || !data?.id) {
-    const msg =
-      (data && typeof data.error === "string" && data.error) ||
-      (data && typeof data.message === "string" && data.message) ||
-      "Cursor agent could not be started";
-    throw new ApiError(status >= 400 && status < 600 ? status : 502, msg);
-  }
-
-  const agentId = String(data.id).trim();
+  const agentId = `${READONLY_MIGRATE_AGENT_PREFIX}${randomUUID()}`;
   const count = await prisma.figmaConversion.count({
     where: { projectId: pid, releaseId: rid },
   });
@@ -554,7 +566,8 @@ export async function startMigrateFrontendForRelease({
       attemptedById: user.id,
       attemptNumber,
       nodeCount: null,
-      status: data.status ? String(data.status).toUpperCase() : "CREATING",
+      status: "READONLY_QUEUED",
+      targetBranchName: refBranch,
       deferLaunchpadMerge: false,
       awaitingLaunchpadConfirmation: false,
       skipLaunchpadAutomation: false,
@@ -564,7 +577,31 @@ export async function startMigrateFrontendForRelease({
     },
   });
 
-  startAgentPolling(agentId);
+  const cid = created.id;
+  setImmediate(() => {
+    void (async () => {
+      try {
+        await prisma.figmaConversion.update({
+          where: { id: cid },
+          data: { status: "READONLY_SYNCING" },
+        });
+        await runMigrateFrontendPropagation({
+          agentId,
+          agentData: null,
+          figmaConversionId: cid,
+        });
+      } catch (err) {
+        console.error("[migrate-frontend] read-only propagation failed", {
+          figmaConversionId: cid,
+          error: err?.message || err,
+        });
+        await prisma.figmaConversion.updateMany({
+          where: { id: cid, projectVersionId: null },
+          data: { status: "MIGRATE_PLATFORM_SYNC_FAILED" },
+        });
+      }
+    })();
+  });
 
   return {
     agentId,
@@ -590,6 +627,7 @@ export async function runMigrateFrontendPhaseBFromPoller({ agentId, agentData, c
 
   const id = String(agentId || "").trim();
   if (!id) return;
+  if (isReadonlyMigrateAgentId(id)) return;
   if (migratePropagationInFlight.has(id)) return;
   migratePropagationInFlight.add(id);
 
@@ -618,16 +656,27 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
       projectVersionId: true,
       migrateTargetProjectVersionId: true,
       migrateFrontend: true,
+      agentId: true,
+      targetBranchName: true,
     },
   });
   if (!conversion || conversion.projectVersionId != null) return;
 
-  const headBranch =
-    typeof agentData?.target?.branchName === "string"
-      ? agentData.target.branchName.trim()
-      : "";
-  if (!headBranch) {
-    throw new Error("Migrate Frontend: agent has no target branch name");
+  const readonly = isReadonlyMigrateAgentId(String(conversion.agentId || ""));
+  let headBranch = "";
+  if (readonly) {
+    headBranch = String(conversion.targetBranchName || "").trim();
+    if (!headBranch) {
+      throw new Error("Migrate Frontend: missing developer ref (targetBranchName) for read-only migration");
+    }
+  } else {
+    headBranch =
+      typeof agentData?.target?.branchName === "string"
+        ? agentData.target.branchName.trim()
+        : "";
+    if (!headBranch) {
+      throw new Error("Migrate Frontend: agent has no target branch name");
+    }
   }
 
   const project = await prisma.project.findUnique({
@@ -669,21 +718,30 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
   const devToken = ghCreds.githubToken;
   const devUser = ghCreds.githubUsername;
 
-  let devTipSha =
-    (await waitForAgentBranchTipSha({
-      provider: "github",
-      owner: devOwner,
-      repo: devRepo,
-      branch: headBranch,
-      token: devToken,
-    })) || null;
-
-  if (!devTipSha) {
+  let devTipSha = null;
+  if (readonly) {
     const tip = await scmGetBranchSha("github", devOwner, devRepo, headBranch, devToken);
     devTipSha = tip?.sha || null;
+  } else {
+    devTipSha =
+      (await waitForAgentBranchTipSha({
+        provider: "github",
+        owner: devOwner,
+        repo: devRepo,
+        branch: headBranch,
+        token: devToken,
+      })) || null;
+    if (!devTipSha) {
+      const tip = await scmGetBranchSha("github", devOwner, devRepo, headBranch, devToken);
+      devTipSha = tip?.sha || null;
+    }
   }
   if (!devTipSha) {
-    throw new Error("Migrate Frontend: could not resolve agent branch tip on developer repo");
+    throw new Error(
+      readonly
+        ? "Migrate Frontend: could not resolve developer branch tip (read-only clone)"
+        : "Migrate Frontend: could not resolve agent branch tip on developer repo",
+    );
   }
 
   const platformSubdir = normalizePlatformSubdirEnv();
@@ -722,7 +780,11 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
     ]);
     await configureGithubHttpExtraHeader(devDir, devToken, devUser);
     await git(devDir, ["fetch", "origin", headBranch]);
-    await git(devDir, ["checkout", "-B", headBranch, `origin/${headBranch}`]);
+    if (readonly) {
+      await git(devDir, ["checkout", "--detach", `origin/${headBranch}`]);
+    } else {
+      await git(devDir, ["checkout", "-B", headBranch, `origin/${headBranch}`]);
+    }
 
     const sourceRel = await resolveDevUiSourceRelPath(devDir);
     const destRel = resolvePlatformUiDestRel(sourceRel);
@@ -745,14 +807,17 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
         ? metaPlat.defaultBranch.trim()
         : "main";
 
+    const migrateBranchName = `migrate-ui/r${conversion.releaseId}-${Date.now().toString(36)}`;
     const lpRemote = await scmGetBranchSha(provider, owner, repo, "launchpad", token);
     if (lpRemote?.sha) {
       await git(platDir, ["fetch", "origin", "launchpad"]);
-      await git(platDir, ["checkout", "-B", "launchpad", "origin/launchpad"]);
+      await git(platDir, ["checkout", "--detach", "origin/launchpad"]);
     } else {
       await git(platDir, ["fetch", "origin", defaultBranch]);
-      await git(platDir, ["checkout", "-B", "launchpad", `origin/${defaultBranch}`]);
+      await git(platDir, ["checkout", "--detach", `origin/${defaultBranch}`]);
     }
+
+    await git(platDir, ["checkout", "-B", migrateBranchName]);
 
     const destBase = path.join(platDir, platformSubdir);
     const destUiRoot = path.join(destBase, destRel);
@@ -771,12 +836,15 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
       throw new Error(
         `Migrate Frontend: no changes to commit after merge (${mergedRelPaths.length} file(s) copied). ` +
           `Usually: (1) dev UI at "${sourceRel}/" already matches platform at "${mergeTargetSummary}", ` +
-          `(2) set MIGRATE_FRONTEND_SOURCE_DIR / MIGRATE_FRONTEND_DEST_REL / MIGRATE_FRONTEND_PLATFORM_SUBDIR if paths are wrong, ` +
-          `(3) confirm the Cursor agent pushed commits to the developer branch. ` +
-          `Successful pushes update the platform repo branch **launchpad** (not necessarily default/main).`,
+          `(2) set MIGRATE_FRONTEND_SOURCE_DIR / MIGRATE_FRONTEND_DEST_REL / MIGRATE_FRONTEND_PLATFORM_SUBDIR if paths are wrong. ` +
+          (readonly
+            ? "The developer repository was only read (no push)."
+            : "Confirm the Cursor agent pushed commits to the developer branch."),
       );
     }
-    const commitSubject = `chore: merge UI ${sourceRel}/* → ${mergeTargetSummary} from dev ${devOwner}/${devRepo} @ ${devTipSha.slice(0, 12)}`;
+    const commitSubject = readonly
+      ? `chore(migrate-ui): ${sourceRel}/* → ${mergeTargetSummary} from ${devOwner}/${devRepo}@${headBranch}@${devTipSha.slice(0, 12)} (read-only)`
+      : `chore: merge UI ${sourceRel}/* → ${mergeTargetSummary} from dev ${devOwner}/${devRepo} @ ${devTipSha.slice(0, 12)}`;
     await git(platDir, [
       "-c",
       "user.email=migrate-frontend@noreply.local",
@@ -787,7 +855,11 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
       commitSubject,
     ]);
 
-    await git(platDir, ["push", "origin", "HEAD:launchpad"]);
+    if (readonly) {
+      await git(platDir, ["push", "origin", `HEAD:refs/heads/${migrateBranchName}`]);
+    } else {
+      await git(platDir, ["push", "origin", "HEAD:launchpad"]);
+    }
 
     const rev = await git(platDir, ["rev-parse", "HEAD"]);
     const newSha = String(rev.stdout || "").trim();
@@ -823,8 +895,12 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
         changedByEmail: email,
         changes: {
           migrateFrontend: {
-            from: `${devOwner}/${devRepo} branch ${headBranch} @ ${devTipSha.slice(0, 7)}`,
-            to: `Platform ${owner}/${repo} launchpad @ ${newSha.slice(0, 7)} (paths: ${relTargetSummary})`,
+            from: readonly
+              ? `${devOwner}/${devRepo} read-only @ ${headBranch} (${devTipSha.slice(0, 7)})`
+              : `${devOwner}/${devRepo} branch ${headBranch} @ ${devTipSha.slice(0, 7)}`,
+            to: readonly
+              ? `Platform ${owner}/${repo} branches ${migrateBranchName} + launchpad @ ${newSha.slice(0, 7)} (paths: ${relTargetSummary})`
+              : `Platform ${owner}/${repo} launchpad @ ${newSha.slice(0, 7)} (paths: ${relTargetSummary})`,
             ...(targetRevisionMeta
               ? { targetRevision: targetRevisionMeta }
               : {}),
@@ -836,13 +912,18 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
     const reuseRevision = conversion.migrateTargetProjectVersionId != null;
     const disclaimerAck = Boolean(conversion.migrateFrontend);
     try {
-      await executeLaunchpadHeadDeploy(conversion, newSha, headBranch, {
-        skipShaDedupe: true,
-        reuseExistingReleaseTag: reuseRevision,
-        explicitAnchorProjectVersionId: reuseRevision
-          ? conversion.migrateTargetProjectVersionId
-          : null,
-      });
+      await executeLaunchpadHeadDeploy(
+        conversion,
+        newSha,
+        headBranch,
+        {
+          skipShaDedupe: true,
+          reuseExistingReleaseTag: reuseRevision,
+          explicitAnchorProjectVersionId: reuseRevision
+            ? conversion.migrateTargetProjectVersionId
+            : null,
+        },
+      );
     } catch (deployErr) {
       await markScratchVersionFailedIfCreating(conversion.projectId);
       throw deployErr;

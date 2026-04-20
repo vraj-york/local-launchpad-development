@@ -276,6 +276,27 @@ function maxReleaseTupleFromList(releasesList) {
   return maxTuple;
 }
 
+/** Prefer the active release; else the highest dot-version release name; else the first row. */
+function pickDefaultMigrateRelease(releasesList, activeRel) {
+  if (!Array.isArray(releasesList) || releasesList.length === 0) return null;
+  if (
+    activeRel &&
+    releasesList.some((r) => Number(r?.id) === Number(activeRel.id))
+  ) {
+    return activeRel;
+  }
+  let best = null;
+  let bestTuple = null;
+  for (const r of releasesList) {
+    const t = parseReleaseNameToTuple(r?.name);
+    if (t && (!bestTuple || compareTuples(t, bestTuple) > 0)) {
+      bestTuple = t;
+      best = r;
+    }
+  }
+  return best ?? releasesList[0];
+}
+
 /** Default patch bump for placeholder / autofill (any greater version is allowed). */
 function getSuggestedPatchReleaseNameFromList(releasesList) {
   const maxTuple = maxReleaseTupleFromList(releasesList);
@@ -408,35 +429,14 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
     hasPlatformRepo &&
     developmentRepoIsGithubCompatible;
 
-  const migrateFrontendDisabledReason = useMemo(() => {
-    if (canMigrateFrontend) return null;
-    if (!canManageReleases) {
-      return "You need permission to manage releases (project creator, admin, or listed assignee).";
-    }
-    if (!hasDeveloperRepo) {
-      return "Set a developer repository URL on the project.";
-    }
-    if (!hasPlatformRepo) {
-      return "Set the platform Git repository path (gitRepoPath) on the project.";
-    }
-    if (!developmentRepoIsGithubCompatible) {
-      return "Developer repository must be on GitHub (https URL or git@github.com:…).";
-    }
-    return null;
-  }, [
-    canMigrateFrontend,
-    canManageReleases,
-    hasDeveloperRepo,
-    hasPlatformRepo,
-    developmentRepoIsGithubCompatible,
-  ]);
-
   const [migrateFrontendConfirmRelease, setMigrateFrontendConfirmRelease] =
     useState(null);
   const [migrateFrontendSubmitting, setMigrateFrontendSubmitting] =
     useState(false);
   const [migrateFrontendProgressByRelease, setMigrateFrontendProgressByRelease] =
     useState({});
+  /** Dedupe resume polls after refresh: `${releaseId}:${agentId}` */
+  const migrateFrontendResumePollRef = useRef(new Set());
   const [migrateReleasePickerOpen, setMigrateReleasePickerOpen] =
     useState(false);
   const [migratePickerReleaseId, setMigratePickerReleaseId] = useState("");
@@ -656,7 +656,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
 
           if (!pipe && isBackendAgentSuccessTerminal(st)) {
             toast.success(
-              "Migrate Frontend finished (agent). If the platform repo did not update, upgrade the backend for pipeline status, or check the launchpad branch on GitHub.",
+              "Migrate Frontend finished. If the platform repo did not update, check the launchpad branch on GitHub or backend logs.",
             );
             setMigrateFrontendProgressByRelease((prev) => {
               const next = { ...prev };
@@ -671,7 +671,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
           }
           if (!pipe && isBackendAgentFailureTerminal(st)) {
             toast.error(
-              `Migrate Frontend agent did not succeed (${String(st || "unknown")}).`,
+              `Migrate Frontend did not succeed (${String(st || "unknown")}).`,
             );
             setMigrateFrontendProgressByRelease((prev) => {
               const next = { ...prev };
@@ -682,7 +682,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
           }
         } catch (err) {
           toast.error(
-            err?.error || err?.message || "Failed to poll Cursor agent status",
+            err?.error || err?.message || "Failed to poll migration status",
           );
           setMigrateFrontendProgressByRelease((prev) => {
             const next = { ...prev };
@@ -698,26 +698,25 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
   );
 
   useEffect(() => {
+    if (!Array.isArray(releases) || releases.length === 0) return;
+    for (const rel of releases) {
+      const o = rel?.ongoingMigrateFrontend;
+      if (!o?.agentId) continue;
+      const dedupeKey = `${rel.id}:${o.agentId}`;
+      if (migrateFrontendResumePollRef.current.has(dedupeKey)) continue;
+      migrateFrontendResumePollRef.current.add(dedupeKey);
+      void pollMigrateFrontendAgent(rel.id, o.agentId).finally(() => {
+        migrateFrontendResumePollRef.current.delete(dedupeKey);
+      });
+    }
+  }, [releases, pollMigrateFrontendAgent]);
+
+  useEffect(() => {
     if (migrateFrontendConfirmRelease?.id == null) return;
     setMigrateConfirmAcknowledged(false);
-    const versions = Array.isArray(migrateFrontendConfirmRelease.versions)
-      ? migrateFrontendConfirmRelease.versions
-      : [];
-    const tagged = versions.filter((v) => String(v?.gitTag || "").trim());
-    if (!tagged.length) {
-      setMigrateSelectedProjectVersionId("__new__");
-      return;
-    }
-    const active = tagged.find((v) => v.isActive);
-    const sorted = [...tagged].sort(
-      (a, b) =>
-        new Date(b.createdAt || 0).getTime() -
-        new Date(a.createdAt || 0).getTime(),
-    );
-    const pick = active ?? sorted[0];
-    setMigrateSelectedProjectVersionId(
-      pick?.id != null ? String(pick.id) : "__new__",
-    );
+    // Default to a new revision so deploy creates a new ProjectVersion + tag unless
+    // the user explicitly picks an existing tagged revision to move.
+    setMigrateSelectedProjectVersionId("__new__");
   }, [migrateFrontendConfirmRelease?.id]);
 
   const openMigrateFrontendFromHeader = useCallback(() => {
@@ -732,9 +731,12 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       setMigrateFrontendConfirmRelease(releases[0]);
       return;
     }
-    setMigratePickerReleaseId(String(releases[0].id));
+    const def = pickDefaultMigrateRelease(releases, activeRelease);
+    setMigratePickerReleaseId(
+      def?.id != null ? String(def.id) : String(releases[0].id),
+    );
     setMigrateReleasePickerOpen(true);
-  }, [canMigrateFrontend, releases]);
+  }, [canMigrateFrontend, releases, activeRelease]);
 
   const confirmMigrateReleasePicker = useCallback(() => {
     const id = Number(migratePickerReleaseId);
@@ -769,7 +771,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
       });
       const agentId = data?.agentId;
       if (!agentId) {
-        toast.error("Migrate Frontend started but no agent id was returned.");
+        toast.error("Migrate Frontend started but no run id was returned.");
         setMigrateFrontendConfirmRelease(null);
         return;
       }
@@ -778,8 +780,14 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
         ...prev,
         [rel.id]: { agentId, lastStatus: "CREATING" },
       }));
-      toast.success("Migrate Frontend agent started on the developer repository.");
-      void pollMigrateFrontendAgent(rel.id, agentId);
+      toast.success(
+        "Migrate Frontend started. The developer repository is read-only; changes apply only to your platform repo.",
+      );
+      const dedupeKey = `${rel.id}:${agentId}`;
+      migrateFrontendResumePollRef.current.add(dedupeKey);
+      void pollMigrateFrontendAgent(rel.id, agentId).finally(() => {
+        migrateFrontendResumePollRef.current.delete(dedupeKey);
+      });
     } catch (err) {
       toast.error(
         (typeof err === "object" && err && err.error) ||
@@ -887,8 +895,10 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
   }, [projectId, needsBackendAgentPoll, loadReleasesSilent]);
 
   const needsMigrateFrontendPoll = useMemo(
-    () => Object.keys(migrateFrontendProgressByRelease).length > 0,
-    [migrateFrontendProgressByRelease],
+    () =>
+      Object.keys(migrateFrontendProgressByRelease).length > 0 ||
+      releases.some((r) => r?.ongoingMigrateFrontend?.agentId),
+    [migrateFrontendProgressByRelease, releases],
   );
 
   useEffect(() => {
@@ -1339,26 +1349,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
               <ArrowRightLeft className="h-4 w-4 shrink-0" />
               Migrate Frontend
             </Button>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="inline-block cursor-not-allowed">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="gap-2 border-slate-200 bg-white/80"
-                    disabled
-                  >
-                    <ArrowRightLeft className="h-4 w-4 shrink-0" />
-                    Migrate Frontend
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-xs text-left">
-                {migrateFrontendDisabledReason}
-              </TooltipContent>
-            </Tooltip>
-          )}
+          ) : null}
         </div>
         )}
       </PageHeader>
@@ -2133,8 +2124,13 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
           <DialogHeader>
             <DialogTitle>Migrate Frontend — choose release</DialogTitle>
             <DialogDescription className="text-left leading-relaxed">
-              Pick which release this migration is tied to (build and changelog are
-              recorded on that release).
+              Pick which release this migration applies to (build and changelog are
+              stored on that release). With multiple releases, the selector
+              defaults to the <strong>active</strong> one when it exists;
+              otherwise to the <strong>highest</strong> dot-version name (for
+              example <span className="font-mono text-xs">2.1.0</span> over{" "}
+              <span className="font-mono text-xs">1.0.0</span>). If no name
+              matches that pattern, the first release in the list is selected.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
@@ -2184,18 +2180,13 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
           <DialogHeader>
             <DialogTitle>Migrate Frontend from developer repo?</DialogTitle>
             <DialogDescription className="text-left leading-relaxed">
-              This starts a Cursor Cloud agent on your{" "}
-              <strong>GitHub developer repository</strong>. The agent finds your
-              integration UI folder (for example{" "}
-              <code className="text-xs">frontend/</code> or{" "}
-              <code className="text-xs">Frontend/</code>). When the agent finishes,
-              this workspace copies that UI tree into your{" "}
-              <strong>platform</strong> repository&apos;s{" "}
-              <code className="text-xs">launchpad</code> branch (not backend-only
-              paths), then tags and deploys for release{" "}
-              <strong>{migrateFrontendConfirmRelease?.name ?? "—"}</strong>.
-              Choose which <strong>platform revision</strong> should receive this
-              import: update an existing tagged revision, or create a new one.
+              <strong>Read-only</strong> clone of your GitHub dev repo: UI folder
+              (e.g. <code className="text-xs">frontend/</code>) is copied into the
+              platform repo (<code className="text-xs">launchpad</code> + migrate
+              branch), then tagged and deployed for{" "}
+              <strong>{migrateFrontendConfirmRelease?.name ?? "—"}</strong>. Pick a
+              platform revision below: <strong>new</strong> tag or{" "}
+              <strong>reuse</strong> an existing one.
             </DialogDescription>
           </DialogHeader>
           {(() => {
@@ -2229,7 +2220,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                     {tagged.map((v) => (
                       <SelectItem key={v.id} value={String(v.id)}>
                         {v.version}
-                        {v.isActive ? " (live)" : ""} — tag {v.gitTag}
+                        {v.isActive ? " (Active)" : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -2278,7 +2269,7 @@ const ReleaseManagement = ({ projectId, projectName, project }) => {
                   Starting…
                 </>
               ) : (
-                "Start agent"
+                "Start migration"
               )}
             </Button>
           </DialogFooter>
