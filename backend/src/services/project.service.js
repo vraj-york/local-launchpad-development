@@ -12,7 +12,7 @@ import { execSync, execFileSync, spawnSync } from "child_process";
 import fsExtra from "fs-extra";
 import os from 'os';
 import fs from "fs-extra";
-import { startProjectServer } from "../projectServers.js";
+import { startProjectServer, stopProjectServer } from "../projectServers.js";
 import { signalNginxReload } from "../utils/nginxBinary.js";
 import {
   runBuildSequence,
@@ -578,6 +578,18 @@ export const allowPortThroughFirewall = async (port) => {
     return false;
   }
 };
+
+/** Reverse {@link allowPortThroughFirewall} when deleting a project (Linux + UFW). */
+async function revokePortFromFirewall(port) {
+  if (!port || shouldSkipUfw() || os.platform() !== "linux") return false;
+  try {
+    await execAsync(`sudo ufw delete allow ${port}/tcp`);
+    return true;
+  } catch (error) {
+    console.warn(`[FIREWALL] Could not revoke port ${port}:`, error.message);
+    return false;
+  }
+}
 export const reloadNginx = async () => {
   try {
     await signalNginxReload();
@@ -1285,8 +1297,10 @@ export const deleteProjectService = async (projectId, user) => {
   const symlinkPath = path.join(nginxEnabledDir, `${projectName}.conf`);
 
   try {
+    await stopProjectServer(project.port);
+
     /* ----------------------------------------
-     * 1. OS-LEVEL CLEANUP (Linux only)
+     * 1. OS-LEVEL CLEANUP (Linux only, optional script)
      * -------------------------------------- */
     if (isLinux) {
       await execAsync(
@@ -1295,13 +1309,26 @@ export const deleteProjectService = async (projectId, user) => {
     }
 
     /* ----------------------------------------
-     * 2. FILESYSTEM CLEANUP (App-owned files)
+     * 2. FILESYSTEM CLEANUP (App-owned files + nginx)
      * -------------------------------------- */
+    const removeEnabledSymlink = async () => {
+      await fsExtra.remove(symlinkPath).catch(async () => {
+        if (isLinux) {
+          await execAsync(`sudo rm -f "${symlinkPath}"`).catch(() => {});
+        }
+      });
+    };
     await Promise.all([
       absoluteProjectPath && fsExtra.remove(absoluteProjectPath).catch(() => { }),
       absoluteNginxPath && fsExtra.remove(absoluteNginxPath).catch(() => { }),
-      !isLinux && fsExtra.remove(symlinkPath).catch(() => { }),
+      removeEnabledSymlink(),
     ]);
+
+    await reloadNginx().catch((err) =>
+      console.warn("[DeleteProjectService] nginx reload:", err.message),
+    );
+
+    await revokePortFromFirewall(project.port);
 
     /* ----------------------------------------
      * 3. DATABASE: project delete cascades releases, versions
