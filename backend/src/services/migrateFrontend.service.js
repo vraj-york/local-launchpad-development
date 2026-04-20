@@ -832,9 +832,11 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
       await gitAddMergedPaths(platDir, mergedRelPaths);
     }
     const statusPorcelain = await git(platDir, ["status", "--porcelain"]);
-    if (!String(statusPorcelain.stdout || "").trim()) {
+    const hasStagedOrWorkingChanges = Boolean(String(statusPorcelain.stdout || "").trim());
+    const mergedFileCount = mergedRelPaths.length;
+    if (!hasStagedOrWorkingChanges && !mergedFileCount) {
       throw new Error(
-        `Migrate Frontend: no changes to commit after merge (${mergedRelPaths.length} file(s) copied). ` +
+        `Migrate Frontend: no changes to commit after merge (${mergedFileCount} file(s) copied). ` +
           `Usually: (1) dev UI at "${sourceRel}/" already matches platform at "${mergeTargetSummary}", ` +
           `(2) set MIGRATE_FRONTEND_SOURCE_DIR / MIGRATE_FRONTEND_DEST_REL / MIGRATE_FRONTEND_PLATFORM_SUBDIR if paths are wrong. ` +
           (readonly
@@ -842,15 +844,17 @@ async function runMigrateFrontendPropagation({ agentId, agentData, figmaConversi
             : "Confirm the Cursor agent pushed commits to the developer branch."),
       );
     }
+    const alreadyInSync = !hasStagedOrWorkingChanges && mergedFileCount > 0;
     const commitSubject = readonly
-      ? `chore(migrate-ui): ${sourceRel}/* → ${mergeTargetSummary} from ${devOwner}/${devRepo}@${headBranch}@${devTipSha.slice(0, 12)} (read-only)`
-      : `chore: merge UI ${sourceRel}/* → ${mergeTargetSummary} from dev ${devOwner}/${devRepo} @ ${devTipSha.slice(0, 12)}`;
+      ? `chore(migrate-ui): ${sourceRel}/* → ${mergeTargetSummary} from ${devOwner}/${devRepo}@${headBranch}@${devTipSha.slice(0, 12)} (read-only)${alreadyInSync ? " (already in sync)" : ""}`
+      : `chore: merge UI ${sourceRel}/* → ${mergeTargetSummary} from dev ${devOwner}/${devRepo} @ ${devTipSha.slice(0, 12)}${alreadyInSync ? " (already in sync)" : ""}`;
     await git(platDir, [
       "-c",
       "user.email=migrate-frontend@noreply.local",
       "-c",
       "user.name=Migrate Frontend",
       "commit",
+      ...(alreadyInSync ? ["--allow-empty"] : []),
       "-m",
       commitSubject,
     ]);
