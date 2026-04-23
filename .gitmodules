@@ -1,0 +1,3 @@
+[submodule "launchpad-frontend"]
+	path = launchpad-frontend
+	url = https://github.com/vraj-york/local-launchpad.git
