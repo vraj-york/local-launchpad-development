@@ -5,6 +5,11 @@
  *
  * This is the SINGLE SOURCE OF TRUTH for all frontend config.
  *
+ * Platform UI reference: the `launchpad-frontend` git submodule (root of this repo)
+ * carries the Launchpad design-system / routing patterns used elsewhere; this app is
+ * the Developer Integration shell. API path groupings mirror that submodule’s
+ * `API_ENDPOINTS` style via `src/const/apiEndpoints.js`.
+ *
  * HOW TO SWITCH ENVIRONMENTS:
  * ---------------------------
  * Option 1: Edit the default values below

@@ -1,5 +1,6 @@
 import axios from "axios";
 import config from "../config/index.js";
+import { API_ENDPOINTS, CHAT_API_PREFIX } from "../const/apiEndpoints.js";
 import { isTokenExpired, isTokenExpiringSoon } from "../utils/auth.js";
 
 const API_URL = config.API_URL;
@@ -22,7 +23,7 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     const path = typeof config.url === "string" ? config.url : "";
-    const isPublicClientLinkChat = path.includes("/api/chat/");
+    const isPublicClientLinkChat = path.includes(CHAT_API_PREFIX);
     const token = localStorage.getItem("token");
     if (token && !isPublicClientLinkChat) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -208,11 +209,11 @@ api.interceptors.response.use(
     const originalRequest = error.config;
     if (error.response?.status !== 401) return Promise.reject(error);
     if (!originalRequest) return Promise.reject(error);
-    if (originalRequest.url?.includes("/api/chat/")) {
+    if (originalRequest.url?.includes(CHAT_API_PREFIX)) {
       return Promise.reject(error);
     }
     // Don't retry refresh endpoint to avoid loop
-    if (originalRequest.url?.includes("/api/auth/refresh")) {
+    if (originalRequest.url?.includes(API_ENDPOINTS.auth.refresh)) {
       clearAuthAndRedirect();
       return Promise.reject(error);
     }
@@ -253,7 +254,7 @@ api.interceptors.response.use(
 /** Call after login when opened by Figma plugin (URL has ?state=writeKey). Tells backend to associate token with writeKey so plugin poll gets it. */
 export const figmaComplete = async (state, access_token) => {
   try {
-    const response = await axios.post(`${API_URL}/api/figma/complete`, {
+    const response = await axios.post(`${API_URL}${API_ENDPOINTS.figma.complete}`, {
       state,
       access_token,
     });
@@ -266,13 +267,13 @@ export const figmaComplete = async (state, access_token) => {
 
 /** OAuth / integrations (GitHub, Bitbucket, Jira, Figma) — Bearer required via api interceptor */
 export const fetchIntegrationsStatus = async () => {
-  const { data } = await api.get("/api/integrations/status");
+  const { data } = await api.get(API_ENDPOINTS.integrations.status);
   return data;
 };
 
 /** Cursor cloud-agent: connection + whether a GitHub PAT is stored for your email */
 export const fetchCursorIntegrationStatus = async () => {
-  const { data } = await api.get("/api/integrations/cursor/status", {
+  const { data } = await api.get(API_ENDPOINTS.integrations.cursorStatus, {
     params: { _t: Date.now() },
     headers: {
       "Cache-Control": "no-cache",
@@ -284,13 +285,13 @@ export const fetchCursorIntegrationStatus = async () => {
 
 /** Push GitHub OAuth access token to cursor-cloud-agent for your account email */
 export const syncCursorGithubPatFromOAuth = async () => {
-  const { data } = await api.post("/api/integrations/cursor/sync-github-pat");
+  const { data } = await api.post(API_ENDPOINTS.integrations.cursorSyncGithubPat);
   return data;
 };
 
 /** Store a GitHub PAT manually for cursor-cloud-agent (same as OAuth scope for private repos) */
 export const saveCursorGithubPatManual = async (githubToken) => {
-  const { data } = await api.post("/api/integrations/cursor/pat", { githubToken });
+  const { data } = await api.post(API_ENDPOINTS.integrations.cursorPat, { githubToken });
   return data;
 };
 
@@ -303,7 +304,7 @@ export const getGithubOAuthAuthorizeUrl = async (
     params.reconnectId = reconnectConnectionId;
   }
   if (returnTo) params.returnTo = returnTo;
-  const { data } = await api.get("/api/integrations/github/start", {
+  const { data } = await api.get(API_ENDPOINTS.integrations.githubStart, {
     params,
     headers: { Accept: "application/json" },
   });
@@ -320,7 +321,7 @@ export const getJiraOAuthAuthorizeUrl = async (
     params.reconnectId = reconnectConnectionId;
   }
   if (returnTo) params.returnTo = returnTo;
-  const { data } = await api.get("/api/integrations/jira/start", {
+  const { data } = await api.get(API_ENDPOINTS.integrations.jiraStart, {
     params,
     headers: { Accept: "application/json" },
   });
@@ -337,7 +338,7 @@ export const getBitbucketOAuthAuthorizeUrl = async (
     params.reconnectId = reconnectConnectionId;
   }
   if (returnTo) params.returnTo = returnTo;
-  const { data } = await api.get("/api/integrations/bitbucket/start", {
+  const { data } = await api.get(API_ENDPOINTS.integrations.bitbucketStart, {
     params,
     headers: { Accept: "application/json" },
   });
@@ -346,15 +347,15 @@ export const getBitbucketOAuthAuthorizeUrl = async (
 };
 
 export const disconnectGithubIntegration = async (connectionId) => {
-  await api.delete(`/api/integrations/github/${connectionId}`);
+  await api.delete(API_ENDPOINTS.integrations.githubConnection(connectionId));
 };
 
 export const disconnectBitbucketIntegration = async (connectionId) => {
-  await api.delete(`/api/integrations/bitbucket/${connectionId}`);
+  await api.delete(API_ENDPOINTS.integrations.bitbucketConnection(connectionId));
 };
 
 export const disconnectJiraIntegration = async (connectionId) => {
-  await api.delete(`/api/integrations/jira/${connectionId}`);
+  await api.delete(API_ENDPOINTS.integrations.jiraConnection(connectionId));
 };
 
 export const getFigmaOAuthAuthorizeUrl = async (
@@ -366,7 +367,7 @@ export const getFigmaOAuthAuthorizeUrl = async (
     params.reconnectId = reconnectConnectionId;
   }
   if (returnTo) params.returnTo = returnTo;
-  const { data } = await api.get("/api/integrations/figma/start", {
+  const { data } = await api.get(API_ENDPOINTS.integrations.figmaStart, {
     params,
     headers: { Accept: "application/json" },
   });
@@ -375,14 +376,14 @@ export const getFigmaOAuthAuthorizeUrl = async (
 };
 
 export const disconnectFigmaIntegration = async (connectionId) => {
-  await api.delete(`/api/integrations/figma/${connectionId}`);
+  await api.delete(API_ENDPOINTS.integrations.figmaConnection(connectionId));
 };
 
 /** Paginated GitHub repos visible to the OAuth connection (affiliation owner/collaborator/org member). */
 export const fetchGithubReposPage = async (connectionId, { page = 1, projectId } = {}) => {
   const params = { connectionId, page };
   if (projectId != null && projectId !== "") params.projectId = projectId;
-  const { data } = await api.get("/api/integrations/github/repos", { params });
+  const { data } = await api.get(API_ENDPOINTS.integrations.githubRepos, { params });
   return data;
 };
 
@@ -390,7 +391,7 @@ export const fetchGithubReposPage = async (connectionId, { page = 1, projectId }
 export const fetchBitbucketReposPage = async (connectionId, { page = 1, projectId } = {}) => {
   const params = { connectionId, page };
   if (projectId != null && projectId !== "") params.projectId = projectId;
-  const { data } = await api.get("/api/integrations/bitbucket/repos", { params });
+  const { data } = await api.get(API_ENDPOINTS.integrations.bitbucketRepos, { params });
   return data;
 };
 
@@ -398,14 +399,14 @@ export const fetchBitbucketReposPage = async (connectionId, { page = 1, projectI
 export const fetchJiraProjectsForConnection = async (connectionId, { projectId } = {}) => {
   const params = { connectionId };
   if (projectId != null && projectId !== "") params.projectId = projectId;
-  const { data } = await api.get("/api/integrations/jira/projects", { params });
+  const { data } = await api.get(API_ENDPOINTS.integrations.jiraProjects, { params });
   return data;
 };
 
 /** Creator's OAuth connections (for edit-project UI); creator or admin only. */
 export const fetchCreatorIntegrationConnections = async (projectId) => {
   const { data } = await api.get(
-    `/api/integrations/creator-connections/${projectId}`,
+    API_ENDPOINTS.integrations.creatorConnections(projectId),
   );
   return data;
 };
@@ -413,7 +414,7 @@ export const fetchCreatorIntegrationConnections = async (projectId) => {
 // Function to create a new project
 export const createProject = async (projectData) => {
   try {
-    const response = await api.post("/api/projects", projectData);
+    const response = await api.post(API_ENDPOINTS.projects.root, projectData);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to create project" };
@@ -423,7 +424,7 @@ export const createProject = async (projectData) => {
 // Function to fetch all projects
 export const fetchProjects = async () => {
   try {
-    const response = await api.get("/api/projects");
+    const response = await api.get(API_ENDPOINTS.projects.root);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to fetch projects" };
@@ -433,7 +434,7 @@ export const fetchProjects = async () => {
 // Function to fetch project details by ID
 export const fetchProjectById = async (projectId) => {
   try {
-    const response = await api.get(`/api/projects/${projectId}`);
+    const response = await api.get(API_ENDPOINTS.projects.byId(projectId));
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to fetch project" };
@@ -444,7 +445,7 @@ export const fetchProjectById = async (projectId) => {
 export const fetchCursorRulesCatalog = async (projectId) => {
   try {
     const response = await api.get(
-      `/api/projects/${projectId}/cursor-rules/catalog`,
+      API_ENDPOINTS.projects.cursorRulesCatalog(projectId),
     );
     return response.data;
   } catch (error) {
@@ -456,7 +457,7 @@ export const fetchCursorRulesCatalog = async (projectId) => {
 export const fetchProjectCustomCursorRules = async (projectId) => {
   try {
     const response = await api.get(
-      `/api/projects/${projectId}/cursor-rules/custom`,
+      API_ENDPOINTS.projects.cursorRulesCustom(projectId),
     );
     return response.data;
   } catch (error) {
@@ -468,7 +469,7 @@ export const fetchProjectCustomCursorRules = async (projectId) => {
 export const createProjectCustomCursorRule = async (projectId, { folderName, body }) => {
   try {
     const response = await api.post(
-      `/api/projects/${projectId}/cursor-rules/custom`,
+      API_ENDPOINTS.projects.cursorRulesCustom(projectId),
       { folderName, body },
     );
     return response.data;
@@ -481,7 +482,7 @@ export const createProjectCustomCursorRule = async (projectId, { folderName, bod
 export const importCursorRulesFolders = async (projectId, folders) => {
   try {
     const response = await api.post(
-      `/api/projects/${projectId}/cursor-rules/import`,
+      API_ENDPOINTS.projects.cursorRulesImport(projectId),
       { folders },
     );
     return response.data;
@@ -493,7 +494,7 @@ export const importCursorRulesFolders = async (projectId, folders) => {
 /** Start deferred from-scratch Cursor agent (release 1.0.0 + agent). */
 export const startProjectScratchAgent = async (projectId, prompt) => {
   try {
-    const response = await api.post(`/api/projects/${projectId}/scratch-agent`, {
+    const response = await api.post(API_ENDPOINTS.projects.scratchAgent(projectId), {
       prompt,
     });
     return response.data;
@@ -507,7 +508,7 @@ export const startProjectScratchAgent = async (projectId, prompt) => {
 // Function to fetch all releases for a project
 export const fetchReleases = async (projectId) => {
   try {
-    const response = await api.get(`/api/releases/project/${projectId}`, {
+    const response = await api.get(API_ENDPOINTS.releases.byProject(projectId), {
       params: { _: Date.now() },
       headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
     });
@@ -520,7 +521,7 @@ export const fetchReleases = async (projectId) => {
 // Function to create a new release
 export const createRelease = async (releaseData) => {
   try {
-    const response = await api.post("/api/releases", releaseData);
+    const response = await api.post(API_ENDPOINTS.releases.root, releaseData);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to create release" };
@@ -535,7 +536,7 @@ export const toggleReleaseLock = async (releaseId, locked, options = {}) => {
     if (body.developerAgentRef === undefined || body.developerAgentRef === "") {
       delete body.developerAgentRef;
     }
-    const response = await api.post(`/api/releases/${releaseId}/lock`, body);
+    const response = await api.post(API_ENDPOINTS.releases.lock(releaseId), body);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to toggle release lock" };
@@ -549,7 +550,7 @@ export const publicLockRelease = async (releaseId, lockedBy, options = {}) => {
     if (body.developerAgentRef === undefined || body.developerAgentRef === "") {
       delete body.developerAgentRef;
     }
-    const response = await api.post(`/api/releases/${releaseId}/public-lock`, body);
+    const response = await api.post(API_ENDPOINTS.releases.publicLock(releaseId), body);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to lock release" };
@@ -603,7 +604,7 @@ export const clientLinkSendFollowup = async (
         height: Number(img.height) || 512,
       }));
   }
-  const response = await api.post(`/api/chat/${enc}/followup`, body);
+  const response = await api.post(API_ENDPOINTS.chat.followup(enc), body);
   return response.data;
 };
 
@@ -639,13 +640,13 @@ export const clientLinkAiPreviewSvg = async (
   if (typeof customPrompt === "string" && customPrompt.trim()) {
     body.customPrompt = customPrompt.trim();
   }
-  const response = await api.post(`/api/chat/${enc}/ai-preview-svg`, body);
+  const response = await api.post(API_ENDPOINTS.chat.aiPreviewSvg(enc), body);
   return response.data;
 };
 
 export const clientLinkFetchAgentStatus = async (slug, releaseId) => {
   const enc = encodeURIComponent(String(slug).trim());
-  const response = await api.get(`/api/chat/${enc}/agent-status`, {
+  const response = await api.get(API_ENDPOINTS.chat.agentStatus(enc), {
     params: { r: Number(releaseId) },
   });
   return response.data;
@@ -654,7 +655,7 @@ export const clientLinkFetchAgentStatus = async (slug, releaseId) => {
 /** Public: summary after agent finishes for the selected release. */
 export const clientLinkFetchExecutionSummary = async (slug, releaseId) => {
   const enc = encodeURIComponent(String(slug).trim());
-  const response = await api.get(`/api/chat/${enc}/summary`, {
+  const response = await api.get(API_ENDPOINTS.chat.summary(enc), {
     params: { r: Number(releaseId) },
   });
   return response.data;
@@ -663,7 +664,7 @@ export const clientLinkFetchExecutionSummary = async (slug, releaseId) => {
 /** Public: persisted chat messages for client-link release. */
 export const clientLinkFetchChatMessages = async (slug, releaseId) => {
   const enc = encodeURIComponent(String(slug).trim());
-  const response = await api.get(`/api/chat/${enc}/messages`, {
+  const response = await api.get(API_ENDPOINTS.chat.messages(enc), {
     params: { r: Number(releaseId) },
   });
   return response.data;
@@ -677,7 +678,7 @@ export const clientLinkRevertMerge = async (
   clientEmail = "",
 ) => {
   const enc = encodeURIComponent(String(slug).trim());
-  const response = await api.post(`/api/chat/${enc}/revert-merge`, {
+  const response = await api.post(API_ENDPOINTS.chat.revertMerge(enc), {
     r: Number(releaseId),
     m: Number(messageId),
     clientEmail: String(clientEmail || "").trim(),
@@ -693,7 +694,7 @@ export const clientLinkRefreshLiveBuild = async (
 ) => {
   const enc = encodeURIComponent(String(slug).trim());
   const response = await api.post(
-    `/api/chat/${enc}/refresh-build`,
+    API_ENDPOINTS.chat.refreshBuild(enc),
     { r: Number(releaseId), clientEmail: String(clientEmail || "").trim() },
     { timeout: 2 * 60 * 60 * 1000 },
   );
@@ -707,7 +708,7 @@ export const uploadToRelease = async (releaseId, file) => {
     const formData = new FormData();
     formData.append("project", file);
     const response = await api.post(
-      `/api/releases/${releaseId}/upload`,
+      API_ENDPOINTS.releases.upload(releaseId),
       formData,
       {
         headers: {
@@ -733,7 +734,7 @@ export const revertActiveReleaseToBaseline = async (
 ) => {
   try {
     const response = await api.post(
-      `/api/projects/${projectId}/releases/${activeReleaseId}/revert-to-baseline`,
+      API_ENDPOINTS.projects.revertToBaseline(projectId, activeReleaseId),
       {
         baselineProjectVersionId: Number(baselineProjectVersionId),
         reason: String(reason || "").trim(),
@@ -769,7 +770,7 @@ export const startMigrateFrontend = async (projectId, releaseId, opts = {}) => {
       body.migrateFrontend = true;
     }
     const response = await api.post(
-      `/api/projects/${projectId}/releases/${releaseId}/migrate-frontend`,
+      API_ENDPOINTS.projects.migrateFrontend(projectId, releaseId),
       body,
     );
     return response.data;
@@ -785,7 +786,7 @@ export const startMigrateFrontend = async (projectId, releaseId, opts = {}) => {
 export const fetchCursorAgentById = async (agentId) => {
   try {
     const enc = encodeURIComponent(String(agentId || "").trim());
-    const response = await api.get(`/api/cursor/agents/${enc}`);
+    const response = await api.get(API_ENDPOINTS.cursor.agentById(enc));
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to fetch Cursor agent status" };
@@ -796,7 +797,7 @@ export const fetchCursorAgentById = async (agentId) => {
 export const generateJiraTickets = async (projectId) => {
   try {
     const response = await api.post(
-      `/api/projects/${projectId}/generate-jira-tickets`,
+      API_ENDPOINTS.projects.generateJiraTickets(projectId),
     );
     return response.data;
   } catch (error) {
@@ -807,7 +808,7 @@ export const generateJiraTickets = async (projectId) => {
 // Function to update a project
 export const updateProject = async (projectId, projectData) => {
   try {
-    const response = await api.put(`/api/projects/${projectId}`, projectData);
+    const response = await api.put(API_ENDPOINTS.projects.byId(projectId), projectData);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to update project" };
@@ -941,7 +942,7 @@ export async function exchangeHubAuthCode(code, redirectUri) {
     if (accessToken) localStorage.setItem("access_token", accessToken);
     localStorage.setItem("cognito_refresh_token", parsed.refreshToken || "");
     try {
-      const meRes = await api.get("/api/auth/me");
+      const meRes = await api.get(API_ENDPOINTS.auth.me);
       if (meRes.data?.user) {
         user = { ...user, ...meRes.data.user };
       }
@@ -949,7 +950,7 @@ export async function exchangeHubAuthCode(code, redirectUri) {
       if (nameFromCallback) syncPayload.name = nameFromCallback;
       if (imageFromCallback) syncPayload.image = imageFromCallback;
       if (Object.keys(syncPayload).length > 0) {
-        const syncRes = await api.put("/api/auth/me", syncPayload);
+        const syncRes = await api.put(API_ENDPOINTS.auth.me, syncPayload);
         if (syncRes.data?.user) user = { ...user, ...syncRes.data.user };
       }
     } catch {
@@ -976,7 +977,7 @@ export async function exchangeHubAuthCode(code, redirectUri) {
 export const activateReleaseVersions = async (projectId, versionId) => {
   try {
     const response = await api.post(
-      `/api/projects/${projectId}/versions/${versionId}/activate`,
+      API_ENDPOINTS.projects.versionActivate(projectId, versionId),
     );
     return response.data;
   } catch (error) {
@@ -993,7 +994,7 @@ export const switchProjectVersion = async (
   isPermanent = false,
 ) => {
   try {
-    const response = await api.post(`/api/projects/${projectId}/switch`, {
+    const response = await api.post(API_ENDPOINTS.projects.switch(projectId), {
       versionId: Number(versionId),
       isPermanent,
     });
@@ -1007,7 +1008,7 @@ export const switchProjectVersion = async (
 export const fetchPublicProjectBySlug = async (slug) => {
   try {
     const enc = encodeURIComponent(String(slug).trim());
-    const response = await api.get(`/api/projects/public/${enc}`);
+    const response = await api.get(API_ENDPOINTS.projects.publicBySlug(enc));
     return response.data;
   } catch (error) {
     throw (
@@ -1083,7 +1084,7 @@ export const updateReleaseStatus = async (releaseId, status, reasonOrOptions = "
     } else {
       body.reason = "";
     }
-    const response = await api.patch(`/api/releases/${releaseId}/status`, body);
+    const response = await api.patch(API_ENDPOINTS.releases.status(releaseId), body);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to update release status" };
@@ -1092,7 +1093,7 @@ export const updateReleaseStatus = async (releaseId, status, reasonOrOptions = "
 
 export const patchRelease = async (releaseId, payload) => {
   try {
-    const response = await api.patch(`/api/releases/${releaseId}`, payload);
+    const response = await api.patch(API_ENDPOINTS.releases.byId(releaseId), payload);
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to update release" };
@@ -1101,7 +1102,7 @@ export const patchRelease = async (releaseId, payload) => {
 
 export const fetchReleaseChangelog = async (releaseId) => {
   try {
-    const response = await api.get(`/api/releases/${releaseId}/changelog`);
+    const response = await api.get(API_ENDPOINTS.releases.changelog(releaseId));
     return response.data;
   } catch (error) {
     throw error.response?.data || { error: "Failed to load release history" };
@@ -1121,7 +1122,7 @@ export const regenerateReleaseReviewSummary = async (
       ? { clientReviewAiGenerationContext: opts.clientReviewAiGenerationContext }
       : {};
     const response = await api.post(
-      `/api/releases/${releaseId}/regenerate-review-summary`,
+      API_ENDPOINTS.releases.regenerateReviewSummary(releaseId),
       body,
     );
     return response.data;
